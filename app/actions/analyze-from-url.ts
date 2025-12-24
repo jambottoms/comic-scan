@@ -96,23 +96,28 @@ export async function analyzeComicFromUrl(videoUrl: string) {
     console.error("[Server Action] Error analyzing comic:", error);
     console.error("[Server Action] Error type:", error instanceof Error ? error.constructor.name : typeof error);
     console.error("[Server Action] Error message:", error instanceof Error ? error.message : String(error));
+    console.error("[Server Action] Full error:", JSON.stringify(error, Object.getOwnPropertyNames(error)));
     
     // Provide more helpful error messages
+    let errorMessage = "Failed to analyze comic. Check the terminal for details.";
+    
     if (error instanceof Error) {
+      errorMessage = error.message;
+      
       // Handle Next.js server action serialization errors
       if (error.message.includes("unexpected response") || error.message.includes("Unexpected")) {
-        throw new Error("Server action error: The response may be too large or the request timed out. Try a shorter video.");
+        errorMessage = "Server action error: The response may be too large or the request timed out. Try a shorter video.";
       }
       
       if (error.message.includes("not found") || error.message.includes("404")) {
-        throw new Error(`Model not found. Tried: gemini-2.5-flash. Possible solutions: 1) Update your API key from https://aistudio.google.com/apikey 2) Ensure billing is enabled (even for free tier) 3) Try a different model name. Original error: ${error.message}`);
+        errorMessage = `Model not found. Tried: gemini-2.5-flash. Possible solutions: 1) Update your API key from https://aistudio.google.com/apikey 2) Ensure billing is enabled (even for free tier) 3) Try a different model name. Original error: ${error.message}`;
       }
-      
-      // Re-throw with original message
-      throw error;
+    } else {
+      errorMessage = `Failed to analyze comic: ${String(error)}. Check the terminal for details.`;
     }
     
-    throw new Error(`Failed to analyze comic: ${String(error)}. Check the terminal for details.`);
+    // Always throw a new Error with a clean message to ensure it's serializable
+    throw new Error(errorMessage);
   }
 }
 
