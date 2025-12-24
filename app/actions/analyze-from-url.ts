@@ -84,12 +84,23 @@ export async function analyzeComicFromUrl(videoUrl: string): Promise<AnalyzeResu
     // System instruction
     const systemInstruction = "You are an expert comic book grader. Analyze the video of this comic book. Identify the comic (Series, Issue, Year, Variant) and look for visible defects across all frames. Return the response as clean JSON with fields: title, issue, estimatedGrade, reasoning.";
 
-    // Use gemini-1.5-flash (fast model with video support)
-    // Note: gemini-2.5-flash may not be available, falling back to 1.5-flash
-    const model = genAI.getGenerativeModel({ 
-      model: "gemini-1.5-flash",
-      systemInstruction: systemInstruction
-    });
+    // Try gemini-pro-vision (supports video/images)
+    // The model name format may vary by API version
+    const modelName = "gemini-pro-vision";
+    console.log(`[Server Action] Using model: ${modelName}`);
+    
+    let model;
+    try {
+      model = genAI.getGenerativeModel({ 
+        model: modelName,
+        systemInstruction: systemInstruction
+      });
+    } catch (initError) {
+      return {
+        success: false,
+        error: `Failed to initialize model "${modelName}". Please check your API key and ensure it has access to Gemini models. Error: ${initError instanceof Error ? initError.message : String(initError)}`
+      };
+    }
 
     console.log("[Server Action] Sending video to Gemini API...");
     
@@ -98,17 +109,29 @@ export async function analyzeComicFromUrl(videoUrl: string): Promise<AnalyzeResu
       setTimeout(() => reject(new Error("Video analysis timed out after 60 seconds. The video may be too long or the API is slow. Please try a shorter video.")), 60000);
     });
 
-    const analysisPromise = model.generateContent([
-      {
-        inlineData: {
-          data: base64Video,
-          mimeType: mimeType
+    let analysisPromise;
+    try {
+      analysisPromise = model.generateContent([
+        {
+          inlineData: {
+            data: base64Video,
+            mimeType: mimeType
+          }
+        },
+        {
+          text: "Analyze this comic book video. Look at all frames to identify the comic and assess its condition."
         }
-      },
-      {
-        text: "Analyze this comic book video. Look at all frames to identify the comic and assess its condition."
+      ]);
+    } catch (modelError) {
+      // If model doesn't support video or is not found, return helpful error
+      if (modelError instanceof Error && (modelError.message.includes("not found") || modelError.message.includes("404"))) {
+        return {
+          success: false,
+          error: `Model "${modelName}" not found. Your API key may not have access to this model. Try: 1) Regenerate your API key from https://aistudio.google.com/apikey 2) Ensure billing is enabled (even for free tier) 3) Check if your API key has access to vision models. Error: ${modelError.message}`
+        };
       }
-    ]);
+      throw modelError;
+    }
 
     const result = await Promise.race([analysisPromise, timeoutPromise]) as any;
     console.log("[Server Action] Received response from Gemini API");
