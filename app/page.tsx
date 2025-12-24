@@ -19,6 +19,7 @@ export default function Home() {
   const [recordingTime, setRecordingTime] = useState(0);
   const [versionInfo, setVersionInfo] = useState<VersionInfo | null>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [usingFallback, setUsingFallback] = useState(false);
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
@@ -242,10 +243,18 @@ export default function Home() {
     const file = e.target.files?.[0];
     if (!file) return;
 
+    // Check file size before upload (50MB limit - conservative to avoid 413 errors)
+    const maxSize = 50 * 1024 * 1024; // 50MB
+    if (file.size > maxSize) {
+      setError(`File too large: ${(file.size / 1024 / 1024).toFixed(2)}MB. Maximum size is 50MB. Please record a shorter video (5-10 seconds recommended).`);
+      return;
+    }
+
     setLoading(true);
     setError(null);
     setResult(null);
     setUploadProgress(0);
+    setUsingFallback(false); // Reset fallback state
 
     // Clean up previous video URL if exists
     if (videoPreview) {
@@ -292,8 +301,16 @@ export default function Home() {
             } catch (parseError) {
               reject(new Error('Failed to parse response'));
             }
+          } else if (xhr.status === 413) {
+            // File too large for API route - fallback to server action
+            reject(new Error('FILE_TOO_LARGE_FOR_API'));
           } else {
-            reject(new Error(`Server error: ${xhr.status}`));
+            try {
+              const errorResponse = JSON.parse(xhr.responseText);
+              reject(new Error(errorResponse.error || `Server error: ${xhr.status}`));
+            } catch {
+              reject(new Error(`Server error: ${xhr.status}`));
+            }
           }
         });
 
@@ -326,12 +343,39 @@ export default function Home() {
       console.error("Upload analysis error:", err);
       const errorMessage = err instanceof Error ? err.message : "Failed to analyze. Check terminal for details.";
       
+      // If API route fails with 413, try server action directly (has higher limit)
+      if (errorMessage === 'FILE_TOO_LARGE_FOR_API' || errorMessage.includes('413')) {
+        console.log('API route rejected file, trying server action directly...');
+        setUsingFallback(true); // Show fallback message
+        try {
+          // Use server action directly (has 100MB limit configured)
+          const formData = new FormData();
+          formData.append("file", file);
+          const data = await analyzeComic(formData);
+          setResult(data);
+          setUsingFallback(false); // Reset fallback state
+          // Don't clear loading here, let finally block handle it
+          return;
+        } catch (serverActionError: any) {
+          setError(`File too large: ${(file.size / 1024 / 1024).toFixed(2)}MB. Please record a shorter video (5-10 seconds recommended).`);
+          setUploadProgress(0);
+          setUsingFallback(false); // Reset fallback state
+          // Clear video preview on error so user can try again
+          if (videoPreview) {
+            URL.revokeObjectURL(videoPreview);
+            setVideoPreview(null);
+          }
+          return;
+        }
+      }
+      
       // Don't show error if it was cancelled
       if (!errorMessage.includes('cancelled')) {
         setError(errorMessage);
       }
       
       setUploadProgress(0);
+      setUsingFallback(false); // Reset fallback state
       // Clear video preview on error/cancel so user can try again
       if (videoPreview) {
         URL.revokeObjectURL(videoPreview);
@@ -339,6 +383,7 @@ export default function Home() {
       }
     } finally {
       setLoading(false);
+      setUsingFallback(false); // Ensure fallback state is reset
       uploadXhrRef.current = null;
       // Reset progress after a short delay
       setTimeout(() => setUploadProgress(0), 2000);
@@ -353,6 +398,7 @@ export default function Home() {
     }
     setLoading(false);
     setUploadProgress(0);
+    setUsingFallback(false); // Reset fallback state
     setError(null);
     if (videoPreview) {
       URL.revokeObjectURL(videoPreview);
@@ -530,24 +576,35 @@ export default function Home() {
             <div className="animate-pulse">Analyzing video...</div>
           </div>
           
-          {/* Progress Bar */}
-          <div className="w-full bg-gray-700 rounded-full h-3 mb-2">
-            <div
-              className="bg-purple-500 h-3 rounded-full transition-all duration-300 ease-out"
-              style={{ width: `${uploadProgress}%` }}
-            />
-          </div>
-          
-          {/* Progress Percentage */}
-          {uploadProgress > 0 && (
-            <div className="text-center text-sm text-gray-400">
-              {uploadProgress}% complete
+          {usingFallback ? (
+            /* Fallback Message - No Progress Bar */
+            <div className="bg-yellow-900/30 border border-yellow-600/50 rounded-lg p-4 mb-3">
+              <div className="text-yellow-300 text-sm text-center">
+                ⚠️ Due to larger file size, upload progress won't be displayed. Please wait while your video is being processed...
+              </div>
             </div>
+          ) : (
+            /* Progress Bar */
+            <>
+              <div className="w-full bg-gray-700 rounded-full h-3 mb-2">
+                <div
+                  className="bg-purple-500 h-3 rounded-full transition-all duration-300 ease-out"
+                  style={{ width: `${uploadProgress}%` }}
+                />
+              </div>
+              
+              {/* Progress Percentage */}
+              {uploadProgress > 0 && (
+                <div className="text-center text-sm text-gray-400">
+                  {uploadProgress}% complete
+                </div>
+              )}
+              
+              <div className="text-xs text-gray-500 mt-2 text-center mb-3">
+                {uploadProgress < 100 ? 'Uploading and processing...' : 'Finalizing analysis...'}
+              </div>
+            </>
           )}
-          
-          <div className="text-xs text-gray-500 mt-2 text-center mb-3">
-            {uploadProgress < 100 ? 'Uploading and processing...' : 'Finalizing analysis...'}
-          </div>
           
           {/* Cancel Button */}
           <button
