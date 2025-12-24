@@ -14,7 +14,7 @@ export type AnalyzeResult =
  * This bypasses Vercel's 4.5MB body size limit by downloading from Supabase
  * Returns a result object instead of throwing to avoid Next.js error hiding
  */
-export async function analyzeComicFromUrl(videoUrl: string): Promise<AnalyzeResult> {
+export async function analyzeComicFromUrl(videoUrl: string, mimeType?: string): Promise<AnalyzeResult> {
   const apiKey = process.env.GOOGLE_API_KEY;
   if (!apiKey) {
     const errorMsg = "GOOGLE_API_KEY is not set in environment variables. Please add it to Vercel environment variables.";
@@ -92,32 +92,37 @@ export async function analyzeComicFromUrl(videoUrl: string): Promise<AnalyzeResu
       };
     }
     
-    // Determine mime type from URL or default to mp4
-    // Validate mimeType is a valid video format
-    let mimeType = 'video/mp4';
-    const urlLower = videoUrl.toLowerCase();
-    if (urlLower.endsWith('.webm')) {
-      mimeType = 'video/webm';
-    } else if (urlLower.endsWith('.mov') || urlLower.endsWith('.qt')) {
-      mimeType = 'video/quicktime';
-    } else if (urlLower.endsWith('.avi')) {
-      mimeType = 'video/x-msvideo';
-    } else if (urlLower.endsWith('.mkv')) {
-      mimeType = 'video/x-matroska';
+    // Use provided mimeType or detect from URL, default to mp4
+    let detectedMimeType = mimeType || 'video/mp4';
+    
+    // If not provided, try to detect from URL extension
+    if (!mimeType) {
+      const urlLower = videoUrl.toLowerCase();
+      if (urlLower.endsWith('.webm')) {
+        detectedMimeType = 'video/webm';
+      } else if (urlLower.endsWith('.mov') || urlLower.endsWith('.qt')) {
+        detectedMimeType = 'video/quicktime';
+      } else if (urlLower.endsWith('.avi')) {
+        detectedMimeType = 'video/x-msvideo';
+      } else if (urlLower.endsWith('.mkv')) {
+        detectedMimeType = 'video/x-matroska';
+      }
     }
     
     // Validate mimeType format
-    if (!mimeType.startsWith('video/')) {
-      console.warn(`[Server Action] Invalid mimeType detected: ${mimeType}, defaulting to video/mp4`);
-      mimeType = 'video/mp4';
+    if (!detectedMimeType.startsWith('video/')) {
+      console.warn(`[Server Action] Invalid mimeType detected: ${detectedMimeType}, defaulting to video/mp4`);
+      detectedMimeType = 'video/mp4';
     }
+    
+    const finalMimeType = detectedMimeType;
     
     // Log file size info
     // Note: Token estimation for video is unreliable - Gemini processes video frames efficiently
     // and doesn't tokenize raw base64. The actual token count is much lower than base64 size.
     // We'll let the API handle size limits and return proper errors if needed.
     console.log(`[Server Action] Video file size: ${fileSizeMB}MB binary, ${base64SizeMB}MB base64`);
-    console.log(`[Server Action] MIME type: ${mimeType}`);
+    console.log(`[Server Action] MIME type: ${finalMimeType}`);
     
     // Warn for very large files, but don't reject - let API handle it
     const binarySizeMB = parseFloat(fileSizeMB);
@@ -143,21 +148,6 @@ export async function analyzeComicFromUrl(videoUrl: string): Promise<AnalyzeResu
       systemInstruction: systemInstruction
     });
     
-    // TEST: First verify API works with simple request
-    try {
-      console.log("[Server Action] Testing API with simple 'test' prompt...");
-      const testResult = await model.generateContent("test");
-      const testText = await testResult.response.text();
-      console.log(`[Server Action] API test successful. Response: ${testText.substring(0, 50)}...`);
-    } catch (testError) {
-      console.error("[Server Action] API test failed:", testError);
-      const testErrorMsg = testError instanceof Error ? testError.message : String(testError);
-      return {
-        success: false,
-        error: `API test failed. This suggests an API key, quota, or permission issue. Error: ${testErrorMsg}`
-      };
-    }
-    
     // Add timeout wrapper
     const timeoutPromise = new Promise((_, reject) => {
       setTimeout(() => reject(new Error("Video analysis timed out after 60 seconds. The video may be too long or the API is slow. Please try a shorter video.")), 60000);
@@ -168,31 +158,13 @@ export async function analyzeComicFromUrl(videoUrl: string): Promise<AnalyzeResu
       {
         inlineData: {
           data: base64Video,
-          mimeType: mimeType
+          mimeType: finalMimeType
         }
       },
       {
         text: "Analyze this comic book video. Look at all frames to identify the comic and assess its condition."
       }
     ];
-    
-    // Validate payload structure
-    if (!payload[0]?.inlineData?.data || !payload[0]?.inlineData?.mimeType) {
-      return {
-        success: false,
-        error: "Malformed payload: inlineData structure is invalid."
-      };
-    }
-    
-    if (!payload[1]?.text || typeof payload[1].text !== 'string') {
-      return {
-        success: false,
-        error: "Malformed payload: text prompt is invalid."
-      };
-    }
-    
-    console.log("[Server Action] Payload validated. Sending video to Gemini API...");
-    console.log(`[Server Action] Payload structure: ${payload.length} parts (1 video, 1 text)`);
     
     // Generate content with the model
     const analysisPromise = model.generateContent(payload);

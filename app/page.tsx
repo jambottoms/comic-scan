@@ -286,11 +286,11 @@ export default function Home() {
       console.log("File uploaded to Supabase:", supabaseUrl);
       setUploadProgress(50);
       
-      // Step 2: Send URL to server action (small payload, bypasses 4.5MB limit)
+      // Step 2: Send URL and mimeType to server action (small payload, bypasses 4.5MB limit)
       console.log("Step 2: Sending URL to server for analysis...");
       setUploadProgress(60);
       
-      const result = await analyzeComicFromUrl(supabaseUrl);
+      const result = await analyzeComicFromUrl(supabaseUrl, file.type || "video/mp4");
       console.log("Analysis complete, received result:", result);
       setUploadProgress(90);
       
