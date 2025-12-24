@@ -18,12 +18,14 @@ export default function Home() {
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
   const [versionInfo, setVersionInfo] = useState<VersionInfo | null>(null);
+  const [uploadProgress, setUploadProgress] = useState(0);
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const uploadXhrRef = useRef<XMLHttpRequest | null>(null);
 
   // Request high-quality video constraints
   const getVideoConstraints = () => ({
@@ -124,6 +126,8 @@ export default function Home() {
         // Send to server for analysis
         setLoading(true);
         setError(null);
+        setResult(null);
+        setUploadProgress(0);
         
         // Show file size info
         const fileSizeMB = (blob.size / 1024 / 1024).toFixed(2);
@@ -133,15 +137,69 @@ export default function Home() {
           const formData = new FormData();
           formData.append("file", blob, "comic-video.webm");
 
-          const data = await analyzeComic(formData);
+          // Use XMLHttpRequest to track upload progress for recorded videos too
+          const data = await new Promise<any>((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+            uploadXhrRef.current = xhr; // Store for cancellation
+
+            // Track upload progress
+            xhr.upload.addEventListener('progress', (event) => {
+              if (event.lengthComputable) {
+                const percentComplete = Math.round((event.loaded / event.total) * 100);
+                setUploadProgress(percentComplete);
+              }
+            });
+
+            // Handle completion
+            xhr.addEventListener('load', () => {
+              uploadXhrRef.current = null;
+              if (xhr.status === 200) {
+                try {
+                  const response = JSON.parse(xhr.responseText);
+                  if (response.error) {
+                    reject(new Error(response.error));
+                  } else {
+                    resolve(response);
+                  }
+                } catch (parseError) {
+                  reject(new Error('Failed to parse response'));
+                }
+              } else {
+                reject(new Error(`Server error: ${xhr.status}`));
+              }
+            });
+
+            xhr.addEventListener('error', () => {
+              uploadXhrRef.current = null;
+              reject(new Error('Network error during upload'));
+            });
+
+            xhr.addEventListener('abort', () => {
+              uploadXhrRef.current = null;
+              reject(new Error('Upload cancelled'));
+            });
+
+            xhr.open('POST', '/api/analyze');
+            xhr.send(formData);
+          });
+
           console.log("Analysis complete:", data);
           setResult(data);
+          setUploadProgress(100);
         } catch (err) {
           console.error("Analysis error:", err);
           const errorMessage = err instanceof Error ? err.message : "Failed to analyze. Check terminal for details.";
-          setError(errorMessage);
+          
+          // Don't show error if it was cancelled
+          if (!errorMessage.includes('cancelled')) {
+            setError(errorMessage);
+          }
+          
+          setUploadProgress(0);
         } finally {
           setLoading(false);
+          uploadXhrRef.current = null;
+          setTimeout(() => setUploadProgress(0), 2000);
         }
       };
 
@@ -179,7 +237,7 @@ export default function Home() {
     }
   };
 
-  // Handle file upload
+  // Handle file upload with progress tracking
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -187,6 +245,7 @@ export default function Home() {
     setLoading(true);
     setError(null);
     setResult(null);
+    setUploadProgress(0);
 
     // Clean up previous video URL if exists
     if (videoPreview) {
@@ -205,12 +264,60 @@ export default function Home() {
       const formData = new FormData();
       formData.append("file", file);
 
-      console.log("Sending video to server for analysis...");
-      const data = await analyzeComic(formData);
+      // Use XMLHttpRequest to track upload progress
+      const data = await new Promise<any>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        uploadXhrRef.current = xhr; // Store for cancellation
+
+        // Track upload progress
+        xhr.upload.addEventListener('progress', (event) => {
+          if (event.lengthComputable) {
+            const percentComplete = Math.round((event.loaded / event.total) * 100);
+            setUploadProgress(percentComplete);
+            console.log(`Upload progress: ${percentComplete}%`);
+          }
+        });
+
+        // Handle completion
+        xhr.addEventListener('load', () => {
+          uploadXhrRef.current = null; // Clear ref
+          if (xhr.status === 200) {
+            try {
+              const response = JSON.parse(xhr.responseText);
+              if (response.error) {
+                reject(new Error(response.error));
+              } else {
+                resolve(response);
+              }
+            } catch (parseError) {
+              reject(new Error('Failed to parse response'));
+            }
+          } else {
+            reject(new Error(`Server error: ${xhr.status}`));
+          }
+        });
+
+        // Handle errors
+        xhr.addEventListener('error', () => {
+          uploadXhrRef.current = null;
+          reject(new Error('Network error during upload'));
+        });
+
+        xhr.addEventListener('abort', () => {
+          uploadXhrRef.current = null;
+          reject(new Error('Upload cancelled'));
+        });
+
+        // Start the upload
+        xhr.open('POST', '/api/analyze');
+        xhr.send(formData);
+      });
+
       console.log("Analysis complete, received data:", data);
       
       if (data) {
         setResult(data);
+        setUploadProgress(100);
         console.log("Result set, should display now");
       } else {
         throw new Error("No analysis data received from server");
@@ -218,14 +325,67 @@ export default function Home() {
     } catch (err) {
       console.error("Upload analysis error:", err);
       const errorMessage = err instanceof Error ? err.message : "Failed to analyze. Check terminal for details.";
-      setError(errorMessage);
-      // Clear video preview on error so user can try again
+      
+      // Don't show error if it was cancelled
+      if (!errorMessage.includes('cancelled')) {
+        setError(errorMessage);
+      }
+      
+      setUploadProgress(0);
+      // Clear video preview on error/cancel so user can try again
       if (videoPreview) {
         URL.revokeObjectURL(videoPreview);
         setVideoPreview(null);
       }
     } finally {
       setLoading(false);
+      uploadXhrRef.current = null;
+      // Reset progress after a short delay
+      setTimeout(() => setUploadProgress(0), 2000);
+    }
+  };
+
+  // Cancel upload function
+  const cancelUpload = () => {
+    if (uploadXhrRef.current) {
+      uploadXhrRef.current.abort();
+      uploadXhrRef.current = null;
+    }
+    setLoading(false);
+    setUploadProgress(0);
+    setError(null);
+    if (videoPreview) {
+      URL.revokeObjectURL(videoPreview);
+      setVideoPreview(null);
+    }
+  };
+
+  // Cancel recording function
+  const cancelRecording = () => {
+    // Stop recording if active
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.stop();
+    }
+    
+    // Stop all tracks
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach(track => track.stop());
+      mediaStreamRef.current = null;
+    }
+
+    // Clear timer
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+
+    // Reset state
+    setIsRecording(false);
+    setRecordingTime(0);
+    
+    // Clear video preview
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
     }
   };
 
@@ -298,13 +458,22 @@ export default function Home() {
           {/* Overlay controls when recording - always visible on mobile */}
           {isRecording && (
             <div className="absolute bottom-0 left-0 right-0 p-3 sm:p-4 bg-gradient-to-t from-black/90 via-black/80 to-transparent rounded-b-xl flex flex-col items-center gap-2 sm:gap-3">
-              <button
-                onClick={stopRecording}
-                className="bg-red-600 hover:bg-red-500 active:bg-red-700 text-white font-bold py-3 px-6 rounded-full text-base sm:text-lg transition shadow-lg z-10 touch-manipulation"
-                style={{ minHeight: '44px' }} // iOS touch target size
-              >
-                ⏹️ Stop Recording
-              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={stopRecording}
+                  className="bg-red-600 hover:bg-red-500 active:bg-red-700 text-white font-bold py-3 px-6 rounded-full text-base sm:text-lg transition shadow-lg z-10 touch-manipulation"
+                  style={{ minHeight: '44px' }} // iOS touch target size
+                >
+                  ⏹️ Stop
+                </button>
+                <button
+                  onClick={cancelRecording}
+                  className="bg-gray-600 hover:bg-gray-500 active:bg-gray-700 text-white font-bold py-3 px-4 rounded-full text-base sm:text-lg transition shadow-lg z-10 touch-manipulation"
+                  style={{ minHeight: '44px' }} // iOS touch target size
+                >
+                  ✕ Cancel
+                </button>
+              </div>
               <div className="text-red-400 font-semibold text-sm sm:text-base drop-shadow-lg">
                 Recording... {Math.floor(recordingTime / 60)}:{(recordingTime % 60).toString().padStart(2, '0')}
               </div>
@@ -356,9 +525,37 @@ export default function Home() {
       )}
 
       {loading && (
-        <div className="text-blue-400 font-semibold text-base sm:text-lg mb-4 text-center">
-          <div className="animate-pulse">Analyzing video...</div>
-          <div className="text-xs text-gray-500 mt-2">This may take 30-60 seconds for longer videos</div>
+        <div className="w-full max-w-md mb-4">
+          <div className="text-blue-400 font-semibold text-base sm:text-lg mb-3 text-center">
+            <div className="animate-pulse">Analyzing video...</div>
+          </div>
+          
+          {/* Progress Bar */}
+          <div className="w-full bg-gray-700 rounded-full h-3 mb-2">
+            <div
+              className="bg-purple-500 h-3 rounded-full transition-all duration-300 ease-out"
+              style={{ width: `${uploadProgress}%` }}
+            />
+          </div>
+          
+          {/* Progress Percentage */}
+          {uploadProgress > 0 && (
+            <div className="text-center text-sm text-gray-400">
+              {uploadProgress}% complete
+            </div>
+          )}
+          
+          <div className="text-xs text-gray-500 mt-2 text-center mb-3">
+            {uploadProgress < 100 ? 'Uploading and processing...' : 'Finalizing analysis...'}
+          </div>
+          
+          {/* Cancel Button */}
+          <button
+            onClick={cancelUpload}
+            className="w-full bg-gray-600 hover:bg-gray-500 active:bg-gray-700 text-white font-bold py-2 px-4 rounded-full text-sm transition"
+          >
+            ✕ Cancel Upload
+          </button>
         </div>
       )}
 
