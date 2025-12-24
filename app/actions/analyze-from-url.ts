@@ -114,9 +114,9 @@ export async function analyzeComicFromUrl(videoUrl: string): Promise<AnalyzeResu
     
     console.log("[Server Action] Received response from Gemini API");
     
-    // Get the response text
+    // Get the response text (text() is async and must be awaited)
     const response = result.response;
-    const text = response.text();
+    const text = await response.text();
     
     // Clean up markdown code blocks if Gemini sends them
     let cleanText = text.trim();
