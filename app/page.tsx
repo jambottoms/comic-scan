@@ -179,7 +179,7 @@ export default function Home() {
     }
   };
 
-  // Handle file upload as fallback
+  // Handle file upload
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -197,16 +197,33 @@ export default function Home() {
     const videoUrl = URL.createObjectURL(file);
     setVideoPreview(videoUrl);
 
+    // Show file size info
+    const fileSizeMB = (file.size / 1024 / 1024).toFixed(2);
+    console.log(`Uploading video for analysis: ${fileSizeMB}MB`);
+
     try {
       const formData = new FormData();
       formData.append("file", file);
 
+      console.log("Sending video to server for analysis...");
       const data = await analyzeComic(formData);
-      setResult(data);
+      console.log("Analysis complete, received data:", data);
+      
+      if (data) {
+        setResult(data);
+        console.log("Result set, should display now");
+      } else {
+        throw new Error("No analysis data received from server");
+      }
     } catch (err) {
-      console.error(err);
+      console.error("Upload analysis error:", err);
       const errorMessage = err instanceof Error ? err.message : "Failed to analyze. Check terminal for details.";
       setError(errorMessage);
+      // Clear video preview on error so user can try again
+      if (videoPreview) {
+        URL.revokeObjectURL(videoPreview);
+        setVideoPreview(null);
+      }
     } finally {
       setLoading(false);
     }
@@ -381,30 +398,9 @@ export default function Home() {
           </div>
         )}
 
-      {/* Recorded Video Preview */}
-      {videoPreview && !loading && (
-        <div className="mb-8 w-full max-w-md">
-          <p className="text-gray-400 text-sm mb-2 text-center">Recorded Video:</p>
-          <video 
-            src={videoPreview} 
-            controls 
-            className="w-full rounded-xl border border-gray-700"
-          >
-            Your browser does not support the video tag.
-          </video>
-        </div>
-      )}
-
-      {/* Error Message */}
-      {error && (
-        <div className="bg-red-500/20 border border-red-500 text-red-100 p-4 rounded mb-4">
-          {error}
-        </div>
-      )}
-
-      {/* The Result Card */}
+      {/* The Result Card - Show prominently when available */}
       {result && (
-        <div className="bg-gray-800 p-6 rounded-xl border border-gray-700 max-w-md w-full shadow-2xl">
+        <div className="bg-gray-800 p-6 rounded-xl border-2 border-purple-500 max-w-md w-full shadow-2xl mb-4">
           <h2 className="text-2xl font-bold text-yellow-400 mb-2">
             {result.title || "Unknown Comic"}
           </h2>
@@ -428,6 +424,28 @@ export default function Home() {
               Received response: {JSON.stringify(result, null, 2)}
             </p>
           )}
+        </div>
+      )}
+
+      {/* Recorded Video Preview - Show below results */}
+      {videoPreview && result && !loading && (
+        <div className="mb-8 w-full max-w-md">
+          <p className="text-gray-400 text-sm mb-2 text-center">Video Preview:</p>
+          <video 
+            src={videoPreview} 
+            controls 
+            className="w-full rounded-xl border border-gray-700"
+          >
+            Your browser does not support the video tag.
+          </video>
+        </div>
+      )}
+
+      {/* Error Message */}
+      {error && (
+        <div className="bg-red-500/20 border border-red-500 text-red-100 p-4 rounded mb-4 max-w-md w-full">
+          <p className="font-semibold mb-1">Analysis Error:</p>
+          <p>{error}</p>
         </div>
       )}
     </main>
