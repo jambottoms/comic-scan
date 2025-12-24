@@ -3,8 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
+    "generate-version": "node scripts/generate-version.js",
+    "dev": "npm run generate-version && next dev",
+    "build": "npm run generate-version && next build",
     "start": "next start",
     "lint": "eslint"
   },
