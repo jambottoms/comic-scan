@@ -84,21 +84,45 @@ export async function analyzeComicFromUrl(videoUrl: string): Promise<AnalyzeResu
     // System instruction
     const systemInstruction = "You are an expert comic book grader. Analyze the video of this comic book. Identify the comic (Series, Issue, Year, Variant) and look for visible defects across all frames. Return the response as clean JSON with fields: title, issue, estimatedGrade, reasoning.";
 
-    // Try gemini-pro-vision (supports video/images)
-    // The model name format may vary by API version
-    const modelName = "gemini-pro-vision";
-    console.log(`[Server Action] Using model: ${modelName}`);
+    // Try models in order of preference for comic book video analysis
+    // Newer models require -preview suffix and have better spatial understanding
+    const modelNames = [
+      "gemini-2.5-pro",           // Stable, good for comics
+      "gemini-2.5-pro-latest",     // Latest 2.5 version
+      "gemini-3-pro-preview",      // Best for comics (spatial understanding)
+      "gemini-3-pro",              // Without preview suffix
+      "gemini-3-flash-preview",    // Faster alternative
+      "gemini-3-flash",            // Without preview suffix
+      "gemini-1.5-pro",            // Fallback
+      "gemini-pro-vision"          // Last resort
+    ];
     
     let model;
-    try {
-      model = genAI.getGenerativeModel({ 
-        model: modelName,
-        systemInstruction: systemInstruction
-      });
-    } catch (initError) {
+    let modelName;
+    let lastError: Error | null = null;
+    
+    // Try each model until one works
+    for (const tryModelName of modelNames) {
+      try {
+        console.log(`[Server Action] Trying model: ${tryModelName}`);
+        model = genAI.getGenerativeModel({ 
+          model: tryModelName,
+          systemInstruction: systemInstruction
+        });
+        modelName = tryModelName;
+        console.log(`[Server Action] Successfully initialized model: ${modelName}`);
+        break;
+      } catch (initError) {
+        lastError = initError instanceof Error ? initError : new Error(String(initError));
+        console.log(`[Server Action] Model ${tryModelName} failed: ${lastError.message}`);
+        continue;
+      }
+    }
+    
+    if (!model) {
       return {
         success: false,
-        error: `Failed to initialize model "${modelName}". Please check your API key and ensure it has access to Gemini models. Error: ${initError instanceof Error ? initError.message : String(initError)}`
+        error: `No available Gemini models found. Tried: ${modelNames.join(", ")}. Please check: 1) Your API key from https://aistudio.google.com/apikey 2) Ensure billing is enabled (even for free tier) 3) Your API key may need access to newer models. Last error: ${lastError?.message || "Unknown"}`
       };
     }
 

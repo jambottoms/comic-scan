@@ -71,12 +71,33 @@ export async function analyzeComic(formData: FormData) {
     // System instruction
     const systemInstruction = "You are an expert comic book grader. Analyze the video of this comic book. Identify the comic (Series, Issue, Year, Variant) and look for visible defects across all frames. Return the response as clean JSON with fields: title, issue, estimatedGrade, reasoning.";
 
-    // Use gemini-pro-vision (supports video/images)
-    // Note: Model names may vary by API version - gemini-pro-vision is most widely available
-    const model = genAI.getGenerativeModel({ 
-      model: "gemini-pro-vision",
-      systemInstruction: systemInstruction
-    });
+    // Use gemini-2.5-pro (best for comics with video support)
+    // Falls back to other models if not available
+    const modelNames = [
+      "gemini-2.5-pro",
+      "gemini-2.5-pro-latest",
+      "gemini-3-pro-preview",
+      "gemini-1.5-pro",
+      "gemini-pro-vision"
+    ];
+    
+    let model;
+    for (const tryModelName of modelNames) {
+      try {
+        model = genAI.getGenerativeModel({ 
+          model: tryModelName,
+          systemInstruction: systemInstruction
+        });
+        console.log(`[Server Action] Using model: ${tryModelName}`);
+        break;
+      } catch (err) {
+        continue;
+      }
+    }
+    
+    if (!model) {
+      throw new Error(`No available Gemini models found. Tried: ${modelNames.join(", ")}`);
+    }
 
     console.log("Sending video to Gemini API...");
     
