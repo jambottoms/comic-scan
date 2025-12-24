@@ -243,10 +243,14 @@ export default function Home() {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    // Check file size before upload (100MB limit - matches server action limit)
-    const maxSize = 100 * 1024 * 1024; // 100MB
-    if (file.size > maxSize) {
-      setError(`File too large: ${(file.size / 1024 / 1024).toFixed(2)}MB. Maximum size is 100MB. Please record a shorter video or compress the file.`);
+    // Check file size before upload
+    // Vercel has a 4.5MB body size limit for serverless functions (even on Pro)
+    // This is a platform limitation that can't be changed
+    const vercelLimit = 4.5 * 1024 * 1024; // 4.5MB - Vercel's hard limit
+    const uploadFileSizeMB = (file.size / 1024 / 1024).toFixed(2);
+    
+    if (file.size > vercelLimit) {
+      setError(`File too large for Vercel: ${uploadFileSizeMB}MB. Vercel has a 4.5MB body size limit for serverless functions (even on Pro plan). Please record a shorter video (under 4.5MB) or compress the file.`);
       return;
     }
 

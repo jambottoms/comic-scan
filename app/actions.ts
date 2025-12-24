@@ -35,10 +35,11 @@ export async function analyzeComic(formData: FormData) {
       throw new Error("No file uploaded");
     }
 
-    // Check file size (limit to 100MB - matches next.config.ts serverActions.bodySizeLimit)
-    const maxSize = 100 * 1024 * 1024; // 100MB
-    if (file.size > maxSize) {
-      throw new Error(`Video file is too large (${(file.size / 1024 / 1024).toFixed(1)}MB). Maximum size is 100MB. Please record a shorter video or compress the file.`);
+    // Check file size - Vercel has a 4.5MB body size limit for serverless functions
+    // This is a platform limitation that can't be changed, even with Pro plan
+    const vercelLimit = 4.5 * 1024 * 1024; // 4.5MB - Vercel's hard limit
+    if (file.size > vercelLimit) {
+      throw new Error(`Video file is too large (${(file.size / 1024 / 1024).toFixed(1)}MB). Vercel has a 4.5MB body size limit for serverless functions. Please record a shorter video or compress the file.`);
     }
 
     console.log(`[Server Action] Processing video: ${(file.size / 1024 / 1024).toFixed(2)}MB, type: ${file.type}`);
