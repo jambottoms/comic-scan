@@ -71,33 +71,12 @@ export async function analyzeComic(formData: FormData) {
     // System instruction
     const systemInstruction = "You are an expert comic book grader. Analyze the video of this comic book. Identify the comic (Series, Issue, Year, Variant) and look for visible defects across all frames. Return the response as clean JSON with fields: title, issue, estimatedGrade, reasoning.";
 
-    // Use gemini-2.5-pro (best for comics with video support)
-    // Falls back to other models if not available
-    const modelNames = [
-      "gemini-2.5-pro",
-      "gemini-2.5-pro-latest",
-      "gemini-3-pro-preview",
-      "gemini-1.5-pro",
-      "gemini-pro-vision"
-    ];
-    
-    let model;
-    for (const tryModelName of modelNames) {
-      try {
-        model = genAI.getGenerativeModel({ 
-          model: tryModelName,
-          systemInstruction: systemInstruction
-        });
-        console.log(`[Server Action] Using model: ${tryModelName}`);
-        break;
-      } catch (err) {
-        continue;
-      }
-    }
-    
-    if (!model) {
-      throw new Error(`No available Gemini models found. Tried: ${modelNames.join(", ")}`);
-    }
+    // Use only gemini-3-flash-preview
+    console.log(`[Server Action] Using model: gemini-3-flash-preview`);
+    const model = genAI.getGenerativeModel({ 
+      model: "gemini-3-flash-preview",
+      systemInstruction: systemInstruction
+    });
 
     console.log("Sending video to Gemini API...");
     
@@ -158,7 +137,7 @@ export async function analyzeComic(formData: FormData) {
       if (error.message.includes("not found") || error.message.includes("404")) {
         const availableModels = await listAvailableModels(apiKey);
         console.log("Available models to try:", availableModels);
-        throw new Error(`Model not found. Tried: gemini-2.5-flash. The SDK is using v1beta API which may not support this model. Possible solutions: 1) Update your API key from https://aistudio.google.com/apikey 2) Ensure billing is enabled (even for free tier) 3) Try a different model name. Original error: ${error.message}`);
+        throw new Error(`Model not found. Using gemini-3-flash-preview. The SDK is using v1beta API which may not support this model. Possible solutions: 1) Update your API key from https://aistudio.google.com/apikey 2) Ensure billing is enabled (even for free tier) 3) Verify gemini-3-flash-preview is available for your API key. Original error: ${error.message}`);
       }
       
       // Re-throw with original message
