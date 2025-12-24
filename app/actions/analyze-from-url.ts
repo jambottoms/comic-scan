@@ -84,9 +84,10 @@ export async function analyzeComicFromUrl(videoUrl: string): Promise<AnalyzeResu
     // System instruction
     const systemInstruction = "You are an expert comic book grader. Analyze the video of this comic book. Identify the comic (Series, Issue, Year, Variant) and look for visible defects across all frames. Return the response as clean JSON with fields: title, issue, estimatedGrade, reasoning.";
 
-    // Use gemini-2.5-flash (latest fast model with video support)
+    // Use gemini-1.5-flash (fast model with video support)
+    // Note: gemini-2.5-flash may not be available, falling back to 1.5-flash
     const model = genAI.getGenerativeModel({ 
-      model: "gemini-2.5-flash",
+      model: "gemini-1.5-flash",
       systemInstruction: systemInstruction
     });
 
@@ -165,8 +166,8 @@ export async function analyzeComicFromUrl(videoUrl: string): Promise<AnalyzeResu
         errorMessage = "Google API key is missing. Please add GOOGLE_API_KEY to Vercel environment variables.";
       } else if (error.message.includes("unexpected response") || error.message.includes("Unexpected")) {
         errorMessage = "Server action error: The response may be too large or the request timed out. Try a shorter video.";
-      } else if (error.message.includes("not found") || error.message.includes("404")) {
-        errorMessage = `Model not found. Tried: gemini-2.5-flash. Possible solutions: 1) Update your API key from https://aistudio.google.com/apikey 2) Ensure billing is enabled (even for free tier) 3) Try a different model name. Original error: ${error.message}`;
+      } else       if (error.message.includes("not found") || error.message.includes("404") || error.message.includes("500")) {
+        errorMessage = `API error (${error.message.includes("500") ? "500 Internal Server Error" : "Model not found"}). Tried: gemini-1.5-flash. Possible solutions: 1) Update your API key from https://aistudio.google.com/apikey 2) Ensure billing is enabled (even for free tier) 3) Try again in a few moments (API may be temporarily unavailable). Original error: ${error.message}`;
       } else if (error.message.includes("timeout") || error.message.includes("timed out")) {
         errorMessage = error.message; // Keep timeout messages as-is
       } else if (error.message.includes("Failed to download")) {

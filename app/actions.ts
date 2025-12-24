@@ -71,9 +71,10 @@ export async function analyzeComic(formData: FormData) {
     // System instruction
     const systemInstruction = "You are an expert comic book grader. Analyze the video of this comic book. Identify the comic (Series, Issue, Year, Variant) and look for visible defects across all frames. Return the response as clean JSON with fields: title, issue, estimatedGrade, reasoning.";
 
-    // Use gemini-2.5-flash (latest fast model with video support)
+    // Use gemini-1.5-flash (fast model with video support)
+    // Note: gemini-2.5-flash may not be available, using stable 1.5-flash
     const model = genAI.getGenerativeModel({ 
-      model: "gemini-2.5-flash",
+      model: "gemini-1.5-flash",
       systemInstruction: systemInstruction
     });
 
