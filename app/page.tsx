@@ -255,12 +255,12 @@ export default function Home() {
   }, [videoPreview]);
 
   return (
-    <main className="min-h-screen bg-gray-900 text-white p-4 flex flex-col items-center justify-center">
-      <h1 className="text-3xl font-bold mb-8">Comic Video Scanner</h1>
+    <main className="min-h-screen bg-gray-900 text-white p-4 flex flex-col items-center justify-center max-h-screen overflow-hidden">
+      <h1 className="text-2xl sm:text-3xl font-bold mb-4 sm:mb-8">Comic Video Scanner</h1>
 
-      {/* Camera Preview - Live Feed */}
+      {/* Camera Preview - Live Feed with Overlay Controls */}
       {!videoPreview && (
-        <div className="mb-8 w-full max-w-md">
+        <div className="mb-4 sm:mb-8 w-full max-w-md relative flex-shrink-0">
           <video
             ref={videoRef}
             autoPlay
@@ -269,70 +269,75 @@ export default function Home() {
             className={`w-full rounded-xl border-2 ${
               isRecording ? 'border-red-500' : 'border-gray-700'
             }`}
+            style={{ maxHeight: isRecording ? 'calc(100vh - 200px)' : 'auto' }}
           />
+          {/* Overlay controls when recording - always visible on mobile */}
+          {isRecording && (
+            <div className="absolute bottom-0 left-0 right-0 p-3 sm:p-4 bg-gradient-to-t from-black/90 via-black/80 to-transparent rounded-b-xl flex flex-col items-center gap-2 sm:gap-3">
+              <button
+                onClick={stopRecording}
+                className="bg-red-600 hover:bg-red-500 active:bg-red-700 text-white font-bold py-3 px-6 rounded-full text-base sm:text-lg transition shadow-lg z-10 touch-manipulation"
+                style={{ minHeight: '44px' }} // iOS touch target size
+              >
+                ⏹️ Stop Recording
+              </button>
+              <div className="text-red-400 font-semibold text-sm sm:text-base drop-shadow-lg">
+                Recording... {Math.floor(recordingTime / 60)}:{(recordingTime % 60).toString().padStart(2, '0')}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
-      {/* Recording Controls */}
-      <div className="mb-8 flex flex-col items-center gap-4">
-        {!isRecording && !loading && !videoPreview && (
-          <div className="flex flex-col sm:flex-row gap-4 items-center">
+      {/* Recording Controls - Only show when NOT recording */}
+      {!isRecording && (
+        <div className="mb-8 flex flex-col items-center gap-4">
+          {!loading && !videoPreview && (
+            <div className="flex flex-col sm:flex-row gap-4 items-center">
+              <button
+                onClick={startRecording}
+                className="bg-blue-600 hover:bg-blue-500 text-white font-bold py-4 px-8 rounded-full text-xl transition disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                🎥 Record Video
+              </button>
+              <span className="text-gray-500 text-lg">or</span>
+              <label className="cursor-pointer bg-purple-600 hover:bg-purple-500 text-white font-bold py-4 px-8 rounded-full text-xl transition">
+                📁 Upload Video
+                <input 
+                  type="file" 
+                  accept="video/*"
+                  className="hidden" 
+                  onChange={handleFileUpload}
+                  disabled={loading}
+                />
+              </label>
+            </div>
+          )}
+
+          {!loading && videoPreview && (
             <button
               onClick={startRecording}
               className="bg-blue-600 hover:bg-blue-500 text-white font-bold py-4 px-8 rounded-full text-xl transition disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              🎥 Record Video
+              🎥 Record New Video
             </button>
-            <span className="text-gray-500 text-lg">or</span>
-            <label className="cursor-pointer bg-purple-600 hover:bg-purple-500 text-white font-bold py-4 px-8 rounded-full text-xl transition">
-              📁 Upload Video
-              <input 
-                type="file" 
-                accept="video/*"
-                className="hidden" 
-                onChange={handleFileUpload}
-                disabled={loading}
-              />
-            </label>
-          </div>
-        )}
+          )}
 
-        {!isRecording && !loading && videoPreview && (
-          <button
-            onClick={startRecording}
-            className="bg-blue-600 hover:bg-blue-500 text-white font-bold py-4 px-8 rounded-full text-xl transition disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            🎥 Record New Video
-          </button>
-        )}
-
-        {versionInfo && !isRecording && !loading && (
-          <div className="text-gray-500 text-xs mt-2 text-center">
-            v{versionInfo.version} • {versionInfo.commitHash}
-          </div>
-        )}
-        
-        {isRecording && (
-          <>
-            <button
-              onClick={stopRecording}
-              className="bg-red-600 hover:bg-red-500 text-white font-bold py-4 px-8 rounded-full text-xl transition"
-            >
-              ⏹️ Stop Recording
-            </button>
-            <div className="text-red-400 font-semibold text-lg">
-              Recording... {Math.floor(recordingTime / 60)}:{(recordingTime % 60).toString().padStart(2, '0')}
+          {versionInfo && !loading && (
+            <div className="text-gray-500 text-xs mt-2 text-center">
+              v{versionInfo.version} • {versionInfo.commitHash}
             </div>
-          </>
-        )}
+          )}
+        </div>
+      )}
 
-        {loading && (
-          <div className="text-blue-400 font-semibold text-lg">
-            Analyzing video...
-          </div>
-        )}
+      {loading && (
+        <div className="text-blue-400 font-semibold text-base sm:text-lg mb-4">
+          Analyzing video...
+        </div>
+      )}
 
-        {videoPreview && !loading && !isRecording && (
+      {videoPreview && !loading && !isRecording && (
           <div className="flex flex-col gap-2 items-center">
             <button
               onClick={() => {
@@ -367,7 +372,7 @@ export default function Home() {
             </div>
           </div>
         )}
-      </div>
+
       {/* Recorded Video Preview */}
       {videoPreview && !loading && (
         <div className="mb-8 w-full max-w-md">
