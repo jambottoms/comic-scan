@@ -112,24 +112,19 @@ export async function analyzeComicFromUrl(videoUrl: string): Promise<AnalyzeResu
       mimeType = 'video/mp4';
     }
     
-    // Check for potential token overflow (base64 is ~4/3 the size of binary, and Gemini counts tokens)
-    // Rough estimate: 1 token ≈ 4 characters for base64, so 1MB base64 ≈ 250k tokens
-    // Gemini 2.5 Flash has ~1M token context, but we need to leave room for response
-    const estimatedTokens = Math.ceil(base64SizeChars / 4);
-    console.log(`[Server Action] Estimated tokens for video: ~${estimatedTokens.toLocaleString()} tokens`);
+    // Log file size info
+    // Note: Token estimation for video is unreliable - Gemini processes video frames efficiently
+    // and doesn't tokenize raw base64. The actual token count is much lower than base64 size.
+    // We'll let the API handle size limits and return proper errors if needed.
+    console.log(`[Server Action] Video file size: ${fileSizeMB}MB binary, ${base64SizeMB}MB base64`);
     console.log(`[Server Action] MIME type: ${mimeType}`);
     
-    // Hard limit: reject if estimated tokens exceed 900k (leave 100k for response)
-    if (estimatedTokens > 900000) {
-      const maxSizeMB = ((900000 * 4) / 1024 / 1024).toFixed(1);
-      return {
-        success: false,
-        error: `Video is too large (estimated ${estimatedTokens.toLocaleString()} tokens, ~${base64SizeMB}MB base64). Maximum recommended size is ~${maxSizeMB}MB. Please use a shorter or more compressed video.`
-      };
-    }
-    
-    if (estimatedTokens > 800000) {
-      console.warn(`[Server Action] WARNING: Video is very large (~${estimatedTokens.toLocaleString()} tokens estimated). May cause issues.`);
+    // Warn for very large files, but don't reject - let API handle it
+    const binarySizeMB = parseFloat(fileSizeMB);
+    if (binarySizeMB > 50) {
+      console.warn(`[Server Action] WARNING: Video is very large (${fileSizeMB}MB). May exceed API limits or take a long time to process.`);
+    } else if (binarySizeMB > 20) {
+      console.warn(`[Server Action] WARNING: Video is large (${fileSizeMB}MB). Processing may take longer.`);
     }
 
     // Initialize Google Generative AI
