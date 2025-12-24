@@ -303,7 +303,17 @@ export default function Home() {
             }
           } else if (xhr.status === 413) {
             // File too large for API route - fallback to server action
-            reject(new Error('FILE_TOO_LARGE_FOR_API'));
+            try {
+              const errorResponse = JSON.parse(xhr.responseText);
+              // Check if it's the special fallback trigger
+              if (errorResponse.error === 'FILE_TOO_LARGE_FOR_API') {
+                reject(new Error('FILE_TOO_LARGE_FOR_API'));
+              } else {
+                reject(new Error(errorResponse.error || 'File too large for API route'));
+              }
+            } catch {
+              reject(new Error('FILE_TOO_LARGE_FOR_API'));
+            }
           } else {
             try {
               const errorResponse = JSON.parse(xhr.responseText);
@@ -357,7 +367,11 @@ export default function Home() {
           // Don't clear loading here, let finally block handle it
           return;
         } catch (serverActionError: any) {
-          setError(`File too large: ${(file.size / 1024 / 1024).toFixed(2)}MB. Please record a shorter video (5-10 seconds recommended).`);
+          // Show the actual error message from the server action
+          const errorMsg = serverActionError?.message || 'Failed to analyze video';
+          console.error('Server action error:', serverActionError);
+          console.error('File size:', file.size, 'bytes =', (file.size / 1024 / 1024).toFixed(2), 'MB');
+          setError(`Analysis error: ${errorMsg}`);
           setUploadProgress(0);
           setUsingFallback(false); // Reset fallback state
           // Clear video preview on error so user can try again
