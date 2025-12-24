@@ -309,9 +309,21 @@ export default function Home() {
         stack: err instanceof Error ? err.stack : undefined
       });
       
-      let errorMessage = "Failed to analyze. Check terminal for details.";
+      let errorMessage = "Failed to analyze video. ";
       if (err instanceof Error) {
+        // Use the error message from the server action
         errorMessage = err.message;
+        
+        // Add helpful context for common errors
+        if (err.message.includes("GOOGLE_API_KEY")) {
+          errorMessage += " Please check Vercel environment variables.";
+        } else if (err.message.includes("timeout") || err.message.includes("timed out")) {
+          errorMessage += " Try recording a shorter video (5-10 seconds).";
+        } else if (err.message.includes("Failed to download")) {
+          errorMessage += " There may be an issue with Supabase Storage. Please try again.";
+        }
+      } else {
+        errorMessage += "Check browser console and Vercel logs for details.";
       }
       
       setError(errorMessage);
