@@ -276,6 +276,13 @@ export default function Home() {
       formData.append("file", file);
 
       console.log("Sending video to server for analysis...");
+      console.log("File details:", {
+        name: file.name,
+        size: file.size,
+        sizeMB: (file.size / 1024 / 1024).toFixed(2),
+        type: file.type
+      });
+      
       const data = await analyzeComic(formData);
       console.log("Analysis complete, received data:", data);
       
@@ -288,7 +295,21 @@ export default function Home() {
       }
     } catch (err) {
       console.error("Upload analysis error:", err);
-      const errorMessage = err instanceof Error ? err.message : "Failed to analyze. Check terminal for details.";
+      console.error("Error details:", {
+        name: err instanceof Error ? err.name : 'Unknown',
+        message: err instanceof Error ? err.message : String(err),
+        stack: err instanceof Error ? err.stack : undefined
+      });
+      
+      let errorMessage = "Failed to analyze. Check terminal for details.";
+      if (err instanceof Error) {
+        errorMessage = err.message;
+        // Handle Next.js server action specific errors
+        if (err.message.includes("unexpected response") || err.message.includes("Unexpected")) {
+          errorMessage = `Server error: The file may be too large or the server timed out. File size: ${(file.size / 1024 / 1024).toFixed(2)}MB. Try a shorter video or check your network connection.`;
+        }
+      }
+      
       setError(errorMessage);
       // Clear video preview on error so user can try again
       if (videoPreview) {

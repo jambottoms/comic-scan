@@ -41,7 +41,8 @@ export async function analyzeComic(formData: FormData) {
       throw new Error(`Video file is too large (${(file.size / 1024 / 1024).toFixed(1)}MB). Maximum size is 100MB. Please record a shorter video or compress the file.`);
     }
 
-    console.log(`Processing video: ${(file.size / 1024 / 1024).toFixed(2)}MB, type: ${file.type}`);
+    console.log(`[Server Action] Processing video: ${(file.size / 1024 / 1024).toFixed(2)}MB, type: ${file.type}`);
+    console.log(`[Server Action] File name: ${file.name}`);
 
     const arrayBuffer = await file.arrayBuffer();
     console.log("Video loaded into memory");
@@ -109,18 +110,27 @@ export async function analyzeComic(formData: FormData) {
     }
 
   } catch (error) {
-    console.error("Error analyzing comic:", error);
+    console.error("[Server Action] Error analyzing comic:", error);
+    console.error("[Server Action] Error type:", error instanceof Error ? error.constructor.name : typeof error);
+    console.error("[Server Action] Error message:", error instanceof Error ? error.message : String(error));
     
     // Provide more helpful error messages
     if (error instanceof Error) {
+      // Handle Next.js server action serialization errors
+      if (error.message.includes("unexpected response") || error.message.includes("Unexpected")) {
+        throw new Error("Server action error: The response may be too large or the request timed out. Try a shorter video.");
+      }
+      
       if (error.message.includes("not found") || error.message.includes("404")) {
         const availableModels = await listAvailableModels(apiKey);
         console.log("Available models to try:", availableModels);
         throw new Error(`Model not found. Tried: gemini-2.5-flash. The SDK is using v1beta API which may not support this model. Possible solutions: 1) Update your API key from https://aistudio.google.com/apikey 2) Ensure billing is enabled (even for free tier) 3) Try a different model name. Original error: ${error.message}`);
       }
-      throw new Error(error.message);
+      
+      // Re-throw with original message
+      throw error;
     }
     
-    throw new Error("Failed to analyze comic. Check the terminal for details.");
+    throw new Error(`Failed to analyze comic: ${String(error)}. Check the terminal for details.`);
   }
 }
