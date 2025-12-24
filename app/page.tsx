@@ -655,8 +655,38 @@ export default function Home() {
       {/* Error Message */}
       {error && (
         <div className="bg-red-500/20 border border-red-500 text-red-100 p-4 rounded mb-4 max-w-md w-full">
-          <p className="font-semibold mb-1">Analysis Error:</p>
-          <p>{error}</p>
+          <div className="flex justify-between items-start mb-2">
+            <p className="font-semibold">Analysis Error:</p>
+            <button
+              onClick={(e) => {
+                navigator.clipboard.writeText(error);
+                // Show brief feedback
+                const btn = e.currentTarget;
+                const originalText = btn.textContent;
+                btn.textContent = 'Copied!';
+                setTimeout(() => {
+                  btn.textContent = originalText;
+                }, 2000);
+              }}
+              className="text-xs bg-red-600 hover:bg-red-700 px-2 py-1 rounded text-white transition-colors"
+              title="Copy error message"
+            >
+              Copy
+            </button>
+          </div>
+          <pre 
+            className="text-sm whitespace-pre-wrap break-words select-text cursor-text bg-black/20 p-2 rounded mt-2"
+            onClick={(e) => {
+              // Select all text on click
+              const range = document.createRange();
+              range.selectNodeContents(e.currentTarget);
+              const selection = window.getSelection();
+              selection?.removeAllRanges();
+              selection?.addRange(range);
+            }}
+          >
+            {error}
+          </pre>
         </div>
       )}
     </main>
