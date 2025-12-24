@@ -30,15 +30,26 @@ export async function analyzeComic(formData: FormData) {
   }
 
   try {
-
     const file = formData.get("file") as File;
     if (!file) {
       throw new Error("No file uploaded");
     }
 
+    // Check file size (limit to 20MB for API)
+    const maxSize = 20 * 1024 * 1024; // 20MB
+    if (file.size > maxSize) {
+      throw new Error(`Video file is too large (${(file.size / 1024 / 1024).toFixed(1)}MB). Please use a video under 20MB or record a shorter video.`);
+    }
+
+    console.log(`Processing video: ${(file.size / 1024 / 1024).toFixed(2)}MB, type: ${file.type}`);
+
     const arrayBuffer = await file.arrayBuffer();
+    console.log("Video loaded into memory");
+    
     const buffer = Buffer.from(arrayBuffer);
     const base64Video = buffer.toString("base64");
+    console.log("Video converted to base64");
+    
     const mimeType = file.type || "video/mp4";
 
     // Initialize Google Generative AI
@@ -53,7 +64,14 @@ export async function analyzeComic(formData: FormData) {
       systemInstruction: systemInstruction
     });
 
-    const result = await model.generateContent([
+    console.log("Sending video to Gemini API...");
+    
+    // Add timeout wrapper
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error("Video analysis timed out after 60 seconds. The video may be too long or the API is slow. Please try a shorter video.")), 60000);
+    });
+
+    const analysisPromise = model.generateContent([
       {
         inlineData: {
           data: base64Video,
@@ -64,6 +82,9 @@ export async function analyzeComic(formData: FormData) {
         text: "Analyze this comic book video. Look at all frames to identify the comic and assess its condition."
       }
     ]);
+
+    const result = await Promise.race([analysisPromise, timeoutPromise]) as any;
+    console.log("Received response from Gemini API");
 
     // Get the response text
     const response = result.response;

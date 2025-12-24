@@ -123,14 +123,21 @@ export default function Home() {
 
         // Send to server for analysis
         setLoading(true);
+        setError(null);
+        
+        // Show file size info
+        const fileSizeMB = (blob.size / 1024 / 1024).toFixed(2);
+        console.log(`Uploading video: ${fileSizeMB}MB`);
+        
         try {
           const formData = new FormData();
           formData.append("file", blob, "comic-video.webm");
 
           const data = await analyzeComic(formData);
+          console.log("Analysis complete:", data);
           setResult(data);
         } catch (err) {
-          console.error(err);
+          console.error("Analysis error:", err);
           const errorMessage = err instanceof Error ? err.message : "Failed to analyze. Check terminal for details.";
           setError(errorMessage);
         } finally {
@@ -332,8 +339,9 @@ export default function Home() {
       )}
 
       {loading && (
-        <div className="text-blue-400 font-semibold text-base sm:text-lg mb-4">
-          Analyzing video...
+        <div className="text-blue-400 font-semibold text-base sm:text-lg mb-4 text-center">
+          <div className="animate-pulse">Analyzing video...</div>
+          <div className="text-xs text-gray-500 mt-2">This may take 30-60 seconds for longer videos</div>
         </div>
       )}
 
