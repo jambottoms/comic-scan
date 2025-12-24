@@ -128,13 +128,16 @@ export async function analyzeComicFromUrl(videoUrl: string): Promise<AnalyzeResu
     }
 
     // Initialize Google Generative AI
+    // The SDK uses v1 (stable) API by default for stable models like gemini-2.5-flash
+    // v1beta is only used for preview/experimental models
     const genAI = new GoogleGenerativeAI(apiKey);
     
     // System instruction
     const systemInstruction = "You are an expert comic book grader. Analyze the video of this comic book. Identify the comic (Series, Issue, Year, Variant) and look for visible defects across all frames. Return the response as clean JSON with fields: title, issue, estimatedGrade, reasoning.";
 
-    // Use only gemini-2.5-flash
-    console.log(`[Server Action] Using model: gemini-2.5-flash`);
+    // Use gemini-2.5-flash (stable model, uses v1 API)
+    // Note: Stable models like gemini-2.5-flash use the v1 API endpoint automatically
+    console.log(`[Server Action] Using model: gemini-2.5-flash (stable, v1 API)`);
     const model = genAI.getGenerativeModel({ 
       model: "gemini-2.5-flash",
       systemInstruction: systemInstruction
