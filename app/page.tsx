@@ -269,122 +269,14 @@ export default function Home() {
     const fileSizeMB = (file.size / 1024 / 1024).toFixed(2);
     console.log(`Uploading video for analysis: ${fileSizeMB}MB`);
 
-    // For files over 50MB, use server action directly (bypasses potential API route limits)
-    // We'll try the API route first for files under 50MB to get progress tracking
-    // If it fails, the fallback logic will catch it
-    const FILE_SIZE_THRESHOLD = 50 * 1024 * 1024; // 50MB
-    if (file.size > FILE_SIZE_THRESHOLD) {
-      console.log('File is over 50MB, using server action directly (no progress tracking)');
-      setUsingFallback(true);
-      try {
-        const formData = new FormData();
-        formData.append("file", file);
-        const data = await analyzeComic(formData);
-        setResult(data);
-        setUsingFallback(false);
-        setLoading(false);
-        setUploadProgress(100);
-        return;
-      } catch (serverActionError: any) {
-        const errorMsg = serverActionError?.message || 'Failed to analyze video';
-        console.error('Server action error:', serverActionError);
-        console.error('File size:', file.size, 'bytes =', (file.size / 1024 / 1024).toFixed(2), 'MB');
-        setError(`Analysis error: ${errorMsg}`);
-        setLoading(false);
-        setUploadProgress(0);
-        setUsingFallback(false);
-        return;
-      }
-    }
-
+    // Use server action directly (like the original working version)
+    // This is simpler and more reliable than the API route approach
     try {
       const formData = new FormData();
       formData.append("file", file);
 
-      // Use XMLHttpRequest to track upload progress (for files under 20MB)
-      const data = await new Promise<any>((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        uploadXhrRef.current = xhr; // Store for cancellation
-
-        // Track upload progress
-        xhr.upload.addEventListener('progress', (event) => {
-          if (event.lengthComputable) {
-            const percentComplete = Math.round((event.loaded / event.total) * 100);
-            setUploadProgress(percentComplete);
-            console.log(`Upload progress: ${percentComplete}%`);
-          }
-        });
-
-        // Handle completion
-        xhr.addEventListener('load', () => {
-          uploadXhrRef.current = null; // Clear ref
-          if (xhr.status === 200) {
-            try {
-              const response = JSON.parse(xhr.responseText);
-              if (response.error) {
-                reject(new Error(response.error));
-              } else {
-                resolve(response);
-              }
-            } catch (parseError) {
-              console.error('Failed to parse response:', xhr.responseText);
-              reject(new Error(`Failed to parse response: ${xhr.responseText?.substring(0, 100) || 'Empty response'}`));
-            }
-          } else if (xhr.status === 413) {
-            // File too large for API route - fallback to server action
-            try {
-              const errorResponse = JSON.parse(xhr.responseText);
-              // Check if it's the special fallback trigger
-              if (errorResponse.error === 'FILE_TOO_LARGE_FOR_API') {
-                reject(new Error('FILE_TOO_LARGE_FOR_API'));
-              } else {
-                reject(new Error(errorResponse.error || 'File too large for API route'));
-              }
-            } catch {
-              reject(new Error('FILE_TOO_LARGE_FOR_API'));
-            }
-          } else {
-            try {
-              const errorResponse = JSON.parse(xhr.responseText);
-              reject(new Error(errorResponse.error || `Server error: ${xhr.status}`));
-            } catch (parseError) {
-              console.error('Failed to parse error response:', xhr.responseText);
-              const responsePreview = xhr.responseText?.substring(0, 200) || 'No response body';
-              reject(new Error(`Server error (${xhr.status}): ${responsePreview}`));
-            }
-          }
-        });
-
-        // Handle errors - catch network errors and unexpected responses
-        xhr.addEventListener('error', () => {
-          uploadXhrRef.current = null;
-          const responseText = xhr.responseText || '';
-          const status = xhr.status || 0;
-          let errorMsg = 'Network error during upload';
-          if (responseText) {
-            try {
-              const errorResponse = JSON.parse(responseText);
-              errorMsg = errorResponse.error || errorMsg;
-            } catch {
-              errorMsg = responseText || errorMsg;
-            }
-          }
-          if (status > 0) {
-            errorMsg = `Server error (${status}): ${errorMsg}`;
-          }
-          reject(new Error(errorMsg));
-        });
-
-        xhr.addEventListener('abort', () => {
-          uploadXhrRef.current = null;
-          reject(new Error('Upload cancelled'));
-        });
-
-        // Start the upload
-        xhr.open('POST', '/api/analyze');
-        xhr.send(formData);
-      });
-
+      console.log("Sending video to server for analysis...");
+      const data = await analyzeComic(formData);
       console.log("Analysis complete, received data:", data);
       
       if (data) {
@@ -397,55 +289,16 @@ export default function Home() {
     } catch (err) {
       console.error("Upload analysis error:", err);
       const errorMessage = err instanceof Error ? err.message : "Failed to analyze. Check terminal for details.";
-      
-      // If API route fails with 413, try server action directly (has higher limit)
-      if (errorMessage === 'FILE_TOO_LARGE_FOR_API' || errorMessage.includes('413')) {
-        console.log('API route rejected file, trying server action directly...');
-        setUsingFallback(true); // Show fallback message
-        try {
-          // Use server action directly (has 100MB limit configured)
-          const formData = new FormData();
-          formData.append("file", file);
-          const data = await analyzeComic(formData);
-          setResult(data);
-          setUsingFallback(false); // Reset fallback state
-          // Don't clear loading here, let finally block handle it
-          return;
-        } catch (serverActionError: any) {
-          // Show the actual error message from the server action
-          const errorMsg = serverActionError?.message || 'Failed to analyze video';
-          console.error('Server action error:', serverActionError);
-          console.error('File size:', file.size, 'bytes =', (file.size / 1024 / 1024).toFixed(2), 'MB');
-          setError(`Analysis error: ${errorMsg}`);
-          setUploadProgress(0);
-          setUsingFallback(false); // Reset fallback state
-          // Clear video preview on error so user can try again
-          if (videoPreview) {
-            URL.revokeObjectURL(videoPreview);
-            setVideoPreview(null);
-          }
-          return;
-        }
-      }
-      
-      // Don't show error if it was cancelled
-      if (!errorMessage.includes('cancelled')) {
-        setError(errorMessage);
-      }
-      
-      setUploadProgress(0);
-      setUsingFallback(false); // Reset fallback state
-      // Clear video preview on error/cancel so user can try again
+      setError(errorMessage);
+      // Clear video preview on error so user can try again
       if (videoPreview) {
         URL.revokeObjectURL(videoPreview);
         setVideoPreview(null);
       }
     } finally {
       setLoading(false);
-      setUsingFallback(false); // Ensure fallback state is reset
+      setUploadProgress(0);
       uploadXhrRef.current = null;
-      // Reset progress after a short delay
-      setTimeout(() => setUploadProgress(0), 2000);
     }
   };
 
