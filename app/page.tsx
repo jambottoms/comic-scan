@@ -243,10 +243,10 @@ export default function Home() {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    // Check file size before upload (50MB limit - conservative to avoid 413 errors)
-    const maxSize = 50 * 1024 * 1024; // 50MB
+    // Check file size before upload (100MB limit - matches server action limit)
+    const maxSize = 100 * 1024 * 1024; // 100MB
     if (file.size > maxSize) {
-      setError(`File too large: ${(file.size / 1024 / 1024).toFixed(2)}MB. Maximum size is 50MB. Please record a shorter video (5-10 seconds recommended).`);
+      setError(`File too large: ${(file.size / 1024 / 1024).toFixed(2)}MB. Maximum size is 100MB. Please record a shorter video or compress the file.`);
       return;
     }
 

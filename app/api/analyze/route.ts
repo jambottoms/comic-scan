@@ -14,7 +14,7 @@ export async function POST(request: NextRequest) {
       // If we can't even parse the form data, it's likely too large
       if (formError.message?.includes('413') || formError.status === 413) {
         return NextResponse.json(
-          { error: 'File too large. The server rejected the upload. Please use a video under 50MB or record a shorter video (5-10 seconds recommended).' },
+          { error: 'File too large for API route. Falling back to server action...' },
           { status: 413 }
         );
       }
@@ -30,11 +30,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Check file size (50MB limit - more conservative to avoid 413)
-    const maxSize = 50 * 1024 * 1024; // 50MB
+    // Check file size (20MB limit for API route - larger files will fallback to server action)
+    // This is conservative to avoid Next.js default body size limits on API routes
+    const maxSize = 20 * 1024 * 1024; // 20MB
     if (file.size > maxSize) {
+      // Return 413 to trigger fallback to server action (which supports up to 100MB)
       return NextResponse.json(
-        { error: `File too large: ${(file.size / 1024 / 1024).toFixed(2)}MB. Maximum size is 50MB. Please record a shorter video (5-10 seconds recommended).` },
+        { error: 'FILE_TOO_LARGE_FOR_API' },
         { status: 413 }
       );
     }
@@ -47,7 +49,7 @@ export async function POST(request: NextRequest) {
     // Handle 413 specifically
     if (error instanceof Error && (error.message.includes('413') || error.message.includes('too large'))) {
       return NextResponse.json(
-        { error: 'File too large. Please use a video under 50MB or record a shorter video (5-10 seconds recommended).' },
+        { error: 'FILE_TOO_LARGE_FOR_API' },
         { status: 413 }
       );
     }

@@ -35,10 +35,10 @@ export async function analyzeComic(formData: FormData) {
       throw new Error("No file uploaded");
     }
 
-    // Check file size (limit to 50MB for API - conservative to avoid 413 errors)
-    const maxSize = 50 * 1024 * 1024; // 50MB
+    // Check file size (limit to 100MB - matches next.config.ts serverActions.bodySizeLimit)
+    const maxSize = 100 * 1024 * 1024; // 100MB
     if (file.size > maxSize) {
-      throw new Error(`Video file is too large (${(file.size / 1024 / 1024).toFixed(1)}MB). Please use a video under 50MB or record a shorter video (5-10 seconds recommended).`);
+      throw new Error(`Video file is too large (${(file.size / 1024 / 1024).toFixed(1)}MB). Maximum size is 100MB. Please record a shorter video or compress the file.`);
     }
 
     console.log(`Processing video: ${(file.size / 1024 / 1024).toFixed(2)}MB, type: ${file.type}`);
