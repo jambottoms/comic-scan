@@ -75,20 +75,62 @@ export async function analyzeComicFromUrl(videoUrl: string): Promise<AnalyzeResu
     const base64SizeChars = base64Video.length;
     console.log(`[Server Action] Video converted to base64: ${base64SizeMB}MB (${base64SizeChars.toLocaleString()} characters)`);
     
+    // Validate base64 encoding
+    if (!base64Video || base64Video.length === 0) {
+      return {
+        success: false,
+        error: "Failed to encode video to base64. The video file may be corrupted."
+      };
+    }
+    
+    // Validate base64 format (should only contain valid base64 characters)
+    const base64Regex = /^[A-Za-z0-9+/]*={0,2}$/;
+    if (!base64Regex.test(base64Video)) {
+      return {
+        success: false,
+        error: "Invalid base64 encoding detected. The video file may be corrupted."
+      };
+    }
+    
+    // Determine mime type from URL or default to mp4
+    // Validate mimeType is a valid video format
+    let mimeType = 'video/mp4';
+    const urlLower = videoUrl.toLowerCase();
+    if (urlLower.endsWith('.webm')) {
+      mimeType = 'video/webm';
+    } else if (urlLower.endsWith('.mov') || urlLower.endsWith('.qt')) {
+      mimeType = 'video/quicktime';
+    } else if (urlLower.endsWith('.avi')) {
+      mimeType = 'video/x-msvideo';
+    } else if (urlLower.endsWith('.mkv')) {
+      mimeType = 'video/x-matroska';
+    }
+    
+    // Validate mimeType format
+    if (!mimeType.startsWith('video/')) {
+      console.warn(`[Server Action] Invalid mimeType detected: ${mimeType}, defaulting to video/mp4`);
+      mimeType = 'video/mp4';
+    }
+    
     // Check for potential token overflow (base64 is ~4/3 the size of binary, and Gemini counts tokens)
     // Rough estimate: 1 token ≈ 4 characters for base64, so 1MB base64 ≈ 250k tokens
     // Gemini 2.5 Flash has ~1M token context, but we need to leave room for response
     const estimatedTokens = Math.ceil(base64SizeChars / 4);
     console.log(`[Server Action] Estimated tokens for video: ~${estimatedTokens.toLocaleString()} tokens`);
+    console.log(`[Server Action] MIME type: ${mimeType}`);
     
-    if (estimatedTokens > 800000) {
-      console.warn(`[Server Action] WARNING: Video may exceed token limit (~${estimatedTokens.toLocaleString()} tokens estimated)`);
+    // Hard limit: reject if estimated tokens exceed 900k (leave 100k for response)
+    if (estimatedTokens > 900000) {
+      const maxSizeMB = ((900000 * 4) / 1024 / 1024).toFixed(1);
+      return {
+        success: false,
+        error: `Video is too large (estimated ${estimatedTokens.toLocaleString()} tokens, ~${base64SizeMB}MB base64). Maximum recommended size is ~${maxSizeMB}MB. Please use a shorter or more compressed video.`
+      };
     }
     
-    // Determine mime type from URL or default to mp4
-    const mimeType = videoUrl.toLowerCase().endsWith('.webm') ? 'video/webm' : 
-                     videoUrl.toLowerCase().endsWith('.mov') ? 'video/quicktime' : 
-                     'video/mp4';
+    if (estimatedTokens > 800000) {
+      console.warn(`[Server Action] WARNING: Video is very large (~${estimatedTokens.toLocaleString()} tokens estimated). May cause issues.`);
+    }
 
     // Initialize Google Generative AI
     const genAI = new GoogleGenerativeAI(apiKey);
@@ -123,9 +165,8 @@ export async function analyzeComicFromUrl(videoUrl: string): Promise<AnalyzeResu
       setTimeout(() => reject(new Error("Video analysis timed out after 60 seconds. The video may be too long or the API is slow. Please try a shorter video.")), 60000);
     });
 
-    // Generate content with the model
-    console.log("[Server Action] Sending video to Gemini API...");
-    const analysisPromise = model.generateContent([
+    // Validate payload structure before sending
+    const payload = [
       {
         inlineData: {
           data: base64Video,
@@ -135,7 +176,28 @@ export async function analyzeComicFromUrl(videoUrl: string): Promise<AnalyzeResu
       {
         text: "Analyze this comic book video. Look at all frames to identify the comic and assess its condition."
       }
-    ]);
+    ];
+    
+    // Validate payload structure
+    if (!payload[0]?.inlineData?.data || !payload[0]?.inlineData?.mimeType) {
+      return {
+        success: false,
+        error: "Malformed payload: inlineData structure is invalid."
+      };
+    }
+    
+    if (!payload[1]?.text || typeof payload[1].text !== 'string') {
+      return {
+        success: false,
+        error: "Malformed payload: text prompt is invalid."
+      };
+    }
+    
+    console.log("[Server Action] Payload validated. Sending video to Gemini API...");
+    console.log(`[Server Action] Payload structure: ${payload.length} parts (1 video, 1 text)`);
+    
+    // Generate content with the model
+    const analysisPromise = model.generateContent(payload);
     
     const result = await Promise.race([analysisPromise, timeoutPromise]) as any;
     
@@ -209,10 +271,12 @@ export async function analyzeComicFromUrl(videoUrl: string): Promise<AnalyzeResu
         errorMessage = "Server action error: The response may be too large or the request timed out. Try a shorter video.";
       } else if (error.message.includes("not found") || error.message.includes("404") || error.message.includes("500")) {
         if (error.message.includes("500")) {
-          errorMessage = `500 Internal Server Error from Gemini API. This could be: 1) Token overflow (video too large) 2) API quota/permission issue 3) Temporary API outage. Try a shorter/smaller video. Original error: ${error.message}`;
+          errorMessage = `500 Internal Server Error from Gemini API. Possible causes: 1) Token overflow (video too large - try smaller/shorter video) 2) Malformed payload (invalid base64 or mimeType) 3) API quota/permission issue 4) Temporary API outage. Check Vercel logs for token estimates. Original error: ${error.message}`;
         } else {
           errorMessage = `API error (${error.message.includes("404") ? "Model not found" : "Unknown"}). Using gemini-2.5-flash. Possible solutions: 1) Update your API key from https://aistudio.google.com/apikey 2) Ensure billing is enabled (even for free tier) 3) Try again in a few moments (API may be temporarily unavailable). Original error: ${error.message}`;
         }
+      } else if (error.message.includes("invalid") || error.message.includes("malformed") || error.message.includes("format")) {
+        errorMessage = `Invalid payload format. The video may be corrupted or in an unsupported format. Error: ${error.message}`;
       } else if (error.message.includes("timeout") || error.message.includes("timed out")) {
         errorMessage = error.message; // Keep timeout messages as-is
       } else if (error.message.includes("Failed to download")) {
