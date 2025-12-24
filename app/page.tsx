@@ -269,11 +269,39 @@ export default function Home() {
     const fileSizeMB = (file.size / 1024 / 1024).toFixed(2);
     console.log(`Uploading video for analysis: ${fileSizeMB}MB`);
 
+    // For files over 50MB, use server action directly (bypasses potential API route limits)
+    // We'll try the API route first for files under 50MB to get progress tracking
+    // If it fails, the fallback logic will catch it
+    const FILE_SIZE_THRESHOLD = 50 * 1024 * 1024; // 50MB
+    if (file.size > FILE_SIZE_THRESHOLD) {
+      console.log('File is over 50MB, using server action directly (no progress tracking)');
+      setUsingFallback(true);
+      try {
+        const formData = new FormData();
+        formData.append("file", file);
+        const data = await analyzeComic(formData);
+        setResult(data);
+        setUsingFallback(false);
+        setLoading(false);
+        setUploadProgress(100);
+        return;
+      } catch (serverActionError: any) {
+        const errorMsg = serverActionError?.message || 'Failed to analyze video';
+        console.error('Server action error:', serverActionError);
+        console.error('File size:', file.size, 'bytes =', (file.size / 1024 / 1024).toFixed(2), 'MB');
+        setError(`Analysis error: ${errorMsg}`);
+        setLoading(false);
+        setUploadProgress(0);
+        setUsingFallback(false);
+        return;
+      }
+    }
+
     try {
       const formData = new FormData();
       formData.append("file", file);
 
-      // Use XMLHttpRequest to track upload progress
+      // Use XMLHttpRequest to track upload progress (for files under 20MB)
       const data = await new Promise<any>((resolve, reject) => {
         const xhr = new XMLHttpRequest();
         uploadXhrRef.current = xhr; // Store for cancellation
@@ -299,7 +327,8 @@ export default function Home() {
                 resolve(response);
               }
             } catch (parseError) {
-              reject(new Error('Failed to parse response'));
+              console.error('Failed to parse response:', xhr.responseText);
+              reject(new Error(`Failed to parse response: ${xhr.responseText?.substring(0, 100) || 'Empty response'}`));
             }
           } else if (xhr.status === 413) {
             // File too large for API route - fallback to server action
@@ -318,16 +347,32 @@ export default function Home() {
             try {
               const errorResponse = JSON.parse(xhr.responseText);
               reject(new Error(errorResponse.error || `Server error: ${xhr.status}`));
-            } catch {
-              reject(new Error(`Server error: ${xhr.status}`));
+            } catch (parseError) {
+              console.error('Failed to parse error response:', xhr.responseText);
+              const responsePreview = xhr.responseText?.substring(0, 200) || 'No response body';
+              reject(new Error(`Server error (${xhr.status}): ${responsePreview}`));
             }
           }
         });
 
-        // Handle errors
+        // Handle errors - catch network errors and unexpected responses
         xhr.addEventListener('error', () => {
           uploadXhrRef.current = null;
-          reject(new Error('Network error during upload'));
+          const responseText = xhr.responseText || '';
+          const status = xhr.status || 0;
+          let errorMsg = 'Network error during upload';
+          if (responseText) {
+            try {
+              const errorResponse = JSON.parse(responseText);
+              errorMsg = errorResponse.error || errorMsg;
+            } catch {
+              errorMsg = responseText || errorMsg;
+            }
+          }
+          if (status > 0) {
+            errorMsg = `Server error (${status}): ${errorMsg}`;
+          }
+          reject(new Error(errorMsg));
         });
 
         xhr.addEventListener('abort', () => {

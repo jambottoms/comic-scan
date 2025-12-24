@@ -30,9 +30,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Check file size (20MB limit for API route - larger files will fallback to server action)
-    // This is conservative to avoid Next.js default body size limits on API routes
-    const maxSize = 20 * 1024 * 1024; // 20MB
+    // Check file size (100MB limit for API route - try to match server action limit)
+    // Note: Next.js API routes may have platform-specific limits (e.g., Vercel has 4.5MB default)
+    // If this fails, files will automatically fallback to server action
+    const maxSize = 100 * 1024 * 1024; // 100MB
     if (file.size > maxSize) {
       // Return 413 to trigger fallback to server action (which supports up to 100MB)
       return NextResponse.json(
