@@ -17,7 +17,6 @@ export default function Home() {
   const [videoPreview, setVideoPreview] = useState<string | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
-  const [showFileInput, setShowFileInput] = useState(false);
   const [versionInfo, setVersionInfo] = useState<VersionInfo | null>(null);
   
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -157,19 +156,15 @@ export default function Home() {
         const errorName = (err as any).name || '';
         
         if (errorName === 'NotAllowedError' || errorName === 'PermissionDeniedError' || err.message.includes("permission")) {
-          errorMessage = "Camera permission denied. Please allow camera access in your browser settings, or use the file upload option below.";
-          setShowFileInput(true); // Show file input as fallback
+          errorMessage = "Camera permission denied. Please allow camera access in your browser settings, or use the file upload option.";
         } else if (errorName === 'NotFoundError' || err.message.includes("not found")) {
-          errorMessage = "No camera found. Please connect a camera or use the file upload option below.";
-          setShowFileInput(true);
+          errorMessage = "No camera found. Please connect a camera or use the file upload option.";
         } else if (errorName === 'NotReadableError' || err.message.includes("not readable")) {
           errorMessage = "Camera is already in use by another application. Please close other apps using the camera.";
         } else if (errorName === 'OverconstrainedError') {
           errorMessage = "Camera doesn't support the requested quality settings. Please try again or use file upload.";
-          setShowFileInput(true);
         } else {
-          errorMessage = err.message || "Failed to access camera. You can use the file upload option below.";
-          setShowFileInput(true);
+          errorMessage = err.message || "Failed to access camera. You can use the file upload option.";
         }
       }
       
@@ -280,20 +275,41 @@ export default function Home() {
 
       {/* Recording Controls */}
       <div className="mb-8 flex flex-col items-center gap-4">
-        {!isRecording && !loading && (
-          <>
+        {!isRecording && !loading && !videoPreview && (
+          <div className="flex flex-col sm:flex-row gap-4 items-center">
             <button
               onClick={startRecording}
               className="bg-blue-600 hover:bg-blue-500 text-white font-bold py-4 px-8 rounded-full text-xl transition disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              🎥 {videoPreview ? 'Record New Video' : 'Start Recording'}
+              🎥 Record Video
             </button>
-            {versionInfo && (
-              <div className="text-gray-500 text-xs mt-2 text-center">
-                v{versionInfo.version} • {versionInfo.commitHash}
-              </div>
-            )}
-          </>
+            <span className="text-gray-500 text-lg">or</span>
+            <label className="cursor-pointer bg-purple-600 hover:bg-purple-500 text-white font-bold py-4 px-8 rounded-full text-xl transition">
+              📁 Upload Video
+              <input 
+                type="file" 
+                accept="video/*"
+                className="hidden" 
+                onChange={handleFileUpload}
+                disabled={loading}
+              />
+            </label>
+          </div>
+        )}
+
+        {!isRecording && !loading && videoPreview && (
+          <button
+            onClick={startRecording}
+            className="bg-blue-600 hover:bg-blue-500 text-white font-bold py-4 px-8 rounded-full text-xl transition disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            🎥 Record New Video
+          </button>
+        )}
+
+        {versionInfo && !isRecording && !loading && (
+          <div className="text-gray-500 text-xs mt-2 text-center">
+            v{versionInfo.version} • {versionInfo.commitHash}
+          </div>
         )}
         
         {isRecording && (
@@ -317,41 +333,41 @@ export default function Home() {
         )}
 
         {videoPreview && !loading && !isRecording && (
-          <button
-            onClick={() => {
-              if (videoPreview) {
-                URL.revokeObjectURL(videoPreview);
-              }
-              setVideoPreview(null);
-              setResult(null);
-              setError(null);
-              setShowFileInput(false);
-            }}
-            className="bg-gray-600 hover:bg-gray-500 text-white font-bold py-2 px-6 rounded-full text-sm transition"
-          >
-            Clear & Record Again
-          </button>
+          <div className="flex flex-col gap-2 items-center">
+            <button
+              onClick={() => {
+                if (videoPreview) {
+                  URL.revokeObjectURL(videoPreview);
+                }
+                setVideoPreview(null);
+                setResult(null);
+                setError(null);
+              }}
+              className="bg-gray-600 hover:bg-gray-500 text-white font-bold py-2 px-6 rounded-full text-sm transition"
+            >
+              Clear & Try Again
+            </button>
+            <div className="flex gap-4">
+              <button
+                onClick={startRecording}
+                className="bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 px-4 rounded-full text-sm transition"
+              >
+                🎥 Record New
+              </button>
+              <label className="cursor-pointer bg-purple-600 hover:bg-purple-500 text-white font-bold py-2 px-4 rounded-full text-sm transition">
+                📁 Upload New
+                <input 
+                  type="file" 
+                  accept="video/*"
+                  className="hidden" 
+                  onChange={handleFileUpload}
+                  disabled={loading}
+                />
+              </label>
+            </div>
+          </div>
         )}
       </div>
-
-      {/* File Upload Fallback */}
-      {showFileInput && (
-        <div className="mb-8 w-full max-w-md">
-          <p className="text-gray-400 text-sm mb-4 text-center">
-            Camera access denied. You can upload a video file instead:
-          </p>
-          <label className="cursor-pointer bg-purple-600 hover:bg-purple-500 text-white font-bold py-4 px-8 rounded-full text-xl transition flex items-center justify-center">
-            📁 Upload Video File
-            <input 
-              type="file" 
-              accept="video/*"
-              className="hidden" 
-              onChange={handleFileUpload}
-              disabled={loading}
-            />
-          </label>
-        </div>
-      )}
 
       {/* Recorded Video Preview */}
       {videoPreview && !loading && (
