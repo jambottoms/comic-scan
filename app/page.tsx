@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { analyzeComic } from './actions';
+import { uploadToSupabase } from '@/lib/supabase/upload';
+import { analyzeComicFromUrl } from './actions/analyze-from-url';
 
 interface VersionInfo {
   version: string;
@@ -244,13 +246,14 @@ export default function Home() {
     if (!file) return;
 
     // Check file size before upload
-    // Vercel has a 4.5MB body size limit for serverless functions (even on Pro)
-    // This is a platform limitation that can't be changed
-    const vercelLimit = 4.5 * 1024 * 1024; // 4.5MB - Vercel's hard limit
+    // Next.js config allows up to 100MB locally
+    // Vercel has a 4.5MB body size limit for serverless functions (platform limitation)
+    // We'll let the server action handle the limit check based on environment
+    const nextJsLimit = 100 * 1024 * 1024; // 100MB - Next.js config limit
     const uploadFileSizeMB = (file.size / 1024 / 1024).toFixed(2);
     
-    if (file.size > vercelLimit) {
-      setError(`File too large for Vercel: ${uploadFileSizeMB}MB. Vercel has a 4.5MB body size limit for serverless functions (even on Pro plan). Please record a shorter video (under 4.5MB) or compress the file.`);
+    if (file.size > nextJsLimit) {
+      setError(`File too large: ${uploadFileSizeMB}MB. Maximum size is 100MB (Next.js config). Please record a shorter video or compress the file.`);
       return;
     }
 
@@ -273,22 +276,23 @@ export default function Home() {
     const fileSizeMB = (file.size / 1024 / 1024).toFixed(2);
     console.log(`Uploading video for analysis: ${fileSizeMB}MB`);
 
-    // Use server action directly (like the original working version)
-    // This is simpler and more reliable than the API route approach
+    // Use Supabase for file upload (bypasses Vercel's 4.5MB limit)
     try {
-      const formData = new FormData();
-      formData.append("file", file);
-
-      console.log("Sending video to server for analysis...");
-      console.log("File details:", {
-        name: file.name,
-        size: file.size,
-        sizeMB: (file.size / 1024 / 1024).toFixed(2),
-        type: file.type
-      });
+      // Step 1: Upload file to Supabase Storage (client-side, no size limit)
+      console.log("Step 1: Uploading to Supabase Storage...");
+      setUploadProgress(10);
       
-      const data = await analyzeComic(formData);
+      const supabaseUrl = await uploadToSupabase(file);
+      console.log("File uploaded to Supabase:", supabaseUrl);
+      setUploadProgress(50);
+      
+      // Step 2: Send URL to server action (small payload, bypasses 4.5MB limit)
+      console.log("Step 2: Sending URL to server for analysis...");
+      setUploadProgress(60);
+      
+      const data = await analyzeComicFromUrl(supabaseUrl);
       console.log("Analysis complete, received data:", data);
+      setUploadProgress(90);
       
       if (data) {
         setResult(data);
@@ -308,10 +312,6 @@ export default function Home() {
       let errorMessage = "Failed to analyze. Check terminal for details.";
       if (err instanceof Error) {
         errorMessage = err.message;
-        // Handle Next.js server action specific errors
-        if (err.message.includes("unexpected response") || err.message.includes("Unexpected")) {
-          errorMessage = `Server error: The file may be too large or the server timed out. File size: ${(file.size / 1024 / 1024).toFixed(2)}MB. Try a shorter video or check your network connection.`;
-        }
       }
       
       setError(errorMessage);
