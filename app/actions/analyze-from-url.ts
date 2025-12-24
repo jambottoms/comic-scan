@@ -97,11 +97,13 @@ export async function analyzeComicFromUrl(videoUrl: string): Promise<AnalyzeResu
       "gemini-pro-vision"          // Last resort
     ];
     
+    // Try each model until one works
+    // Note: getGenerativeModel() doesn't validate the model - errors only occur when calling generateContent()
     let model;
     let modelName;
     let lastError: Error | null = null;
+    let triedModels: string[] = [];
     
-    // Try each model until one works
     for (const tryModelName of modelNames) {
       try {
         console.log(`[Server Action] Trying model: ${tryModelName}`);
@@ -110,82 +112,98 @@ export async function analyzeComicFromUrl(videoUrl: string): Promise<AnalyzeResu
           systemInstruction: systemInstruction
         });
         modelName = tryModelName;
-        console.log(`[Server Action] Successfully initialized model: ${modelName}`);
-        break;
-      } catch (initError) {
-        lastError = initError instanceof Error ? initError : new Error(String(initError));
-        console.log(`[Server Action] Model ${tryModelName} failed: ${lastError.message}`);
-        continue;
-      }
-    }
-    
-    if (!model) {
-      return {
-        success: false,
-        error: `No available Gemini models found. Tried: ${modelNames.join(", ")}. Please check: 1) Your API key from https://aistudio.google.com/apikey 2) Ensure billing is enabled (even for free tier) 3) Your API key may need access to newer models. Last error: ${lastError?.message || "Unknown"}`
-      };
-    }
+        triedModels.push(tryModelName);
+        
+        console.log(`[Server Action] Model object created, testing with generateContent...`);
+        
+        // Add timeout wrapper
+        const timeoutPromise = new Promise((_, reject) => {
+          setTimeout(() => reject(new Error("Video analysis timed out after 60 seconds. The video may be too long or the API is slow. Please try a shorter video.")), 60000);
+        });
 
-    console.log("[Server Action] Sending video to Gemini API...");
-    
-    // Add timeout wrapper
-    const timeoutPromise = new Promise((_, reject) => {
-      setTimeout(() => reject(new Error("Video analysis timed out after 60 seconds. The video may be too long or the API is slow. Please try a shorter video.")), 60000);
-    });
-
-    let analysisPromise;
-    try {
-      analysisPromise = model.generateContent([
-        {
-          inlineData: {
-            data: base64Video,
-            mimeType: mimeType
+        // Actually try to use the model - this is where "model not found" errors occur
+        const testPromise = model.generateContent([
+          {
+            inlineData: {
+              data: base64Video,
+              mimeType: mimeType
+            }
+          },
+          {
+            text: "Analyze this comic book video. Look at all frames to identify the comic and assess its condition."
           }
-        },
-        {
-          text: "Analyze this comic book video. Look at all frames to identify the comic and assess its condition."
+        ]);
+        
+        // If we get here without error, the model works!
+        console.log(`[Server Action] Successfully using model: ${modelName}`);
+        const result = await Promise.race([testPromise, timeoutPromise]) as any;
+        
+        // Model works! Continue with processing the result
+        console.log("[Server Action] Received response from Gemini API");
+        
+        // Get the response text
+        const response = result.response;
+        const text = response.text();
+        
+        // Clean up markdown code blocks if Gemini sends them
+        let cleanText = text.trim();
+        
+        // Remove markdown code blocks more robustly
+        if (cleanText.startsWith("```")) {
+          const lines = cleanText.split("\n");
+          cleanText = lines.slice(1, -1).join("\n");
         }
-      ]);
-    } catch (modelError) {
-      // If model doesn't support video or is not found, return helpful error
-      if (modelError instanceof Error && (modelError.message.includes("not found") || modelError.message.includes("404"))) {
+        cleanText = cleanText.replace(/^```json\s*/i, '').replace(/\s*```$/i, '').trim();
+        
+        // Parse JSON with better error handling
+        try {
+          const parsedResult = JSON.parse(cleanText);
+          console.log("[Server Action] Parsed JSON result:", parsedResult);
+          return { success: true, data: parsedResult };
+        } catch (parseError) {
+          console.error("Failed to parse JSON:", cleanText);
+          return { 
+            success: false, 
+            error: `Invalid JSON response from AI: ${cleanText.substring(0, 100)}` 
+          };
+        }
+        
+      } catch (modelError) {
+        lastError = modelError instanceof Error ? modelError : new Error(String(modelError));
+        const errorMsg = lastError.message;
+        console.log(`[Server Action] Model ${tryModelName} failed: ${errorMsg}`);
+        
+        // If it's a "model not found" error, try next model
+        if (errorMsg.includes("not found") || errorMsg.includes("404") || errorMsg.includes("is not found")) {
+          continue; // Try next model
+        }
+        
+        // If it's a timeout, return that error
+        if (errorMsg.includes("timeout") || errorMsg.includes("timed out")) {
+          return {
+            success: false,
+            error: `Video analysis timed out after 60 seconds. The video may be too long or the API is slow. Please try a shorter video.`
+          };
+        }
+        
+        // For other errors, try next model (might be temporary API issue)
+        if (triedModels.length < modelNames.length) {
+          continue;
+        }
+        
+        // If we've tried all models, return error
         return {
           success: false,
-          error: `Model "${modelName}" not found. Your API key may not have access to this model. Try: 1) Regenerate your API key from https://aistudio.google.com/apikey 2) Ensure billing is enabled (even for free tier) 3) Check if your API key has access to vision models. Error: ${modelError.message}`
+          error: `All models failed. Tried: ${triedModels.join(", ")}. Last error: ${errorMsg}`
         };
       }
-      throw modelError;
     }
-
-    const result = await Promise.race([analysisPromise, timeoutPromise]) as any;
-    console.log("[Server Action] Received response from Gemini API");
-
-    // Get the response text
-    const response = result.response;
-    const text = response.text();
     
-    // Clean up markdown code blocks if Gemini sends them
-    let cleanText = text.trim();
-    
-    // Remove markdown code blocks more robustly
-    if (cleanText.startsWith("```")) {
-      const lines = cleanText.split("\n");
-      cleanText = lines.slice(1, -1).join("\n");
-    }
-    cleanText = cleanText.replace(/^```json\s*/i, '').replace(/\s*```$/i, '').trim();
-    
-    // Parse JSON with better error handling
-    try {
-      const parsedResult = JSON.parse(cleanText);
-      console.log("[Server Action] Parsed JSON result:", parsedResult);
-      return { success: true, data: parsedResult };
-    } catch (parseError) {
-      console.error("Failed to parse JSON:", cleanText);
-      return { 
-        success: false, 
-        error: `Invalid JSON response from AI: ${cleanText.substring(0, 100)}` 
-      };
-    }
+    // If we get here, all models failed
+    return {
+      success: false,
+      error: `No available Gemini models found. Tried: ${triedModels.join(", ")}. Please check: 1) Your API key from https://aistudio.google.com/apikey 2) Ensure billing is enabled (even for free tier) 3) Your API key may need access to newer models. Last error: ${lastError?.message || "Unknown"}`
+    };
 
   } catch (error) {
     // Enhanced error logging for production debugging
@@ -214,7 +232,7 @@ export async function analyzeComicFromUrl(videoUrl: string): Promise<AnalyzeResu
       } else if (error.message.includes("unexpected response") || error.message.includes("Unexpected")) {
         errorMessage = "Server action error: The response may be too large or the request timed out. Try a shorter video.";
       } else       if (error.message.includes("not found") || error.message.includes("404") || error.message.includes("500")) {
-        errorMessage = `API error (${error.message.includes("500") ? "500 Internal Server Error" : "Model not found"}). Tried: gemini-1.5-flash. Possible solutions: 1) Update your API key from https://aistudio.google.com/apikey 2) Ensure billing is enabled (even for free tier) 3) Try again in a few moments (API may be temporarily unavailable). Original error: ${error.message}`;
+        errorMessage = `API error (${error.message.includes("500") ? "500 Internal Server Error" : "Model not found"}). Tried multiple models. Possible solutions: 1) Update your API key from https://aistudio.google.com/apikey 2) Ensure billing is enabled (even for free tier) 3) Try again in a few moments (API may be temporarily unavailable). Original error: ${error.message}`;
       } else if (error.message.includes("timeout") || error.message.includes("timed out")) {
         errorMessage = error.message; // Keep timeout messages as-is
       } else if (error.message.includes("Failed to download")) {

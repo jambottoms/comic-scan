@@ -11,9 +11,9 @@ async function listAvailableModels(apiKey: string) {
       "gemini-pro-vision",
       "gemini-pro",
       "gemini-1.5-pro",
-      "gemini-1.5-flash",
       "gemini-1.5-pro-latest",
-      "gemini-1.5-flash-latest"
+      "gemini-2.5-pro",
+      "gemini-3-pro-preview"
     ];
     console.log("Trying to find available models...");
     return commonModels;
