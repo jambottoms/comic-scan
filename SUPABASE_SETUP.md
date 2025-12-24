@@ -19,6 +19,36 @@
 4. **Public bucket**: ✅ Enable (so files are accessible via URL)
 5. Click **"Create bucket"**
 
+## Step 2.5: Set Up Storage Policies (IMPORTANT!)
+
+After creating the bucket, you need to allow public uploads. **Use Option 2 (SQL Editor) - it's much easier!**
+
+### Option 1: Using Dashboard (if you prefer visual)
+
+1. Go to your Supabase project dashboard
+2. Click **"Storage"** in the left sidebar
+3. Click on the **"comic-videos"** bucket name
+4. Click the **"Policies"** tab at the top
+5. Click **"New Policy"**
+6. Choose **"For full customization"** or **"Create a policy from scratch"**
+7. Fill in:
+   - Policy name: `Allow public uploads`
+   - Allowed operations: Check **INSERT** and **SELECT** (at minimum)
+   - Target roles: `public`
+   - Policy definition: `true` (allows all operations)
+8. Click **"Review"** then **"Save policy"**
+
+### Option 2: Using SQL Editor (RECOMMENDED - Fastest!)
+
+1. Go to your Supabase project dashboard
+2. Click **"SQL Editor"** in the left sidebar (or go to: https://app.supabase.com/project/assxznljobjlycunlphw/sql)
+3. Click **"New query"**
+4. Copy and paste the SQL from `SUPABASE_STORAGE_POLICY.sql` file
+5. Click **"Run"** (or press Cmd/Ctrl + Enter)
+6. You should see "Success. No rows returned"
+
+This will create all the necessary policies in one go!
+
 ## Step 3: Set Up Environment Variables
 
 1. In Supabase project, go to **Settings** → **API**
