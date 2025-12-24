@@ -290,18 +290,36 @@ export default function Home() {
       console.log("Step 2: Sending URL to server for analysis...");
       setUploadProgress(60);
       
-      const data = await analyzeComicFromUrl(supabaseUrl);
-      console.log("Analysis complete, received data:", data);
+      const result = await analyzeComicFromUrl(supabaseUrl);
+      console.log("Analysis complete, received result:", result);
       setUploadProgress(90);
       
-      if (data) {
-        setResult(data);
+      if (result.success) {
+        setResult(result.data);
         setUploadProgress(100);
         console.log("Result set, should display now");
       } else {
-        throw new Error("No analysis data received from server");
+        // Handle error from server action
+        let errorMessage = result.error;
+        
+        // Add helpful context for common errors
+        if (errorMessage.includes("GOOGLE_API_KEY")) {
+          errorMessage += " Please check Vercel environment variables.";
+        } else if (errorMessage.includes("timeout") || errorMessage.includes("timed out")) {
+          errorMessage += " Try recording a shorter video (5-10 seconds).";
+        } else if (errorMessage.includes("Failed to download")) {
+          errorMessage += " There may be an issue with Supabase Storage. Please try again.";
+        }
+        
+        setError(errorMessage);
+        // Clear video preview on error so user can try again
+        if (videoPreview) {
+          URL.revokeObjectURL(videoPreview);
+          setVideoPreview(null);
+        }
       }
     } catch (err) {
+      // Catch any unexpected errors (network issues, etc.)
       console.error("Upload analysis error:", err);
       console.error("Error details:", {
         name: err instanceof Error ? err.name : 'Unknown',
@@ -311,17 +329,7 @@ export default function Home() {
       
       let errorMessage = "Failed to analyze video. ";
       if (err instanceof Error) {
-        // Use the error message from the server action
         errorMessage = err.message;
-        
-        // Add helpful context for common errors
-        if (err.message.includes("GOOGLE_API_KEY")) {
-          errorMessage += " Please check Vercel environment variables.";
-        } else if (err.message.includes("timeout") || err.message.includes("timed out")) {
-          errorMessage += " Try recording a shorter video (5-10 seconds).";
-        } else if (err.message.includes("Failed to download")) {
-          errorMessage += " There may be an issue with Supabase Storage. Please try again.";
-        }
       } else {
         errorMessage += "Check browser console and Vercel logs for details.";
       }

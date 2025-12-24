@@ -3,15 +3,23 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
 /**
+ * Result type for server action - returns success/error instead of throwing
+ */
+export type AnalyzeResult = 
+  | { success: true; data: any }
+  | { success: false; error: string };
+
+/**
  * Analyze a comic book video from a Supabase Storage URL
  * This bypasses Vercel's 4.5MB body size limit by downloading from Supabase
+ * Returns a result object instead of throwing to avoid Next.js error hiding
  */
-export async function analyzeComicFromUrl(videoUrl: string) {
+export async function analyzeComicFromUrl(videoUrl: string): Promise<AnalyzeResult> {
   const apiKey = process.env.GOOGLE_API_KEY;
   if (!apiKey) {
     const errorMsg = "GOOGLE_API_KEY is not set in environment variables. Please add it to Vercel environment variables.";
     console.error(`[Server Action] ${errorMsg}`);
-    throw new Error(errorMsg);
+    return { success: false, error: errorMsg };
   }
 
   // Log API key status (without exposing the key)
@@ -37,15 +45,24 @@ export async function analyzeComicFromUrl(videoUrl: string) {
     } catch (fetchError) {
       clearTimeout(downloadTimeoutId);
       if (fetchError instanceof Error && fetchError.name === 'AbortError') {
-        throw new Error(`Download from Supabase timed out after ${downloadTimeout/1000} seconds. The video file may be too large or the connection is slow.`);
+        return { 
+          success: false, 
+          error: `Download from Supabase timed out after ${downloadTimeout/1000} seconds. The video file may be too large or the connection is slow.` 
+        };
       }
-      throw new Error(`Failed to download video from Supabase: ${fetchError instanceof Error ? fetchError.message : String(fetchError)}`);
+      return { 
+        success: false, 
+        error: `Failed to download video from Supabase: ${fetchError instanceof Error ? fetchError.message : String(fetchError)}` 
+      };
     }
     
     if (!fetchResponse.ok) {
       const statusText = fetchResponse.statusText || 'Unknown error';
       const status = fetchResponse.status;
-      throw new Error(`Failed to download video from Supabase: HTTP ${status} ${statusText}`);
+      return { 
+        success: false, 
+        error: `Failed to download video from Supabase: HTTP ${status} ${statusText}` 
+      };
     }
     
     const arrayBuffer = await fetchResponse.arrayBuffer();
@@ -113,10 +130,13 @@ export async function analyzeComicFromUrl(videoUrl: string) {
     try {
       const parsedResult = JSON.parse(cleanText);
       console.log("[Server Action] Parsed JSON result:", parsedResult);
-      return parsedResult;
+      return { success: true, data: parsedResult };
     } catch (parseError) {
       console.error("Failed to parse JSON:", cleanText);
-      throw new Error(`Invalid JSON response from AI: ${cleanText.substring(0, 100)}`);
+      return { 
+        success: false, 
+        error: `Invalid JSON response from AI: ${cleanText.substring(0, 100)}` 
+      };
     }
 
   } catch (error) {
@@ -156,12 +176,9 @@ export async function analyzeComicFromUrl(videoUrl: string) {
       errorMessage = `Failed to analyze comic: ${String(error)}. Check Vercel logs for details.`;
     }
     
-    // Always throw a new Error with a clean message to ensure it's serializable
+    // Return error as result object instead of throwing
     // This prevents Next.js from hiding the error in production
-    const finalError = new Error(errorMessage);
-    // Preserve original error info in the error object for logging
-    (finalError as any).originalError = errorDetails;
-    throw finalError;
+    return { success: false, error: errorMessage };
   }
 }
 
