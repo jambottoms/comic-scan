@@ -25,7 +25,8 @@ export default function Dashboard() {
   const [uploadProgress, setUploadProgress] = useState(0);
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [uploadMessage, setUploadMessage] = useState('Uploading and processing...');
-  const [history, setHistory] = useState(getVideoHistory());
+  const [history, setHistory] = useState<ReturnType<typeof getVideoHistory>>([]);
+  const [isMounted, setIsMounted] = useState(false);
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
@@ -34,8 +35,9 @@ export default function Dashboard() {
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const uploadXhrRef = useRef<XMLHttpRequest | null>(null);
 
-  // Refresh history when component mounts or when a new video is added
+  // Load history only on client side after mount to prevent hydration mismatch
   useEffect(() => {
+    setIsMounted(true);
     setHistory(getVideoHistory());
   }, []);
 
@@ -606,7 +608,12 @@ export default function Dashboard() {
       <div className="w-full max-w-2xl mt-8">
         <h2 className="text-xl font-bold text-yellow-400 mb-4">Video History</h2>
         
-        {history.length === 0 ? (
+        {!isMounted ? (
+          // Show loading state during SSR/hydration to prevent mismatch
+          <div className="text-center text-gray-400 py-8 border border-gray-700 rounded-lg">
+            <p>Loading history...</p>
+          </div>
+        ) : history.length === 0 ? (
           <div className="text-center text-gray-400 py-8 border border-gray-700 rounded-lg">
             <p>No videos analyzed yet.</p>
             <p className="text-sm mt-2">Record or upload a video to get started!</p>
