@@ -165,8 +165,11 @@ export function normalizeVideoStream(
           ? `FFmpeg process killed by signal: ${signal}`
           : `FFmpeg process exited with code: ${code}`;
         console.error(`[FFmpeg] ${errorMsg}`);
-        console.error(`[FFmpeg] stderr: ${stderrBuffer.slice(-1000)}`); // Last 1000 chars
-        reject(new Error(`Video normalization failed: ${errorMsg}`));
+        console.error(`[FFmpeg] Full stderr output:`, stderrBuffer);
+        // Extract the actual error message from stderr if possible
+        const errorMatch = stderrBuffer.match(/error:\s*(.+)/i) || stderrBuffer.match(/Error\s+(.+)/i);
+        const actualError = errorMatch ? errorMatch[1].trim() : stderrBuffer.slice(-500);
+        reject(new Error(`Video normalization failed: ${errorMsg}. FFmpeg error: ${actualError}`));
       }
     });
 
@@ -177,20 +180,9 @@ export function normalizeVideoStream(
       reject(new Error(`Input stream error: ${err.message}`));
     });
 
-    // Manually write stream to ffmpeg.stdin (not using pipe)
-    inputStream.on('data', (chunk: Buffer) => {
-      if (!ffmpegProcess.stdin.write(chunk)) {
-        // If write returns false, wait for drain event
-        inputStream.pause();
-        ffmpegProcess.stdin.once('drain', () => {
-          inputStream.resume();
-        });
-      }
-    });
-
-    inputStream.on('end', () => {
-      ffmpegProcess.stdin.end();
-    });
+    // Pipe input stream to ffmpeg.stdin (simpler and more reliable)
+    // The pipe handles backpressure automatically
+    inputStream.pipe(ffmpegProcess.stdin);
     
     // Handle stdin errors
     ffmpegProcess.stdin.on('error', (err) => {
@@ -226,7 +218,8 @@ export async function normalizeVideoFromUrl(
   }
 
   // Convert Web ReadableStream to Node.js Readable stream
-  // @ts-ignore - Readable.fromWeb is available in Node.js 18+
+  // Use Readable.fromWeb (available in Node.js 18+)
+  // @ts-ignore - Readable.fromWeb exists in Node 18+
   const inputStream = Readable.fromWeb(response.body);
   
   console.log(`[Video Normalize] Starting FFmpeg normalization...`);
