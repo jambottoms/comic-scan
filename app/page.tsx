@@ -3,7 +3,9 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { ChevronRight, Bookmark } from 'lucide-react';
 import { getVideoHistory } from '@/lib/history';
+import { getSavedScans, SavedScan } from '@/lib/saved-scans';
 import FabMenu from '@/components/FabMenu';
 import GradeBookModal from '@/components/GradeBookModal';
 
@@ -17,6 +19,7 @@ interface VersionInfo {
 export default function Dashboard() {
   const router = useRouter();
   const [history, setHistory] = useState<ReturnType<typeof getVideoHistory>>([]);
+  const [savedScans, setSavedScans] = useState<SavedScan[]>([]);
   const [isMounted, setIsMounted] = useState(false);
   const [versionInfo, setVersionInfo] = useState<VersionInfo | null>(null);
   
@@ -24,10 +27,17 @@ export default function Dashboard() {
   const [isGradeBookOpen, setIsGradeBookOpen] = useState(false);
   const [initialTab, setInitialTab] = useState<'record' | 'upload'>('record');
 
-  // Load history only on client side after mount to prevent hydration mismatch
+  // Load history and saved scans only on client side after mount to prevent hydration mismatch
   useEffect(() => {
     setIsMounted(true);
     setHistory(getVideoHistory());
+    
+    // Load saved scans from Supabase
+    const loadSavedScans = async () => {
+      const scans = await getSavedScans(3);
+      setSavedScans(scans);
+    };
+    loadSavedScans();
   }, []);
 
   // Fetch version info on mount
@@ -87,11 +97,11 @@ export default function Dashboard() {
             </div>
         )}
 
-        {/* Video History List */}
+        {/* Video History List - Show last 3 */}
         <div className="w-full">
             <h2 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
-                <span className="text-purple-400">Your Collection</span>
-                <span className="text-xs bg-gray-800 text-gray-400 px-2 py-1 rounded-full">{history.length}</span>
+                <span className="text-purple-400">Your Previous Scans</span>
+                <span className="text-xs bg-gray-800 text-gray-400 px-2 py-1 rounded-full">{Math.min(history.length, 3)}/{history.length}</span>
             </h2>
             
             {!isMounted ? (
@@ -108,8 +118,8 @@ export default function Dashboard() {
                 </div>
             </div>
             ) : (
-            <div className="space-y-3 pb-20">
-                {history.map((item) => (
+            <div className="space-y-3">
+                {history.slice(0, 3).map((item) => (
                 <Link
                     key={item.id}
                     href={`/results/${item.id}`}
@@ -151,6 +161,86 @@ export default function Dashboard() {
                     {/* Arrow */}
                     <div className="flex-shrink-0 text-gray-600 pr-2">
                         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+                    </div>
+                    </div>
+                </Link>
+                ))}
+            </div>
+            )}
+        </div>
+        
+        {/* Saved Scans Section */}
+        <div className="w-full mt-8">
+            <Link href="/saved" className="group flex items-center justify-between mb-4">
+                <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                    <Bookmark className="w-5 h-5 text-purple-400" />
+                    <span className="text-purple-400">Your Saved Scans</span>
+                    {savedScans.length > 0 && (
+                      <span className="text-xs bg-purple-600/30 text-purple-300 px-2 py-1 rounded-full">{savedScans.length}</span>
+                    )}
+                </h2>
+                <span className="text-gray-500 group-hover:text-purple-400 transition-colors flex items-center gap-1 text-sm">
+                    View All
+                    <ChevronRight className="w-4 h-4" />
+                </span>
+            </Link>
+            
+            {!isMounted ? (
+            <div className="text-center text-gray-400 py-8 border border-gray-800 rounded-2xl bg-gray-900/50">
+                <p>Loading saved scans...</p>
+            </div>
+            ) : savedScans.length === 0 ? (
+            <div className="text-center text-gray-500 py-12 border border-gray-800 border-dashed rounded-2xl bg-gray-900/30 flex flex-col items-center gap-3">
+                <Bookmark className="w-10 h-10 text-gray-700" />
+                <div>
+                    <p className="text-sm font-medium text-gray-400">No saved scans yet</p>
+                    <p className="text-xs mt-1 text-gray-600 max-w-xs mx-auto">Save scans from your grade cards to build your collection.</p>
+                </div>
+            </div>
+            ) : (
+            <div className="space-y-3 pb-20">
+                {savedScans.map((scan) => (
+                <Link
+                    key={scan.id}
+                    href={`/saved/${scan.id}`}
+                    className="block bg-gray-900 hover:bg-gray-800 border border-purple-500/30 hover:border-purple-500/60 rounded-xl p-3 transition-all active:scale-[0.99]"
+                >
+                    <div className="flex items-center gap-4">
+                    {/* Thumbnail */}
+                    <div className="flex-shrink-0 w-20 h-28 rounded-lg overflow-hidden bg-gray-800 shadow-lg relative">
+                        {scan.thumbnail ? (
+                        <img 
+                            src={scan.thumbnail} 
+                            alt={scan.title}
+                            className="w-full h-full object-cover"
+                        />
+                        ) : (
+                        <div className="w-full h-full flex items-center justify-center text-gray-600">
+                            <Bookmark className="w-6 h-6" />
+                        </div>
+                        )}
+                        {/* Grade Badge Overlay */}
+                         <div className="absolute top-1 right-1 bg-purple-600/90 backdrop-blur text-white text-[10px] font-bold px-1.5 py-0.5 rounded">
+                            {scan.grade}
+                         </div>
+                    </div>
+                    
+                    {/* Info */}
+                    <div className="flex-1 min-w-0 py-1">
+                        <h3 className="font-bold text-lg text-white truncate leading-tight mb-1">
+                        {scan.title}
+                        </h3>
+                        <p className="text-gray-400 text-sm mb-2">
+                        Issue #{scan.issue}
+                        </p>
+                        <p className="text-gray-600 text-xs">
+                        Saved {formatDate(new Date(scan.created_at).getTime())}
+                        </p>
+                    </div>
+                    
+                    {/* Arrow */}
+                    <div className="flex-shrink-0 text-purple-500/60 pr-2">
+                        <ChevronRight className="w-6 h-6" />
                     </div>
                     </div>
                 </Link>

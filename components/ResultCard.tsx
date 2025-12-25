@@ -1,18 +1,94 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useRef, useState, useEffect } from 'react';
 import Link from 'next/link';
+import { Bookmark, BookmarkCheck, Trash2, Loader2 } from 'lucide-react';
 import VideoInvestigatorModal from './VideoInvestigatorModal';
+import { saveScan, deleteSavedScan, isScanSaved } from '@/lib/saved-scans';
 
 interface ResultCardProps {
   result: any;
   videoUrl: string | null;
+  thumbnail?: string;
+  savedScanId?: string; // If viewing from saved scans
+  onDelete?: () => void; // Callback when deleted from saved
 }
 
-export default function ResultCard({ result, videoUrl }: ResultCardProps) {
+export default function ResultCard({ result, videoUrl, thumbnail, savedScanId, onDelete }: ResultCardProps) {
   const previewVideoRef = useRef<HTMLVideoElement>(null);
   const [investigatorOpen, setInvestigatorOpen] = useState(false);
   const [selectedTimestamp, setSelectedTimestamp] = useState<number>(0);
+  
+  // Save state
+  const [isSaved, setIsSaved] = useState(!!savedScanId);
+  const [currentSavedId, setCurrentSavedId] = useState<string | null>(savedScanId || null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  
+  const grade = result.estimatedGrade || 'N/A';
+  const title = result.title || "Unknown Comic";
+  const issueNum = result.issue ? `${result.issue}` : "";
+  
+  // Check if this scan is already saved on mount
+  useEffect(() => {
+    const checkSaved = async () => {
+      if (!savedScanId && title && issueNum && grade) {
+        const existingId = await isScanSaved(title, issueNum, grade);
+        if (existingId) {
+          setIsSaved(true);
+          setCurrentSavedId(existingId);
+        }
+      }
+    };
+    checkSaved();
+  }, [savedScanId, title, issueNum, grade]);
+  
+  // Handle saving
+  const handleSave = async () => {
+    if (isSaving) return;
+    setIsSaving(true);
+    
+    try {
+      const saved = await saveScan({
+        title: title,
+        issue: issueNum,
+        grade: grade,
+        videoUrl: videoUrl || undefined,
+        thumbnail: thumbnail,
+        result: result,
+      });
+      
+      if (saved) {
+        setIsSaved(true);
+        setCurrentSavedId(saved.id);
+      }
+    } catch (error) {
+      console.error('Failed to save scan:', error);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+  
+  // Handle unsaving/deleting
+  const handleUnsave = async () => {
+    if (isDeleting || !currentSavedId) return;
+    setIsDeleting(true);
+    
+    try {
+      const success = await deleteSavedScan(currentSavedId);
+      if (success) {
+        setIsSaved(false);
+        setCurrentSavedId(null);
+        if (onDelete) {
+          onDelete();
+        }
+      }
+    } catch (error) {
+      console.error('Failed to delete saved scan:', error);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   // Function to open Video Investigator modal at timestamp
   const openInvestigator = (seconds: number) => {
@@ -232,8 +308,6 @@ export default function ResultCard({ result, videoUrl }: ResultCardProps) {
   };
 
   const { summary, bullets } = result.reasoning ? parseReasoning(result.reasoning) : { summary: '', bullets: [] };
-  const grade = result.estimatedGrade || 'N/A';
-  const title = result.title || "Unknown Comic";
   const issue = result.issue ? `#${result.issue}` : "Unknown Issue";
 
   return (
@@ -303,6 +377,41 @@ export default function ResultCard({ result, videoUrl }: ResultCardProps) {
                 {grade}
               </div>
             </div>
+          </div>
+          
+          {/* Save/Unsave Button */}
+          <div className="flex items-center gap-2 pt-2 border-t border-gray-700">
+            {isSaved ? (
+              <button
+                onClick={handleUnsave}
+                disabled={isDeleting}
+                className="flex items-center gap-2 px-4 py-2 bg-purple-600/20 hover:bg-red-600/30 text-purple-400 hover:text-red-400 rounded-lg transition-all text-sm font-medium group"
+              >
+                {isDeleting ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <>
+                    <BookmarkCheck className="w-4 h-4 group-hover:hidden" />
+                    <Trash2 className="w-4 h-4 hidden group-hover:block" />
+                  </>
+                )}
+                <span className="group-hover:hidden">Saved</span>
+                <span className="hidden group-hover:inline">Remove</span>
+              </button>
+            ) : (
+              <button
+                onClick={handleSave}
+                disabled={isSaving}
+                className="flex items-center gap-2 px-4 py-2 bg-gray-700 hover:bg-purple-600/30 text-gray-300 hover:text-purple-400 rounded-lg transition-all text-sm font-medium"
+              >
+                {isSaving ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Bookmark className="w-4 h-4" />
+                )}
+                {isSaving ? 'Saving...' : 'Save to Collection'}
+              </button>
+            )}
           </div>
         </div>
 

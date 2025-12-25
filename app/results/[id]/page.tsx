@@ -43,6 +43,6 @@ export default function ResultPage() {
     );
   }
 
-  return <ResultCard result={videoItem.result} videoUrl={videoItem.videoUrl} />;
+  return <ResultCard result={videoItem.result} videoUrl={videoItem.videoUrl} thumbnail={videoItem.thumbnail} />;
 }
 
