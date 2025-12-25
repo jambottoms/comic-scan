@@ -180,19 +180,21 @@ export async function analyzeComicFromUrl(videoUrl: string, mimeType?: string): 
     console.log(`[Server Action] File state: ${uploadResult.file.state}`);
     console.log(`[Server Action] File name: ${uploadResult.file.name}`);
     
-    // Critical: Implement polling loop - wait until file.state === 'ACTIVE'
+    // Polling Fix: After uploadFile, you MUST add a while-loop that calls fileManager.getFile(name)
+    // Do not call generateContent until file.state === 'ACTIVE'. If you call it while it is 'PROCESSING', it will throw a 404.
     console.log(`[Server Action] Polling for ACTIVE state...`);
-    const maxAttempts = 60; // 60 attempts = 30 seconds max
     const pollInterval = 500; // 500ms between polls
+    const maxWaitTime = 30000; // 30 seconds max
+    const startTime = Date.now();
     
     let activeFile = uploadResult.file;
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      // Use fileManager.getFile(uploadResponse.file.name) to check state
-      activeFile = await fileManager.getFile(uploadResult.file.name);
-      
-      if (activeFile.state === 'ACTIVE') {
-        console.log(`[Server Action] ✅ File is ACTIVE after ${attempt + 1} attempts`);
-        break;
+    let attempt = 0;
+    
+    // Use while-loop that calls fileManager.getFile(name)
+    while (activeFile.state !== 'ACTIVE') {
+      // Check timeout
+      if (Date.now() - startTime > maxWaitTime) {
+        throw new Error(`File upload timed out - file did not become ACTIVE within ${maxWaitTime / 1000} seconds. Current state: ${activeFile.state}`);
       }
       
       if (activeFile.state === 'FAILED') {
@@ -202,26 +204,25 @@ export async function analyzeComicFromUrl(videoUrl: string, mimeType?: string): 
       
       // Log state every 5 attempts
       if (attempt % 5 === 0) {
-        console.log(`[Server Action] File state: ${activeFile.state} (attempt ${attempt + 1}/${maxAttempts})`);
+        console.log(`[Server Action] File state: ${activeFile.state} (attempt ${attempt + 1})`);
       }
       
       // Wait before next poll
-      if (attempt < maxAttempts - 1) {
-        await new Promise(resolve => setTimeout(resolve, pollInterval));
-      }
+      await new Promise(resolve => setTimeout(resolve, pollInterval));
+      
+      // Call fileManager.getFile(name) to check state
+      activeFile = await fileManager.getFile(uploadResult.file.name);
+      attempt++;
     }
     
-    // Do not proceed until it is ACTIVE
-    if (activeFile.state !== 'ACTIVE') {
-      throw new Error(`File upload timed out - file did not become ACTIVE within ${maxAttempts * pollInterval / 1000} seconds. Current state: ${activeFile.state}`);
-    }
+    console.log(`[Server Action] ✅ File is ACTIVE after ${attempt} attempts`);
     
     // Step 4: Model Naming & Call
-    // Use the December 2025 stable ID: gemini-3-flash
-    console.log(`[Server Action] Using model: gemini-3-flash (December 2025 stable)`);
+    // Model ID: Change the model ID to gemini-3-flash-preview. This is the required API string for the December 2025 release.
+    console.log(`[Server Action] Using model: gemini-3-flash-preview (December 2025 release)`);
     const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({ 
-      model: "gemini-3-flash",
+      model: "gemini-3-flash-preview",
       systemInstruction: "You are an expert comic book grader. Analyze the video of this comic book. Identify the comic (Series, Issue, Year, Variant) and look for visible defects across all frames. Return the response as clean JSON with fields: title, issue, estimatedGrade, reasoning."
     });
     
@@ -230,13 +231,12 @@ export async function analyzeComicFromUrl(videoUrl: string, mimeType?: string): 
       setTimeout(() => reject(new Error("Video analysis timed out after 280 seconds. The video transcoding or API call took too long. Please try a shorter video.")), 280000);
     });
 
-    // Call model.generateContent passing the file data exactly as specified
-    // { fileData: { mimeType: uploadResponse.file.mimeType, fileUri: uploadResponse.file.uri } }
+    // Google Call: Pass the file to the model using: { fileData: { mimeType: 'video/mp4', fileUri: uploadResponse.file.uri } }
     const payload = [
       {
         fileData: {
-          mimeType: activeFile.mimeType,
-          fileUri: activeFile.uri
+          mimeType: 'video/mp4',
+          fileUri: uploadResult.file.uri
         }
       },
       {
@@ -245,8 +245,8 @@ export async function analyzeComicFromUrl(videoUrl: string, mimeType?: string): 
     ];
     
     console.log(`[Server Action] Sending to Gemini API...`);
-    console.log(`[Server Action] File URI: ${activeFile.uri}`);
-    console.log(`[Server Action] MIME Type: ${activeFile.mimeType}`);
+    console.log(`[Server Action] File URI: ${uploadResult.file.uri}`);
+    console.log(`[Server Action] MIME Type: video/mp4`);
     
     // Generate content with the model
     let result: any;
@@ -351,7 +351,7 @@ export async function analyzeComicFromUrl(videoUrl: string, mimeType?: string): 
         if (error.message.includes("500")) {
           errorMessage = `500 Internal Server Error from Gemini API. Possible causes: 1) Token overflow (video too large - try smaller/shorter video) 2) Malformed payload (invalid base64 or mimeType) 3) API quota/permission issue 4) Temporary API outage. Check Vercel logs for token estimates. Original error: ${error.message}`;
         } else {
-          errorMessage = `API error (${error.message.includes("404") ? "Model not found" : "Unknown"}). Using gemini-3-flash. Possible solutions: 1) Update your API key from https://aistudio.google.com/apikey 2) Ensure billing is enabled (even for free tier) 3) Try again in a few moments (API may be temporarily unavailable). Original error: ${error.message}`;
+          errorMessage = `API error (${error.message.includes("404") ? "Model not found" : "Unknown"}). Using gemini-3-flash-preview. Possible solutions: 1) Update your API key from https://aistudio.google.com/apikey 2) Ensure billing is enabled (even for free tier) 3) Try again in a few moments (API may be temporarily unavailable). Original error: ${error.message}`;
         }
       } else if (error.message.includes("invalid") || error.message.includes("malformed") || error.message.includes("format")) {
         errorMessage = `Invalid payload format. The video may be corrupted or in an unsupported format. Error: ${error.message}`;
