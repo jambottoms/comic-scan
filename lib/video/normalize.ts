@@ -1,90 +1,72 @@
 /**
- * Video normalization pipeline using FFmpeg via child_process.spawn
+ * Video normalization pipeline for Next.js ESM on Vercel
+ * Uses native child_process.spawn with ffmpeg-static
  * Transcodes videos to H.264, 1080p, no audio, 1 fps for Gemini API
- * 
- * Collects FFmpeg output into a Buffer (not a stream) because Google SDK
- * fileManager.uploadFile doesn't support direct streaming from child process stdout
  */
 
 import { spawn } from 'child_process';
 import { Readable } from 'stream';
+import { createRequire } from 'module';
+import path from 'path';
 import { existsSync } from 'fs';
 import { chmodSync } from 'fs';
-import { loadFfmpegPath } from './ffmpeg-loader';
 
-// Lazy load ffmpeg-static to avoid issues with top-level await
-let ffmpegPathCache: string | null = null;
-
-// Get FFmpeg binary path with lazy loading
-function getFfmpegPath(): string {
-  // Return cached path if available
-  if (ffmpegPathCache) {
-    return ffmpegPathCache;
-  }
-  
-  try {
-    // Load path from separate module to prevent bundler static analysis
-    let ffmpegBinaryPath = loadFfmpegPath();
-    
-    if (!ffmpegBinaryPath || typeof ffmpegBinaryPath !== 'string') {
-      throw new Error('ffmpeg-static returned invalid path. The binary may not be available for this platform.');
-    }
-    
-    // On Vercel, paths might be different - try to resolve the actual path
-    const originalPath = ffmpegBinaryPath;
-    
-    // Verify the binary exists
-    if (!existsSync(ffmpegBinaryPath)) {
-      // Log diagnostic information
-      console.error(`[FFmpeg] Binary not found at original path: ${ffmpegBinaryPath}`);
-      console.error(`[FFmpeg] CWD: ${process.cwd()}, Platform: ${process.platform}, Arch: ${process.arch}`);
-      
-      // Try alternative paths for Vercel
-      const alternatives = [
-        ffmpegBinaryPath.replace(/^\/ROOT\//, process.cwd() + '/'),
-        ffmpegBinaryPath.replace(/^\/var\/task\//, process.cwd() + '/'),
-      ].filter(Boolean);
-      
-      for (const altPath of alternatives) {
-        if (altPath && existsSync(altPath)) {
-          console.log(`[FFmpeg] Found binary at alternative path: ${altPath}`);
-          ffmpegBinaryPath = altPath;
-          break;
-        }
-      }
-      
-      if (!existsSync(ffmpegBinaryPath)) {
-        throw new Error(`FFmpeg binary not found at: ${originalPath}. This is likely a Vercel deployment issue. Ensure ffmpeg-static is in dependencies and the binary is included in the build.`);
-      }
-    }
-    
-    // Ensure binary is executable
-    try {
-      chmodSync(ffmpegBinaryPath, 0o755);
-    } catch (chmodError) {
-      // Ignore - binary is usually already executable
-      console.warn(`[FFmpeg] Could not set execute permissions (usually OK)`);
-    }
-    
-    console.log(`[FFmpeg] Binary ready at: ${ffmpegBinaryPath}`);
-    ffmpegPathCache = ffmpegBinaryPath;
-    return ffmpegBinaryPath;
-  } catch (error: any) {
-    console.error('[FFmpeg] Failed to load ffmpeg-static:', error);
-    throw new Error(`FFmpeg setup failed: ${error?.message || String(error)}. Ensure ffmpeg-static is installed: npm install ffmpeg-static`);
-  }
-}
+// Use createRequire for ESM compatibility
+const require = createRequire(import.meta.url);
 
 export interface NormalizeOptions {
   onProgress?: (progress: { percent: number; frames: number; currentFps: number }) => void;
 }
 
 /**
+ * Get FFmpeg binary path using createRequire for ESM
+ */
+function getFfmpegPath(): string {
+  try {
+    // Load ffmpeg-static using require (works in ESM with createRequire)
+    const ffmpegStatic = require('ffmpeg-static');
+    
+    // Handle different export formats
+    let ffmpegPath: string;
+    if (typeof ffmpegStatic === 'string') {
+      ffmpegPath = ffmpegStatic;
+    } else if (ffmpegStatic?.default && typeof ffmpegStatic.default === 'string') {
+      ffmpegPath = ffmpegStatic.default;
+    } else if (ffmpegStatic?.path && typeof ffmpegStatic.path === 'string') {
+      ffmpegPath = ffmpegStatic.path;
+    } else {
+      throw new Error('ffmpeg-static returned invalid path format');
+    }
+    
+    // Resolve the path to ensure it works on Vercel
+    ffmpegPath = path.resolve(ffmpegPath);
+    
+    // Verify binary exists
+    if (!existsSync(ffmpegPath)) {
+      throw new Error(`FFmpeg binary not found at: ${ffmpegPath}. Ensure ffmpeg-static is installed.`);
+    }
+    
+    // Ensure binary is executable
+    try {
+      chmodSync(ffmpegPath, 0o755);
+    } catch (chmodError) {
+      // Ignore - binary is usually already executable
+      console.warn(`[FFmpeg] Could not set execute permissions (usually OK)`);
+    }
+    
+    console.log(`[FFmpeg] Binary ready at: ${ffmpegPath}`);
+    return ffmpegPath;
+  } catch (error: any) {
+    console.error('[FFmpeg] Failed to load ffmpeg-static:', error);
+    throw new Error(`FFmpeg setup failed: ${error?.message || String(error)}`);
+  }
+}
+
+/**
  * Normalize video stream: H.264, 1080p, no audio, 1 fps
- * Returns a Buffer of the normalized video (not a stream)
+ * Manually writes stream to ffmpeg.stdin and collects stdout into Buffer
  * 
- * Uses exact ComicScan optimization flags:
- * -i pipe:0 -c:v libx264 -vf scale=-1:1080,fps=1 -an -f mp4 -movflags frag_keyframe+empty_moov pipe:1
+ * Processing flags: -i pipe:0 -c:v libx264 -vf scale=-1:1080,fps=1 -an -f mp4 -movflags frag_keyframe+empty_moov pipe:1
  */
 export function normalizeVideoStream(
   inputStream: Readable,
@@ -99,9 +81,9 @@ export function normalizeVideoStream(
       return;
     }
 
-    console.log(`[FFmpeg] Starting normalization with spawn (binary: ${ffmpegPath})...`);
+    console.log(`[FFmpeg] Starting normalization (binary: ${ffmpegPath})...`);
     
-    // Spawn FFmpeg process with exact ComicScan optimization flags
+    // Spawn FFmpeg process with exact flags
     const ffmpegProcess = spawn(ffmpegPath, [
       '-i', 'pipe:0',                    // Input from stdin
       '-c:v', 'libx264',                 // H.264 codec
@@ -164,8 +146,7 @@ export function normalizeVideoStream(
       reject(new Error(`FFmpeg process failed: ${err.message}`));
     });
 
-    // CRITICAL: Wait for FFmpeg process to close (not just end)
-    // The 'close' event ensures all file descriptors are closed and data is fully flushed
+    // Wait for FFmpeg process to close
     ffmpegProcess.on('close', (code, signal) => {
       if (code === 0) {
         // Combine chunks into single Buffer
@@ -196,8 +177,20 @@ export function normalizeVideoStream(
       reject(new Error(`Input stream error: ${err.message}`));
     });
 
-    // Pipe input stream to FFmpeg stdin
-    inputStream.pipe(ffmpegProcess.stdin);
+    // Manually write stream to ffmpeg.stdin (not using pipe)
+    inputStream.on('data', (chunk: Buffer) => {
+      if (!ffmpegProcess.stdin.write(chunk)) {
+        // If write returns false, wait for drain event
+        inputStream.pause();
+        ffmpegProcess.stdin.once('drain', () => {
+          inputStream.resume();
+        });
+      }
+    });
+
+    inputStream.on('end', () => {
+      ffmpegProcess.stdin.end();
+    });
     
     // Handle stdin errors
     ffmpegProcess.stdin.on('error', (err) => {
@@ -208,7 +201,7 @@ export function normalizeVideoStream(
 }
 
 /**
- * Normalize video from a URL (downloads and normalizes)
+ * Normalize video from a URL (downloads from Supabase and normalizes)
  * Returns a Buffer of the normalized video
  */
 export async function normalizeVideoFromUrl(
@@ -217,7 +210,7 @@ export async function normalizeVideoFromUrl(
 ): Promise<Buffer> {
   console.log(`[Video Normalize] Downloading video from: ${videoUrl}`);
   
-  // Download video as stream (not ArrayBuffer to save memory)
+  // Fetch video from Supabase as ReadableStream
   const response = await fetch(videoUrl, {
     headers: {
       'Accept': 'video/*',
@@ -239,4 +232,3 @@ export async function normalizeVideoFromUrl(
   console.log(`[Video Normalize] Starting FFmpeg normalization...`);
   return normalizeVideoStream(inputStream, options);
 }
-

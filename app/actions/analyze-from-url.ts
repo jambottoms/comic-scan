@@ -28,9 +28,8 @@ export async function analyzeComicFromUrl(videoUrl: string, mimeType?: string): 
 
   console.log(`[Server Action] API key present: ${apiKey ? 'Yes' : 'No'} (length: ${apiKey?.length || 0})`);
 
-  // Step 2: Save normalized video to temporary file (Vercel allows /tmp)
-  // CRITICAL: Use await to ensure file is fully written to disk before SDK reads it
-  const tempPath = path.join('/tmp', `comic_${Date.now()}.mp4`);
+  // Temporary file path for normalized video
+  const tempPath = path.join('/tmp', 'normalized.mp4');
   let fileUri: string | null = null;
 
   try {
@@ -60,8 +59,8 @@ export async function analyzeComicFromUrl(videoUrl: string, mimeType?: string): 
       };
     }
     
-    // Step 2: Save normalized video to temporary file
-    console.log(`[Server Action] Saving normalized video to temp file: ${tempPath}`);
+    // Step 2: Save normalized video to /tmp/normalized.mp4
+    console.log(`[Server Action] Saving normalized video to: ${tempPath}`);
     
     // Write file and await completion to ensure it's on disk
     await writeFile(tempPath, videoBuffer);

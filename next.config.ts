@@ -6,6 +6,8 @@ const nextConfig: NextConfig = {
       bodySizeLimit: '100mb',
     },
   },
+  // External packages for server components (prevents bundling)
+  serverExternalPackages: ['ffmpeg-static'],
   // Ensure FFmpeg binary is included in Vercel deployment
   outputFileTracingIncludes: {
     '/**': [
