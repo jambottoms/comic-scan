@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { X, Upload, Video, Camera } from 'lucide-react';
+import { X, Upload, Video, Camera, Search, ScanLine } from 'lucide-react';
 import { uploadToSupabaseWithProgress } from '@/lib/supabase/upload-with-progress';
 import { analyzeComicFromUrl } from '@/app/actions/analyze-from-url';
 import { addToHistory, generateThumbnail } from '@/lib/history';
@@ -12,12 +12,12 @@ interface GradeBookModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess: (historyId: string) => void;
-  initialTab?: 'record' | 'upload';
+  initialTab?: 'record' | 'upload' | 'identify';
 }
 
 export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab = 'record' }: GradeBookModalProps) {
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<'record' | 'upload'>('record');
+  const [activeTab, setActiveTab] = useState<'record' | 'upload' | 'identify'>('record');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
@@ -251,6 +251,12 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
 
   if (!isOpen) return null;
 
+  const tabs = [
+    { id: 'record', label: 'Record', icon: Video },
+    { id: 'upload', label: 'Upload', icon: Upload },
+    { id: 'identify', label: 'Scan', icon: ScanLine },
+  ] as const;
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 animate-in fade-in duration-200">
       <div className="bg-gray-900 border border-gray-800 rounded-2xl w-full max-w-lg max-h-[90vh] overflow-hidden flex flex-col shadow-2xl">
@@ -263,30 +269,29 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
             </button>
         </div>
 
-        {/* Toggle */}
-        <div className="p-4 grid grid-cols-2 gap-2 bg-gray-900">
-             <button 
-                onClick={() => setActiveTab('record')}
-                className={`flex items-center justify-center gap-2 py-3 px-4 rounded-xl font-medium transition-all ${
-                    activeTab === 'record' 
-                    ? 'bg-purple-600 text-white shadow-lg shadow-purple-900/20' 
-                    : 'bg-gray-800 text-gray-400 hover:bg-gray-750 hover:text-gray-200'
-                }`}
-             >
-                <Camera size={20} />
-                <span>Record</span>
-             </button>
-             <button 
-                onClick={() => setActiveTab('upload')}
-                className={`flex items-center justify-center gap-2 py-3 px-4 rounded-xl font-medium transition-all ${
-                    activeTab === 'upload' 
-                    ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/20' 
-                    : 'bg-gray-800 text-gray-400 hover:bg-gray-750 hover:text-gray-200'
-                }`}
-             >
-                <Upload size={20} />
-                <span>Upload</span>
-             </button>
+        {/* Segmented Control */}
+        <div className="p-4 bg-gray-900">
+          <div className="flex p-1 bg-gray-800 rounded-xl relative">
+             {/* Active Tab Indicator Background - Optional fancy animation, or just rely on bg color change */}
+             {tabs.map((tab) => {
+               const Icon = tab.icon;
+               const isActive = activeTab === tab.id;
+               return (
+                 <button
+                   key={tab.id}
+                   onClick={() => setActiveTab(tab.id)}
+                   className={`flex-1 flex items-center justify-center gap-2 py-2.5 text-sm font-medium rounded-lg transition-all z-10 ${
+                     isActive 
+                       ? 'bg-gray-700 text-white shadow-sm' 
+                       : 'text-gray-400 hover:text-gray-200'
+                   }`}
+                 >
+                   <Icon size={16} />
+                   <span>{tab.label}</span>
+                 </button>
+               );
+             })}
+          </div>
         </div>
 
         {/* Content */}
@@ -361,6 +366,24 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
                             Select File
                         </div>
                     </label>
+                </div>
+            )}
+
+            {/* Identify/Scan View */}
+            {activeTab === 'identify' && (
+                <div className="w-full flex flex-col items-center gap-6 py-8">
+                    <div className="w-24 h-24 bg-gray-800 rounded-full flex items-center justify-center text-gray-600 mb-2">
+                        <ScanLine size={40} />
+                    </div>
+                    <div className="text-center space-y-2">
+                        <h3 className="text-lg font-medium text-white">Scan Comic</h3>
+                        <p className="text-gray-400 text-sm max-w-[260px] mx-auto">
+                           Identify comic issues by scanning the cover. Feature coming soon.
+                        </p>
+                    </div>
+                     <div className="w-full py-4 bg-gray-800 text-gray-500 font-bold rounded-xl flex items-center justify-center gap-2 cursor-not-allowed">
+                        Coming Soon
+                    </div>
                 </div>
             )}
 
