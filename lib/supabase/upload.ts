@@ -41,3 +41,4 @@ export async function uploadToSupabase(file: File): Promise<string> {
   return urlData.publicUrl;
 }
 
+
