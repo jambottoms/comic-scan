@@ -1,9 +1,14 @@
 import { createBrowserClient } from '@supabase/ssr'
 
-// Cache the client to avoid recreating it on every call
+// Singleton pattern - only create client once per browser session
 let cachedClient: ReturnType<typeof createBrowserClient> | null = null;
 
 export function createClient() {
+  // Only run on client side - return null during SSR
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
   // Return cached client if available
   if (cachedClient) {
     return cachedClient;
