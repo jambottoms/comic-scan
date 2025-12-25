@@ -1,7 +1,7 @@
 {
   "functions": {
-    "app/**/*.ts": {
-      "maxDuration": 60
+    "app/actions/**/*.ts": {
+      "maxDuration": 300
     }
   }
 }

@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { analyzeComic } from './actions';
 import { uploadToSupabase } from '@/lib/supabase/upload';
 import { analyzeComicFromUrl } from './actions/analyze-from-url';
 
@@ -153,7 +152,7 @@ export default function Home() {
           console.log("Step 2: Sending URL to server for analysis...");
           setUploadProgress(60);
           
-          const result = await analyzeComicFromUrl(supabaseUrl, file.type || "video/webm");
+          const result = await analyzeComicFromUrl(supabaseUrl, normalizeMimeTypeForGemini(file.type || 'video/mp4'));
           console.log("Analysis complete, received result:", result);
           setUploadProgress(90);
           
@@ -242,49 +241,9 @@ export default function Home() {
     }
   };
 
-  // Helper function to detect MIME type from file name/extension
-  // iOS Photos often doesn't set file.type correctly
-  const detectMimeType = (file: File): string => {
-    // First, try file.type if it's valid
-    if (file.type && file.type.startsWith('video/')) {
-      return file.type;
-    }
-    
-    // Fall back to extension detection
-    const fileName = file.name.toLowerCase();
-    const extension = fileName.split('.').pop();
-    
-    const mimeTypes: Record<string, string> = {
-      'mp4': 'video/mp4',
-      'mov': 'video/quicktime', // iOS Photos default format
-      'webm': 'video/webm',
-      'avi': 'video/x-msvideo',
-      'mkv': 'video/x-matroska',
-      'm4v': 'video/x-m4v',
-      '3gp': 'video/3gpp',
-      'hevc': 'video/mp4', // HEVC videos from iOS
-    };
-    
-    if (extension && mimeTypes[extension]) {
-      return mimeTypes[extension];
-    }
-    
-    // Default to mp4 if we can't detect
-    return 'video/mp4';
-  };
-
-  // Normalize MIME type for Gemini API
-  // Gemini API prefers video/mp4, even for .mov (QuickTime) files
-  // iOS Photos saves videos as .mov with video/quicktime MIME type
-  // While Gemini technically supports video/quicktime, using video/mp4 is more reliable
-  // This prevents silent failures or parsing errors on the server side
+  // Normalize MIME type for Gemini API (video/quicktime → video/mp4)
   const normalizeMimeTypeForGemini = (mimeType: string): string => {
-    // Normalize video/quicktime to video/mp4 for Gemini compatibility
-    // The actual video codec (H.264/HEVC) doesn't change, just the container format label
-    if (mimeType === 'video/quicktime' || mimeType === 'video/x-quicktime') {
-      return 'video/mp4';
-    }
-    return mimeType;
+    return (mimeType === 'video/quicktime' || mimeType === 'video/x-quicktime') ? 'video/mp4' : mimeType;
   };
 
   // Handle file upload with progress tracking
@@ -349,12 +308,7 @@ export default function Home() {
       console.log("Step 2: Sending to server for analysis...");
       setUploadProgress(60);
       
-      // Normalize MIME type for Gemini (video/quicktime → video/mp4)
-      // Supabase can handle video/quicktime, but Gemini prefers video/mp4
-      const geminiMimeType = normalizeMimeTypeForGemini(detectedMimeType);
-      console.log(`[File Upload] MIME type normalization: ${detectedMimeType} → ${geminiMimeType} (for Gemini)`);
-      
-      const result = await analyzeComicFromUrl(supabaseUrl, geminiMimeType);
+      const result = await analyzeComicFromUrl(supabaseUrl, normalizeMimeTypeForGemini(file.type || 'video/mp4'));
       console.log("Analysis complete, received result:", result);
       setUploadProgress(90);
       
