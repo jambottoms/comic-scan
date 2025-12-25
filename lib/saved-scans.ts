@@ -32,6 +32,11 @@ export async function getSavedScans(limit?: number): Promise<SavedScan[]> {
   try {
     const supabase = createClient();
     
+    // If Supabase is not configured, return empty array gracefully
+    if (!supabase) {
+      return [];
+    }
+    
     let query = supabase
       .from('saved_scans')
       .select('*')
@@ -62,6 +67,10 @@ export async function getSavedScanById(id: string): Promise<SavedScan | null> {
   try {
     const supabase = createClient();
     
+    if (!supabase) {
+      return null;
+    }
+    
     const { data, error } = await supabase
       .from('saved_scans')
       .select('*')
@@ -86,6 +95,11 @@ export async function getSavedScanById(id: string): Promise<SavedScan | null> {
 export async function saveScan(input: SaveScanInput): Promise<SavedScan | null> {
   try {
     const supabase = createClient();
+    
+    if (!supabase) {
+      console.warn('[SavedScans] Cannot save - Supabase not configured');
+      return null;
+    }
     
     const { data, error } = await supabase
       .from('saved_scans')
@@ -119,6 +133,10 @@ export async function deleteSavedScan(id: string): Promise<boolean> {
   try {
     const supabase = createClient();
     
+    if (!supabase) {
+      return false;
+    }
+    
     const { error } = await supabase
       .from('saved_scans')
       .delete()
@@ -142,6 +160,10 @@ export async function deleteSavedScan(id: string): Promise<boolean> {
 export async function isScanSaved(title: string, issue: string, grade: string): Promise<string | null> {
   try {
     const supabase = createClient();
+    
+    if (!supabase) {
+      return null;
+    }
     
     const { data, error } = await supabase
       .from('saved_scans')

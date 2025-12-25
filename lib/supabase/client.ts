@@ -1,15 +1,38 @@
 import { createBrowserClient } from '@supabase/ssr'
 
+// Cache the client to avoid recreating it on every call
+let cachedClient: ReturnType<typeof createBrowserClient> | null = null;
+
 export function createClient() {
+  // Return cached client if available
+  if (cachedClient) {
+    return cachedClient;
+  }
+
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
   if (!supabaseUrl || !supabaseAnonKey) {
-    throw new Error(
-      'Missing Supabase environment variables. Please set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY in your .env.local file. See SUPABASE_SETUP.md for instructions.'
+    // Log warning but don't throw - return null to allow graceful degradation
+    console.warn(
+      '[Supabase] Missing environment variables. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY. Saved scans feature will be disabled.'
     );
+    return null;
   }
 
-  return createBrowserClient(supabaseUrl, supabaseAnonKey);
+  try {
+    cachedClient = createBrowserClient(supabaseUrl, supabaseAnonKey);
+    return cachedClient;
+  } catch (error) {
+    console.error('[Supabase] Failed to create client:', error);
+    return null;
+  }
+}
+
+/**
+ * Check if Supabase is properly configured
+ */
+export function isSupabaseConfigured(): boolean {
+  return !!(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
 }
 

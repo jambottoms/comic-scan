@@ -27,6 +27,10 @@ export async function uploadToSupabaseWithProgress(
 ): Promise<string> {
   const supabase = createClient();
   
+  if (!supabase) {
+    throw new Error('Supabase is not configured. Please set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY environment variables.');
+  }
+  
   console.log(`[Supabase Upload] Original file: ${originalFile.name}, Size: ${originalFile.size}, Type: ${originalFile.type || '(empty)'}`);
   
   // Read file into memory (iOS fix)

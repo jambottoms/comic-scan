@@ -50,6 +50,10 @@ function readFileAsArrayBuffer(file: File): Promise<ArrayBuffer> {
 export async function uploadToSupabase(originalFile: File): Promise<string> {
   const supabase = createClient();
   
+  if (!supabase) {
+    throw new Error('Supabase is not configured. Please set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY environment variables.');
+  }
+  
   console.log(`[Supabase Upload] Original file: ${originalFile.name}, Size: ${originalFile.size}, Type: ${originalFile.type || '(empty)'}`);
   
   // iOS FIX: Read file completely into memory using FileReader
