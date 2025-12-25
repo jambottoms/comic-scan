@@ -14,7 +14,11 @@ export type AnalyzeResult =
  * This bypasses Vercel's 4.5MB body size limit by downloading from Supabase
  * Returns a result object instead of throwing to avoid Next.js error hiding
  */
-export async function analyzeComicFromUrl(videoUrl: string, mimeType?: string): Promise<AnalyzeResult> {
+/**
+ * Analyze a comic book video using a Google File API file name
+ * This expects the file to already be uploaded and processed (state = ACTIVE)
+ */
+export async function analyzeComicFromGoogleFile(fileName: string): Promise<AnalyzeResult> {
   const apiKey = process.env.GOOGLE_API_KEY;
   if (!apiKey) {
     const errorMsg = "GOOGLE_API_KEY is not set in environment variables. Please add it to Vercel environment variables.";
@@ -22,103 +26,24 @@ export async function analyzeComicFromUrl(videoUrl: string, mimeType?: string): 
     return { success: false, error: errorMsg };
   }
 
-  // Log API key status (without exposing the key)
   console.log(`[Server Action] API key present: ${apiKey ? 'Yes' : 'No'} (length: ${apiKey?.length || 0})`);
 
   try {
-    console.log(`[Server Action] Downloading video from Supabase: ${videoUrl}`);
+    console.log(`[Server Action] Getting file from Google File API: ${fileName}`);
     
-    // Download video from Supabase Storage URL with timeout
-    const downloadTimeout = 30000; // 30 seconds for download
-    const downloadController = new AbortController();
-    const downloadTimeoutId = setTimeout(() => downloadController.abort(), downloadTimeout);
-    
-    let fetchResponse: Response;
-    try {
-      fetchResponse = await fetch(videoUrl, { 
-        signal: downloadController.signal,
-        headers: {
-          'Accept': 'video/*',
-        }
-      });
-      clearTimeout(downloadTimeoutId);
-    } catch (fetchError) {
-      clearTimeout(downloadTimeoutId);
-      if (fetchError instanceof Error && fetchError.name === 'AbortError') {
-        return { 
-          success: false, 
-          error: `Download from Supabase timed out after ${downloadTimeout/1000} seconds. The video file may be too large or the connection is slow.` 
-        };
-      }
-      return { 
-        success: false, 
-        error: `Failed to download video from Supabase: ${fetchError instanceof Error ? fetchError.message : String(fetchError)}` 
-      };
-    }
-    
-    if (!fetchResponse.ok) {
-      const statusText = fetchResponse.statusText || 'Unknown error';
-      const status = fetchResponse.status;
-      return { 
-        success: false, 
-        error: `Failed to download video from Supabase: HTTP ${status} ${statusText}` 
-      };
-    }
-    
-    const arrayBuffer = await fetchResponse.arrayBuffer();
-    const fileSizeMB = (arrayBuffer.byteLength / 1024 / 1024).toFixed(2);
-    console.log(`[Server Action] Video downloaded: ${fileSizeMB}MB`);
-    
-    // Determine mimeType
-    let finalMimeType = mimeType || 'video/mp4';
-    if (!mimeType) {
-      const urlLower = videoUrl.toLowerCase();
-      if (urlLower.endsWith('.webm')) {
-        finalMimeType = 'video/webm';
-      } else if (urlLower.endsWith('.mov') || urlLower.endsWith('.qt')) {
-        finalMimeType = 'video/quicktime';
-      } else if (urlLower.endsWith('.avi')) {
-        finalMimeType = 'video/x-msvideo';
-      } else if (urlLower.endsWith('.mkv')) {
-        finalMimeType = 'video/x-matroska';
-      }
-    }
-    
-    if (!finalMimeType.startsWith('video/')) {
-      finalMimeType = 'video/mp4';
-    }
-    
-    console.log(`[Server Action] Video file size: ${fileSizeMB}MB, MIME type: ${finalMimeType}`);
-    
-    // Initialize Google Generative AI and File Manager
+    // Get the file object from Google File API
     const genAI = new GoogleGenerativeAI(apiKey);
     const fileManager = new GoogleAIFileManager(apiKey);
+    const file = await fileManager.getFile(fileName);
     
-    // Upload video to Google's File API (NOT base64 inline - this fixes the 500 error!)
-    console.log("[Server Action] Uploading video to Google File API...");
-    const uploadResult = await fileManager.uploadFile(Buffer.from(arrayBuffer), {
-      mimeType: finalMimeType,
-      displayName: `comic-video-${Date.now()}`,
-    });
-    
-    console.log(`[Server Action] Video uploaded to Google File API. File URI: ${uploadResult.file.uri}`);
-    
-    // Wait for file to be processed (CRITICAL STEP - files must be ACTIVE before use)
-    let file = uploadResult.file;
-    while (file.state === 'PROCESSING') {
-      console.log("[Server Action] Waiting for video processing...");
-      await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds
-      file = await fileManager.getFile(file.name);
-    }
-    
-    if (file.state === 'FAILED') {
+    if (file.state !== 'ACTIVE') {
       return {
         success: false,
-        error: `Video processing failed: ${file.error?.message || 'Unknown error'}`
+        error: `File is not ready. Current state: ${file.state}. Please wait for processing to complete.`
       };
     }
     
-    console.log(`[Server Action] Video processing complete. State: ${file.state}`);
+    console.log(`[Server Action] File is ready. URI: ${file.uri}`);
     
     // System instruction
     const systemInstruction = "You are an expert comic book grader. Analyze the video of this comic book. Identify the comic (Series, Issue, Year, Variant) and look for visible defects across all frames. Return the response as clean JSON with fields: title, issue, estimatedGrade, reasoning.";
@@ -202,7 +127,7 @@ export async function analyzeComicFromUrl(videoUrl: string, mimeType?: string): 
     if (geminiErrorDetails) {
       console.error("[Server Action] Gemini API error details:", geminiErrorDetails);
     }
-    console.error("[Server Action] Video URL:", videoUrl);
+    console.error("[Server Action] File name:", fileName);
     console.error("[Server Action] API Key set:", !!process.env.GOOGLE_API_KEY);
     console.error("[Server Action] ==================================");
     

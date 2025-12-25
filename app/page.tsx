@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { analyzeComic } from './actions';
 import { uploadToSupabase } from '@/lib/supabase/upload';
-import { analyzeComicFromUrl } from './actions/analyze-from-url';
+import { analyzeComicFromGoogleFile } from './actions/analyze-from-url';
 
 interface VersionInfo {
   version: string;
@@ -276,7 +276,7 @@ export default function Home() {
     const fileSizeMB = (file.size / 1024 / 1024).toFixed(2);
     console.log(`Uploading video for analysis: ${fileSizeMB}MB`);
 
-    // Use Supabase for file upload (bypasses Vercel's 4.5MB limit)
+    // New flow: Supabase → Google File API → Gemini (avoids memory/timeout issues)
     try {
       // Step 1: Upload file to Supabase Storage (client-side, no size limit)
       console.log("Step 1: Uploading to Supabase Storage...");
@@ -284,15 +284,70 @@ export default function Home() {
       
       const supabaseUrl = await uploadToSupabase(file);
       console.log("File uploaded to Supabase:", supabaseUrl);
+      setUploadProgress(20);
+      
+      // Step 2: Upload from Supabase to Google File API (API route with longer timeout)
+      console.log("Step 2: Uploading to Google File API...");
+      setUploadProgress(30);
+      
+      const uploadResponse = await fetch('/api/upload-to-google', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          videoUrl: supabaseUrl,
+          mimeType: file.type || "video/mp4",
+          fileName: `comic-video-${Date.now()}-${file.name}`,
+        }),
+      });
+      
+      if (!uploadResponse.ok) {
+        const errorData = await uploadResponse.json();
+        throw new Error(errorData.error || 'Failed to upload to Google File API');
+      }
+      
+      const uploadData = await uploadResponse.json();
+      console.log("File uploaded to Google File API:", uploadData);
       setUploadProgress(50);
       
-      // Step 2: Send URL and mimeType to server action (small payload, bypasses 4.5MB limit)
-      console.log("Step 2: Sending URL to server for analysis...");
-      setUploadProgress(60);
+      // Step 3: Poll for file processing (client-side to avoid server timeout)
+      console.log("Step 3: Waiting for file processing...");
+      let fileState = uploadData.state;
+      let fileName = uploadData.name;
       
-      const result = await analyzeComicFromUrl(supabaseUrl, file.type || "video/mp4");
+      while (fileState === 'PROCESSING') {
+        await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds
+        setUploadProgress(50 + (Math.min(30, Date.now() % 30))); // Show progress
+        
+        const stateResponse = await fetch('/api/google-file-state', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fileName }),
+        });
+        
+        if (!stateResponse.ok) {
+          throw new Error('Failed to check file state');
+        }
+        
+        const stateData = await stateResponse.json();
+        fileState = stateData.state;
+        
+        if (fileState === 'FAILED') {
+          throw new Error(`Video processing failed: ${stateData.error || 'Unknown error'}`);
+        }
+        
+        console.log(`File state: ${fileState}`);
+      }
+      
+      console.log("File processing complete. State:", fileState);
+      setUploadProgress(80);
+      
+      // Step 4: Analyze using file reference (small payload, no download needed)
+      console.log("Step 4: Analyzing video with Gemini...");
+      setUploadProgress(85);
+      
+      const result = await analyzeComicFromGoogleFile(fileName);
       console.log("Analysis complete, received result:", result);
-      setUploadProgress(90);
+      setUploadProgress(95);
       
       if (result.success) {
         setResult(result.data);
@@ -307,8 +362,8 @@ export default function Home() {
           errorMessage += " Please check Vercel environment variables.";
         } else if (errorMessage.includes("timeout") || errorMessage.includes("timed out")) {
           errorMessage += " Try recording a shorter video (5-10 seconds).";
-        } else if (errorMessage.includes("Failed to download")) {
-          errorMessage += " There may be an issue with Supabase Storage. Please try again.";
+        } else if (errorMessage.includes("not ready") || errorMessage.includes("PROCESSING")) {
+          errorMessage += " The video is still processing. Please wait and try again.";
         }
         
         setError(errorMessage);
