@@ -3,6 +3,8 @@
  * Uploads large videos to Google File API to avoid token limits when sending to Gemini
  */
 
+import { Readable } from 'stream';
+
 interface GoogleFileUploadResponse {
   file: {
     uri: string;
@@ -58,6 +60,116 @@ export async function uploadToGoogleFileAPI(
     method: 'POST',
     body: formData,
     // Don't set Content-Type header - let fetch set it with boundary
+  });
+
+  if (!uploadResponse.ok) {
+    const errorText = await uploadResponse.text();
+    console.error(`[Google File API] Upload failed: ${uploadResponse.status} ${uploadResponse.statusText}`);
+    console.error(`[Google File API] Error response: ${errorText}`);
+    throw new Error(`Failed to upload to Google File API: ${uploadResponse.status} ${uploadResponse.statusText}. ${errorText}`);
+  }
+
+  const uploadData = await uploadResponse.json() as GoogleFileUploadResponse;
+  const fileUri = uploadData.file.uri;
+
+  if (!fileUri) {
+    throw new Error('No file URI returned from Google File API');
+  }
+
+  console.log(`[Google File API] File uploaded: ${fileUri}`);
+
+  // Poll for file to be ready (ACTIVE state)
+  const maxAttempts = 30; // 30 attempts = 15 seconds max
+  const pollInterval = 500; // 500ms between polls
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const stateUrl = `https://generativelanguage.googleapis.com/v1beta/${fileUri}?key=${apiKey}`;
+    const stateResponse = await fetch(stateUrl);
+
+    if (!stateResponse.ok) {
+      throw new Error(`Failed to check file state: ${stateResponse.status} ${stateResponse.statusText}`);
+    }
+
+    const stateData = await stateResponse.json() as GoogleFileStateResponse;
+
+    if (stateData.state === 'ACTIVE') {
+      console.log(`[Google File API] File is ready after ${attempt + 1} attempts`);
+      return fileUri;
+    }
+
+    if (stateData.state === 'FAILED') {
+      const errorMsg = stateData.error?.message || 'Unknown error';
+      throw new Error(`File upload failed: ${errorMsg}`);
+    }
+
+    // Wait before next poll
+    if (attempt < maxAttempts - 1) {
+      await new Promise(resolve => setTimeout(resolve, pollInterval));
+    }
+  }
+
+  throw new Error('File upload timed out - file did not become ACTIVE within 15 seconds');
+}
+
+/**
+ * Upload a video stream to Google File API
+ * Converts the stream to a Blob and uploads it
+ * 
+ * @param stream - Readable stream of video data
+ * @param apiKey - Google API key
+ * @param mimeType - MIME type (explicitly set to video/mp4)
+ */
+export async function uploadStreamToGoogleFileAPI(
+  stream: Readable,
+  apiKey: string,
+  mimeType: string = 'video/mp4'
+): Promise<string> {
+  const uploadUrl = `https://generativelanguage.googleapis.com/upload/v1beta/files?key=${apiKey}`;
+  
+  // Convert stream to Buffer (needed for FormData)
+  const chunks: Buffer[] = [];
+  let totalSize = 0;
+  
+  console.log(`[Google File API] Reading stream into buffer...`);
+  
+  for await (const chunk of stream) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    chunks.push(buffer);
+    totalSize += buffer.length;
+    
+    // Log progress every 5MB
+    if (totalSize % (5 * 1024 * 1024) < buffer.length) {
+      console.log(`[Google File API] Stream progress: ${(totalSize / 1024 / 1024).toFixed(2)}MB`);
+    }
+  }
+  
+  const buffer = Buffer.concat(chunks);
+  const fileSizeMB = (buffer.length / 1024 / 1024).toFixed(2);
+  console.log(`[Google File API] Stream read complete: ${fileSizeMB}MB`);
+  
+  // Create Blob from buffer
+  const blob = new Blob([buffer], { type: mimeType });
+  
+  // Create FormData
+  const formData = new FormData();
+  
+  // Metadata with explicit mimeType
+  const metadata = {
+    file: {
+      displayName: 'comic-video-normalized.mp4',
+      mimeType: mimeType, // Explicitly set to video/mp4
+    },
+  };
+  
+  formData.append('metadata', JSON.stringify(metadata));
+  formData.append('file', blob, 'comic-video-normalized.mp4');
+  
+  // Upload file
+  console.log(`[Google File API] Starting upload... (file size: ${buffer.length} bytes, mimeType: ${mimeType})`);
+  
+  const uploadResponse = await fetch(uploadUrl, {
+    method: 'POST',
+    body: formData,
   });
 
   if (!uploadResponse.ok) {

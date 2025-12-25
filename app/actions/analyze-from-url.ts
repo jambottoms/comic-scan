@@ -1,7 +1,9 @@
 'use server';
 
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import { uploadToGoogleFileAPI } from "@/lib/google/file-api";
+import { uploadToGoogleFileAPI, uploadStreamToGoogleFileAPI } from "@/lib/google/file-api";
+import { normalizeVideoFromUrl } from "@/lib/video/normalize";
+import { Readable } from 'stream';
 
 /**
  * Result type for server action - returns success/error instead of throwing
@@ -26,77 +28,37 @@ export async function analyzeComicFromUrl(videoUrl: string, mimeType?: string): 
   console.log(`[Server Action] API key present: ${apiKey ? 'Yes' : 'No'} (length: ${apiKey?.length || 0})`);
 
   try {
-    console.log(`[Server Action] Downloading video from Supabase: ${videoUrl}`);
+    console.log(`[Server Action] Starting video normalization pipeline for: ${videoUrl}`);
     
-    // Download video from Supabase Storage URL with timeout
-    const downloadTimeout = 30000; // 30 seconds for download
-    const downloadController = new AbortController();
-    const downloadTimeoutId = setTimeout(() => downloadController.abort(), downloadTimeout);
-    
-    let fetchResponse: Response;
+    // Step 1: Normalize video (downloads as stream, transcodes to H.264, 1080p, 1fps, no audio)
+    // This handles all mobile video formats (HEVC, QuickTime, etc.)
+    let normalizedStream: Readable;
     try {
-      fetchResponse = await fetch(videoUrl, { 
-        signal: downloadController.signal,
-        headers: {
-          'Accept': 'video/*',
+      const startTime = Date.now();
+      normalizedStream = await normalizeVideoFromUrl(videoUrl, {
+        onProgress: (progress) => {
+          const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+          console.log(`[Server Action] Normalization progress: ${progress.percent.toFixed(1)}% (${progress.frames} frames, ${elapsed}s elapsed)`);
         }
       });
-      clearTimeout(downloadTimeoutId);
-    } catch (fetchError) {
-      clearTimeout(downloadTimeoutId);
-      if (fetchError instanceof Error && fetchError.name === 'AbortError') {
-        return { 
-          success: false, 
-          error: `Download from Supabase timed out after ${downloadTimeout/1000} seconds. The video file may be too large or the connection is slow.` 
-        };
-      }
-      return { 
-        success: false, 
-        error: `Failed to download video from Supabase: ${fetchError instanceof Error ? fetchError.message : String(fetchError)}` 
+      console.log(`[Server Action] ✅ Video normalization complete`);
+    } catch (normalizeError) {
+      const errorDetails = normalizeError instanceof Error ? normalizeError.message : String(normalizeError);
+      console.error(`[Server Action] ❌ Video normalization failed:`, errorDetails);
+      return {
+        success: false,
+        error: `Failed to normalize video. This may be due to unsupported format or corruption. Error: ${errorDetails}`
       };
     }
     
-    if (!fetchResponse.ok) {
-      const statusText = fetchResponse.statusText || 'Unknown error';
-      const status = fetchResponse.status;
-      return { 
-        success: false, 
-        error: `Failed to download video from Supabase: HTTP ${status} ${statusText}` 
-      };
-    }
-    
-    const arrayBuffer = await fetchResponse.arrayBuffer();
-    const fileSizeMB = (arrayBuffer.byteLength / 1024 / 1024).toFixed(2);
-    const binarySizeMB = parseFloat(fileSizeMB);
-    console.log(`[Server Action] Video downloaded: ${fileSizeMB}MB (${arrayBuffer.byteLength} bytes)`);
-    
-    // Validate ArrayBuffer - check first/last bytes to ensure file isn't corrupted
-    const firstBytes = new Uint8Array(arrayBuffer.slice(0, Math.min(16, arrayBuffer.byteLength)));
-    const lastBytes = new Uint8Array(arrayBuffer.slice(Math.max(0, arrayBuffer.byteLength - 16), arrayBuffer.byteLength));
-    console.log(`[Server Action] File validation - First 16 bytes: ${Array.from(firstBytes).map(b => b.toString(16).padStart(2, '0')).join(' ')}`);
-    console.log(`[Server Action] File validation - Last 16 bytes: ${Array.from(lastBytes).map(b => b.toString(16).padStart(2, '0')).join(' ')}`);
-    
-    // HARDCODE mimeType to video/mp4 - client already normalized the file
+    // Step 2: Upload normalized stream directly to Google File API
+    // Explicitly set mimeType to video/mp4
     const finalMimeType = 'video/mp4';
-    
-    console.log(`[Server Action] Using hardcoded mimeType: ${finalMimeType}`);
-    console.log(`[Server Action] Using Google File API for all videos (${fileSizeMB}MB) to ensure reliability...`);
-    
     let fileUri: string | null = null;
     
     try {
-      // Convert ArrayBuffer to Blob for upload
-      const blob = new Blob([arrayBuffer], { type: 'video/mp4' });
-      const file = new File([blob], 'comic-video.mp4', { type: 'video/mp4' });
-      
-      // Validate the File object
-      console.log(`[Server Action] Created File object: size=${file.size}, type=${file.type}, name=${file.name}`);
-      if (file.size !== arrayBuffer.byteLength) {
-        console.error(`[Server Action] ⚠️ Size mismatch: ArrayBuffer=${arrayBuffer.byteLength}, File=${file.size}`);
-      }
-      
-      console.log(`[Server Action] Uploading ${fileSizeMB}MB file to Google File API...`);
-      fileUri = await uploadToGoogleFileAPI(file, apiKey);
+      console.log(`[Server Action] Uploading normalized video to Google File API (mimeType: ${finalMimeType})...`);
+      fileUri = await uploadStreamToGoogleFileAPI(normalizedStream, apiKey, finalMimeType);
       console.log(`[Server Action] ✅ File uploaded to Google File API: ${fileUri}`);
     } catch (fileApiError) {
       const errorDetails = fileApiError instanceof Error ? {
@@ -109,7 +71,7 @@ export async function analyzeComicFromUrl(videoUrl: string, mimeType?: string): 
       
       return {
         success: false,
-        error: `Failed to upload video (${fileSizeMB}MB) to Google File API. This may be due to HEVC encoding, file size, or API issues. Please try: 1) Record in "Most Compatible" format (Settings > Camera > Formats on iOS), 2) Try a shorter video, or 3) Try again in a few moments. Error: ${errorDetails.message}`
+        error: `Failed to upload normalized video to Google File API. Error: ${errorDetails.message}`
       };
     }
     
@@ -126,9 +88,9 @@ export async function analyzeComicFromUrl(videoUrl: string, mimeType?: string): 
       systemInstruction: systemInstruction
     });
     
-    // Add timeout wrapper
+    // Add timeout wrapper - Vercel has 300s timeout, so use 280s to be safe
     const timeoutPromise = new Promise((_, reject) => {
-      setTimeout(() => reject(new Error("Video analysis timed out after 60 seconds. The video may be too long or the API is slow. Please try a shorter video.")), 60000);
+      setTimeout(() => reject(new Error("Video analysis timed out after 280 seconds. The video normalization or API call took too long. Please try a shorter video.")), 280000);
     });
 
     // Build payload - always use File API reference
