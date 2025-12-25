@@ -28,6 +28,11 @@ export async function analyzeComicFromUrl(videoUrl: string, mimeType?: string): 
 
   console.log(`[Server Action] API key present: ${apiKey ? 'Yes' : 'No'} (length: ${apiKey?.length || 0})`);
 
+  // Step 2: Save normalized video to temporary file (Vercel allows /tmp)
+  // CRITICAL: Use await to ensure file is fully written to disk before SDK reads it
+  const tempPath = path.join('/tmp', `comic_${Date.now()}.mp4`);
+  let fileUri: string | null = null;
+
   try {
     console.log(`[Server Action] Starting video normalization pipeline for: ${videoUrl}`);
     
@@ -55,64 +60,29 @@ export async function analyzeComicFromUrl(videoUrl: string, mimeType?: string): 
       };
     }
     
-    // Step 2: Save normalized video to temporary file (Vercel allows /tmp)
-    // CRITICAL: Use await to ensure file is fully written to disk before SDK reads it
-    const tempPath = path.join('/tmp', `comic_${Date.now()}.mp4`);
-    let fileUri: string | null = null;
+    // Step 2: Save normalized video to temporary file
+    console.log(`[Server Action] Saving normalized video to temp file: ${tempPath}`);
     
-    try {
-      console.log(`[Server Action] Saving normalized video to temp file: ${tempPath}`);
-      
-      // Write file and await completion to ensure it's on disk
-      await writeFile(tempPath, videoBuffer);
-      const fileSizeMB = (videoBuffer.length / 1024 / 1024).toFixed(2);
-      console.log(`[Server Action] Temp file written: ${fileSizeMB}MB`);
-      
-      // Step 3: Verification - Check if the file actually has data on disk
-      const stats = await stat(tempPath);
-      if (stats.size === 0) {
-        throw new Error('Normalized file is empty on disk');
-      }
-      if (stats.size !== videoBuffer.length) {
-        console.warn(`[Server Action] Size mismatch: buffer=${videoBuffer.length}, file=${stats.size}`);
-      }
-      console.log(`[Server Action] File verified on disk: ${stats.size} bytes`);
-      
-      // Step 4: Upload temp file to Google File API using SDK fileManager
-      // File is now guaranteed to be on disk before SDK reads it
-      console.log(`[Server Action] Uploading temp file to Google File API (mimeType: video/mp4)...`);
-      fileUri = await uploadFileToGoogleFileAPI(tempPath, apiKey, 'video/mp4');
-      console.log(`[Server Action] ✅ File uploaded to Google File API: ${fileUri}`);
-    } catch (fileApiError) {
-      const errorDetails = fileApiError instanceof Error ? {
-        message: fileApiError.message,
-        stack: fileApiError.stack,
-        name: fileApiError.name
-      } : { message: String(fileApiError) };
-      
-      console.error(`[Server Action] ❌ Google File API upload failed:`, errorDetails);
-      
-      // Clean up temp file on error
-      try {
-        await unlink(tempPath);
-      } catch (unlinkError) {
-        console.error(`[Server Action] Failed to cleanup temp file:`, unlinkError);
-      }
-      
-      return {
-        success: false,
-        error: `Failed to upload normalized video to Google File API. Error: ${errorDetails.message}`
-      };
-    } finally {
-      // Step 4: Cleanup temp file
-      try {
-        await unlink(tempPath);
-        console.log(`[Server Action] Temp file cleaned up: ${tempPath}`);
-      } catch (unlinkError) {
-        console.error(`[Server Action] Failed to cleanup temp file:`, unlinkError);
-        // Don't fail the request if cleanup fails
-      }
+    // Write file and await completion to ensure it's on disk
+    await writeFile(tempPath, videoBuffer);
+    const fileSizeMB = (videoBuffer.length / 1024 / 1024).toFixed(2);
+    console.log(`[Server Action] Temp file written: ${fileSizeMB}MB`);
+    
+    // Step 3: Verification - Check if the file actually has data on disk
+    const stats = await stat(tempPath);
+    if (stats.size === 0) {
+      throw new Error('Normalized file is empty on disk');
     }
+    if (stats.size !== videoBuffer.length) {
+      console.warn(`[Server Action] Size mismatch: buffer=${videoBuffer.length}, file=${stats.size}`);
+    }
+    console.log(`[Server Action] File verified on disk: ${stats.size} bytes`);
+    
+    // Step 4: Upload temp file to Google File API using SDK fileManager
+    // File is now guaranteed to be on disk before SDK reads it
+    console.log(`[Server Action] Uploading temp file to Google File API (mimeType: video/mp4)...`);
+    fileUri = await uploadFileToGoogleFileAPI(tempPath, apiKey, 'video/mp4');
+    console.log(`[Server Action] ✅ File uploaded to Google File API: ${fileUri}`);
     
     // Initialize Google Generative AI
     const genAI = new GoogleGenerativeAI(apiKey);
@@ -141,13 +111,13 @@ export async function analyzeComicFromUrl(videoUrl: string, mimeType?: string): 
     }
     
     console.log(`[Server Action] Sending video to Gemini API using File API reference: ${fileUri}`);
-    console.log(`[Server Action] Payload: fileUri=${fileUri}, mimeType=${finalMimeType}`);
+    console.log(`[Server Action] Payload: fileUri=${fileUri}, mimeType=video/mp4`);
     
     const payload = [
       {
         fileData: {
           fileUri: fileUri,
-          mimeType: finalMimeType
+          mimeType: 'video/mp4'
         }
       },
       {
@@ -276,6 +246,17 @@ export async function analyzeComicFromUrl(videoUrl: string, mimeType?: string): 
     // Return error as result object instead of throwing
     // This prevents Next.js from hiding the error in production
     return { success: false, error: errorMessage };
+  } finally {
+    // Cleanup temp file - always runs, even on error
+    if (tempPath) {
+      try {
+        await unlink(tempPath);
+        console.log(`[Server Action] Temp file cleaned up: ${tempPath}`);
+      } catch (unlinkError) {
+        console.error(`[Server Action] Failed to cleanup temp file:`, unlinkError);
+        // Don't fail the request if cleanup fails
+      }
+    }
   }
 }
 
