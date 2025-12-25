@@ -1,8 +1,11 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
+import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { uploadToSupabase } from '@/lib/supabase/upload';
 import { analyzeComicFromUrl } from './actions/analyze-from-url';
+import { getVideoHistory, addToHistory, generateThumbnail } from '@/lib/history';
 
 interface VersionInfo {
   version: string;
@@ -11,24 +14,27 @@ interface VersionInfo {
   buildTime: string;
 }
 
-export default function Home() {
+export default function Dashboard() {
+  const router = useRouter();
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
-  const [videoPreview, setVideoPreview] = useState<string | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
   const [versionInfo, setVersionInfo] = useState<VersionInfo | null>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
-  const [usingFallback, setUsingFallback] = useState(false);
+  const [history, setHistory] = useState(getVideoHistory());
   
   const videoRef = useRef<HTMLVideoElement>(null);
-  const previewVideoRef = useRef<HTMLVideoElement>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const uploadXhrRef = useRef<XMLHttpRequest | null>(null);
+
+  // Refresh history when component mounts or when a new video is added
+  useEffect(() => {
+    setHistory(getVideoHistory());
+  }, []);
 
   // Request high-quality video constraints
   const getVideoConstraints = () => ({
@@ -53,7 +59,6 @@ export default function Home() {
       }
       
       // Request camera with high-quality constraints
-      // Start with ideal constraints, but allow fallback
       let stream: MediaStream;
       try {
         stream = await navigator.mediaDevices.getUserMedia({
@@ -61,7 +66,6 @@ export default function Home() {
           audio: false,
         });
       } catch (permissionError: any) {
-        // If permission denied, try with less strict constraints
         if (permissionError.name === 'NotAllowedError' || permissionError.name === 'PermissionDeniedError') {
           console.warn("High-quality constraints denied, trying with basic constraints...");
           try {
@@ -90,11 +94,10 @@ export default function Home() {
 
       // Set up MediaRecorder with high quality
       const options: MediaRecorderOptions = {
-        mimeType: 'video/webm;codecs=vp9', // High quality codec
-        videoBitsPerSecond: 10000000, // 10 Mbps for high quality
+        mimeType: 'video/webm;codecs=vp9',
+        videoBitsPerSecond: 10000000,
       };
 
-      // Fallback to VP8 if VP9 not supported
       if (!MediaRecorder.isTypeSupported(options.mimeType!)) {
         options.mimeType = 'video/webm;codecs=vp8';
       }
@@ -111,14 +114,7 @@ export default function Home() {
 
       recorder.onstop = async () => {
         const blob = new Blob(chunksRef.current, { type: 'video/webm' });
-        
-        // Clean up previous video URL if exists
-        if (videoPreview) {
-          URL.revokeObjectURL(videoPreview);
-        }
-
         const videoUrl = URL.createObjectURL(blob);
-        setVideoPreview(videoUrl);
 
         // Stop all tracks
         if (mediaStreamRef.current) {
@@ -129,19 +125,14 @@ export default function Home() {
         // Send to server for analysis
         setLoading(true);
         setError(null);
-        setResult(null);
         setUploadProgress(0);
         
-        // Show file size info
         const fileSizeMB = (blob.size / 1024 / 1024).toFixed(2);
         console.log(`Uploading recorded video: ${fileSizeMB}MB`);
 
-        // Convert blob to File for Supabase upload
         const file = new File([blob], "comic-video.webm", { type: "video/webm" });
 
         try {
-          // Use the same Supabase flow as file upload to bypass Vercel's 4.5MB limit
-          // Step 1: Upload to Supabase Storage (client-side, no size limit)
           console.log("Step 1: Uploading recorded video to Supabase Storage...");
           setUploadProgress(10);
           
@@ -149,7 +140,6 @@ export default function Home() {
           console.log("Recorded video uploaded to Supabase:", supabaseUrl);
           setUploadProgress(50);
           
-          // Step 2: Send URL to server action (small payload, bypasses 4.5MB limit)
           console.log("Step 2: Sending URL to server for analysis...");
           setUploadProgress(60);
           
@@ -158,14 +148,26 @@ export default function Home() {
           setUploadProgress(90);
           
           if (result.success) {
-            setResult(result.data);
+            // Generate thumbnail
+            const thumbnail = await generateThumbnail(videoUrl);
+            
+            // Save to history
+            const historyId = addToHistory({
+              title: result.data.title || "Unknown Comic",
+              issue: result.data.issue || "Unknown",
+              grade: result.data.estimatedGrade || "N/A",
+              videoUrl: supabaseUrl, // Use Supabase URL for persistence
+              result: result.data,
+              thumbnail: thumbnail || undefined,
+            });
+            
             setUploadProgress(100);
-            console.log("Result set, should display now");
+            
+            // Redirect to results page
+            router.push(`/results/${historyId}`);
           } else {
-            // Handle error from server action
             let errorMessage = result.error;
             
-            // Add helpful context for common errors
             if (errorMessage.includes("GOOGLE_API_KEY")) {
               errorMessage += " Please check Vercel environment variables.";
             } else if (errorMessage.includes("timeout") || errorMessage.includes("timed out")) {
@@ -175,20 +177,15 @@ export default function Home() {
             }
             
             setError(errorMessage);
+            URL.revokeObjectURL(videoUrl);
           }
         } catch (err) {
           console.error("Upload analysis error:", err);
-          console.error("Error details:", {
-            name: err instanceof Error ? err.name : 'Unknown',
-            message: err instanceof Error ? err.message : String(err),
-            stack: err instanceof Error ? err.stack : undefined
-          });
           
           let errorMessage = "Failed to analyze video. ";
           if (err instanceof Error) {
             errorMessage = err.message;
             
-            // Add helpful context for common errors
             if (err.message.includes("GOOGLE_API_KEY")) {
               errorMessage += " Please check Vercel environment variables.";
             } else if (err.message.includes("timeout") || err.message.includes("timed out")) {
@@ -201,6 +198,7 @@ export default function Home() {
           }
           
           setError(errorMessage);
+          URL.revokeObjectURL(videoUrl);
         } finally {
           setLoading(false);
           setUploadProgress(0);
@@ -209,7 +207,7 @@ export default function Home() {
       };
 
       // Start recording
-      recorder.start(1000); // Collect data every second
+      recorder.start(1000);
       setIsRecording(true);
       setRecordingTime(0);
 
@@ -242,7 +240,7 @@ export default function Home() {
     }
   };
 
-  // Normalize MIME type for Gemini API (video/quicktime → video/mp4)
+  // Normalize MIME type for Gemini API
   const normalizeMimeTypeForGemini = (mimeType: string): string => {
     return (mimeType === 'video/quicktime' || mimeType === 'video/x-quicktime') ? 'video/mp4' : mimeType;
   };
@@ -254,11 +252,7 @@ export default function Home() {
 
     console.log(`[File Upload] File: ${file.name}, ${(file.size / 1024 / 1024).toFixed(2)}MB, type: ${file.type || '(empty)'}`);
 
-    // Check file size before upload
-    // Next.js config allows up to 100MB locally
-    // Vercel has a 4.5MB body size limit for serverless functions (platform limitation)
-    // We'll let the server action handle the limit check based on environment
-    const nextJsLimit = 100 * 1024 * 1024; // 100MB - Next.js config limit
+    const nextJsLimit = 100 * 1024 * 1024; // 100MB
     const uploadFileSizeMB = (file.size / 1024 / 1024).toFixed(2);
     
     if (file.size > nextJsLimit) {
@@ -268,27 +262,15 @@ export default function Home() {
 
     setLoading(true);
     setError(null);
-    setResult(null);
     setUploadProgress(0);
-    setUsingFallback(false); // Reset fallback state
 
-    // Clean up previous video URL if exists
-    if (videoPreview) {
-      URL.revokeObjectURL(videoPreview);
-    }
-
-    // Create video preview
+    // Create video preview for thumbnail
     const videoUrl = URL.createObjectURL(file);
-    setVideoPreview(videoUrl);
 
-    // Show file size info
     const fileSizeMB = (file.size / 1024 / 1024).toFixed(2);
     console.log(`Uploading video for analysis: ${fileSizeMB}MB`);
 
-    // Simplified flow: Supabase → Server Action (downloads and analyzes directly)
-    // This avoids the complex Google File API upload that was causing issues
     try {
-      // Step 1: Upload file to Supabase Storage (client-side, no size limit)
       console.log("Step 1: Uploading to Supabase Storage...");
       setUploadProgress(10);
       
@@ -296,8 +278,6 @@ export default function Home() {
       console.log("File uploaded to Supabase:", supabaseUrl);
       setUploadProgress(50);
       
-      // Step 2: Send URL to server action for analysis
-      // Server action will download from Supabase and analyze with Gemini
       console.log("Step 2: Sending to server for analysis...");
       setUploadProgress(60);
       
@@ -306,14 +286,30 @@ export default function Home() {
       setUploadProgress(90);
       
       if (result.success) {
-        setResult(result.data);
+        // Generate thumbnail
+        const thumbnail = await generateThumbnail(videoUrl);
+        
+        // Save to history
+        const historyId = addToHistory({
+          title: result.data.title || "Unknown Comic",
+          issue: result.data.issue || "Unknown",
+          grade: result.data.estimatedGrade || "N/A",
+          videoUrl: supabaseUrl, // Use Supabase URL for persistence
+          result: result.data,
+          thumbnail: thumbnail || undefined,
+        });
+        
         setUploadProgress(100);
-        console.log("Result set, should display now");
+        
+        // Clean up local video URL
+        URL.revokeObjectURL(videoUrl);
+        
+        // Refresh history and redirect to results page
+        setHistory(getVideoHistory());
+        router.push(`/results/${historyId}`);
       } else {
-        // Handle error from server action
         let errorMessage = result.error;
         
-        // Add helpful context for common errors
         if (errorMessage.includes("GOOGLE_API_KEY")) {
           errorMessage += " Please check Vercel environment variables.";
         } else if (errorMessage.includes("timeout") || errorMessage.includes("timed out")) {
@@ -321,25 +317,14 @@ export default function Home() {
         } else if (errorMessage.includes("not ready") || errorMessage.includes("PROCESSING")) {
           errorMessage += " The video is still processing. Please wait and try again.";
         } else if (errorMessage.includes("too large") || errorMessage.includes("size")) {
-          // iOS files might have size detection issues
           errorMessage += ` (File: ${file.name}, Size: ${uploadFileSizeMB}MB, Type: ${file.type || '(empty)'})`;
         }
         
         setError(errorMessage);
-        // Clear video preview on error so user can try again
-        if (videoPreview) {
-          URL.revokeObjectURL(videoPreview);
-          setVideoPreview(null);
-        }
+        URL.revokeObjectURL(videoUrl);
       }
     } catch (err) {
-      // Catch any unexpected errors (network issues, etc.)
       console.error("Upload analysis error:", err);
-      console.error("Error details:", {
-        name: err instanceof Error ? err.name : 'Unknown',
-        message: err instanceof Error ? err.message : String(err),
-        stack: err instanceof Error ? err.stack : undefined
-      });
       
       let errorMessage = "Failed to analyze video. ";
       if (err instanceof Error) {
@@ -349,11 +334,7 @@ export default function Home() {
       }
       
       setError(errorMessage);
-      // Clear video preview on error so user can try again
-      if (videoPreview) {
-        URL.revokeObjectURL(videoPreview);
-        setVideoPreview(null);
-      }
+      URL.revokeObjectURL(videoUrl);
     } finally {
       setLoading(false);
       setUploadProgress(0);
@@ -369,38 +350,28 @@ export default function Home() {
     }
     setLoading(false);
     setUploadProgress(0);
-    setUsingFallback(false); // Reset fallback state
     setError(null);
-    if (videoPreview) {
-      URL.revokeObjectURL(videoPreview);
-      setVideoPreview(null);
-    }
   };
 
   // Cancel recording function
   const cancelRecording = () => {
-    // Stop recording if active
     if (mediaRecorderRef.current && isRecording) {
       mediaRecorderRef.current.stop();
     }
     
-    // Stop all tracks
     if (mediaStreamRef.current) {
       mediaStreamRef.current.getTracks().forEach(track => track.stop());
       mediaStreamRef.current = null;
     }
 
-    // Clear timer
     if (timerRef.current) {
       clearInterval(timerRef.current);
       timerRef.current = null;
     }
 
-    // Reset state
     setIsRecording(false);
     setRecordingTime(0);
     
-    // Clear video preview
     if (videoRef.current) {
       videoRef.current.srcObject = null;
     }
@@ -417,7 +388,6 @@ export default function Home() {
       }
     }
 
-    // Stop video preview
     if (videoRef.current) {
       videoRef.current.srcObject = null;
     }
@@ -430,7 +400,6 @@ export default function Home() {
       .then(data => setVersionInfo(data))
       .catch(err => {
         console.error('Failed to load version info:', err);
-        // Fallback version
         setVersionInfo({
           version: '0.1.0',
           commitHash: 'unknown',
@@ -443,9 +412,6 @@ export default function Home() {
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      if (videoPreview) {
-        URL.revokeObjectURL(videoPreview);
-      }
       if (mediaStreamRef.current) {
         mediaStreamRef.current.getTracks().forEach(track => track.stop());
       }
@@ -453,60 +419,40 @@ export default function Home() {
         clearInterval(timerRef.current);
       }
     };
-  }, [videoPreview]);
+  }, []);
+
+  // Format date for display
+  const formatDate = (timestamp: number) => {
+    const date = new Date(timestamp);
+    return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  };
 
   return (
-    <main className="min-h-screen bg-gray-900 text-white p-4 flex flex-col items-center justify-center overflow-y-auto">
+    <main className="min-h-screen bg-gray-900 text-white p-4 flex flex-col items-center overflow-y-auto">
       <h1 className="text-2xl sm:text-3xl font-bold mb-4 sm:mb-8">Comic Video Scanner</h1>
 
       {/* Camera Preview - Live Feed with Overlay Controls */}
-      {!videoPreview && (
+      {!isRecording && (
         <div className="mb-4 sm:mb-8 w-full max-w-md relative flex-shrink-0">
           <video
             ref={videoRef}
             autoPlay
             playsInline
             muted
-            className={`w-full rounded-xl border-2 ${
-              isRecording ? 'border-red-500' : 'border-gray-700'
-            }`}
-            style={{ maxHeight: isRecording ? 'calc(100vh - 200px)' : 'auto' }}
+            className="w-full rounded-xl border-2 border-gray-700"
           />
-          {/* Overlay controls when recording - always visible on mobile */}
-          {isRecording && (
-            <div className="absolute bottom-0 left-0 right-0 p-3 sm:p-4 bg-gradient-to-t from-black/90 via-black/80 to-transparent rounded-b-xl flex flex-col items-center gap-2 sm:gap-3">
-              <div className="flex gap-2">
-                <button
-                  onClick={stopRecording}
-                  className="bg-red-600 hover:bg-red-500 active:bg-red-700 text-white font-bold py-3 px-6 rounded-full text-base sm:text-lg transition shadow-lg z-10 touch-manipulation"
-                  style={{ minHeight: '44px' }} // iOS touch target size
-                >
-                  ⏹️ Stop
-                </button>
-                <button
-                  onClick={cancelRecording}
-                  className="bg-gray-600 hover:bg-gray-500 active:bg-gray-700 text-white font-bold py-3 px-4 rounded-full text-base sm:text-lg transition shadow-lg z-10 touch-manipulation"
-                  style={{ minHeight: '44px' }} // iOS touch target size
-                >
-                  ✕ Cancel
-                </button>
-              </div>
-              <div className="text-red-400 font-semibold text-sm sm:text-base drop-shadow-lg">
-                Recording... {Math.floor(recordingTime / 60)}:{(recordingTime % 60).toString().padStart(2, '0')}
-              </div>
-            </div>
-          )}
         </div>
       )}
 
       {/* Recording Controls - Only show when NOT recording */}
       {!isRecording && (
         <div className="mb-8 flex flex-col items-center gap-4">
-          {!loading && !videoPreview && (
+          {!loading && (
             <div className="flex flex-col sm:flex-row gap-4 items-center">
               <button
                 onClick={startRecording}
                 className="bg-blue-600 hover:bg-blue-500 text-white font-bold py-4 px-8 rounded-full text-xl transition disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={loading}
               >
                 🎥 Record Video
               </button>
@@ -524,20 +470,46 @@ export default function Home() {
             </div>
           )}
 
-          {!loading && videoPreview && (
-            <button
-              onClick={startRecording}
-              className="bg-blue-600 hover:bg-blue-500 text-white font-bold py-4 px-8 rounded-full text-xl transition disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              🎥 Record New Video
-            </button>
-          )}
-
           {versionInfo && !loading && (
             <div className="text-gray-500 text-xs mt-2 text-center">
               v{versionInfo.version} • {versionInfo.commitHash}
             </div>
           )}
+        </div>
+      )}
+
+      {/* Recording Overlay */}
+      {isRecording && (
+        <div className="mb-4 sm:mb-8 w-full max-w-md relative">
+          <video
+            ref={videoRef}
+            autoPlay
+            playsInline
+            muted
+            className="w-full rounded-xl border-2 border-red-500"
+            style={{ maxHeight: 'calc(100vh - 200px)' }}
+          />
+          <div className="absolute bottom-0 left-0 right-0 p-3 sm:p-4 bg-gradient-to-t from-black/90 via-black/80 to-transparent rounded-b-xl flex flex-col items-center gap-2 sm:gap-3">
+            <div className="flex gap-2">
+              <button
+                onClick={stopRecording}
+                className="bg-red-600 hover:bg-red-500 active:bg-red-700 text-white font-bold py-3 px-6 rounded-full text-base sm:text-lg transition shadow-lg z-10 touch-manipulation"
+                style={{ minHeight: '44px' }}
+              >
+                ⏹️ Stop
+              </button>
+              <button
+                onClick={cancelRecording}
+                className="bg-gray-600 hover:bg-gray-500 active:bg-gray-700 text-white font-bold py-3 px-4 rounded-full text-base sm:text-lg transition shadow-lg z-10 touch-manipulation"
+                style={{ minHeight: '44px' }}
+              >
+                ✕ Cancel
+              </button>
+            </div>
+            <div className="text-red-400 font-semibold text-sm sm:text-base drop-shadow-lg">
+              Recording... {Math.floor(recordingTime / 60)}:{(recordingTime % 60).toString().padStart(2, '0')}
+            </div>
+          </div>
         </div>
       )}
 
@@ -547,37 +519,23 @@ export default function Home() {
             <div className="animate-pulse">Analyzing video...</div>
           </div>
           
-          {usingFallback ? (
-            /* Fallback Message - No Progress Bar */
-            <div className="bg-yellow-900/30 border border-yellow-600/50 rounded-lg p-4 mb-3">
-              <div className="text-yellow-300 text-sm text-center">
-                ⚠️ Due to larger file size, upload progress won't be displayed. Please wait while your video is being processed...
-              </div>
+          <div className="w-full bg-gray-700 rounded-full h-3 mb-2">
+            <div
+              className="bg-purple-500 h-3 rounded-full transition-all duration-300 ease-out"
+              style={{ width: `${uploadProgress}%` }}
+            />
+          </div>
+          
+          {uploadProgress > 0 && (
+            <div className="text-center text-sm text-gray-400">
+              {uploadProgress}% complete
             </div>
-          ) : (
-            /* Progress Bar */
-            <>
-              <div className="w-full bg-gray-700 rounded-full h-3 mb-2">
-                <div
-                  className="bg-purple-500 h-3 rounded-full transition-all duration-300 ease-out"
-                  style={{ width: `${uploadProgress}%` }}
-                />
-              </div>
-              
-              {/* Progress Percentage */}
-              {uploadProgress > 0 && (
-                <div className="text-center text-sm text-gray-400">
-                  {uploadProgress}% complete
-                </div>
-              )}
-              
-              <div className="text-xs text-gray-500 mt-2 text-center mb-3">
-                {uploadProgress < 100 ? 'Uploading and processing...' : 'Finalizing analysis...'}
-              </div>
-            </>
           )}
           
-          {/* Cancel Button */}
+          <div className="text-xs text-gray-500 mt-2 text-center mb-3">
+            {uploadProgress < 100 ? 'Uploading and processing...' : 'Finalizing analysis...'}
+          </div>
+          
           <button
             onClick={cancelUpload}
             className="w-full bg-gray-600 hover:bg-gray-500 active:bg-gray-700 text-white font-bold py-2 px-4 rounded-full text-sm transition"
@@ -587,382 +545,6 @@ export default function Home() {
         </div>
       )}
 
-      {videoPreview && !loading && !isRecording && (
-          <div className="flex flex-col gap-2 items-center">
-            <button
-              onClick={() => {
-                if (videoPreview) {
-                  URL.revokeObjectURL(videoPreview);
-                }
-                setVideoPreview(null);
-                setResult(null);
-                setError(null);
-              }}
-              className="bg-gray-600 hover:bg-gray-500 text-white font-bold py-2 px-6 rounded-full text-sm transition"
-            >
-              Clear & Try Again
-            </button>
-            <div className="flex gap-4">
-              <button
-                onClick={startRecording}
-                className="bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 px-4 rounded-full text-sm transition"
-              >
-                🎥 Record New
-              </button>
-              <label className="cursor-pointer bg-purple-600 hover:bg-purple-500 text-white font-bold py-2 px-4 rounded-full text-sm transition">
-                📁 Upload New
-                <input 
-                  type="file" 
-                  accept="video/*"
-                  className="hidden" 
-                  onChange={handleFileUpload}
-                  disabled={loading}
-                />
-              </label>
-            </div>
-          </div>
-        )}
-
-      {/* Video Preview - Show above results in smaller landscape box */}
-      {videoPreview && result && !loading && (
-        <div className="mb-6 w-full max-w-2xl">
-          <p className="text-gray-400 text-sm mb-2 text-center">Video Preview:</p>
-          <div className="relative w-full" style={{ aspectRatio: '16/9', maxHeight: '400px' }}>
-            <video 
-              ref={previewVideoRef}
-              src={videoPreview} 
-              controls 
-              className="w-full h-full rounded-xl border border-gray-700 object-contain cursor-pointer"
-              onPlay={(e) => {
-                // Request fullscreen when video starts playing
-                const video = e.currentTarget;
-                // Small delay to ensure video is actually playing
-                setTimeout(() => {
-                  if (video.requestFullscreen) {
-                    video.requestFullscreen().catch(err => {
-                      console.log('Fullscreen request failed:', err);
-                    });
-                  } else if ((video as any).webkitRequestFullscreen) {
-                    (video as any).webkitRequestFullscreen();
-                  } else if ((video as any).mozRequestFullScreen) {
-                    (video as any).mozRequestFullScreen();
-                  } else if ((video as any).msRequestFullscreen) {
-                    (video as any).msRequestFullscreen();
-                  }
-                }, 100);
-              }}
-            >
-              Your browser does not support the video tag.
-            </video>
-          </div>
-        </div>
-      )}
-
-      {/* The Result Card - CGC Slab Style */}
-      {result && (() => {
-        // Function to seek video to timestamp and pause
-        const seekToTimestamp = (seconds: number) => {
-          if (previewVideoRef.current) {
-            const video = previewVideoRef.current;
-            video.currentTime = seconds;
-            video.pause();
-            // Scroll video into view
-            video.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          }
-        };
-
-        // Parse timestamp from text (supports formats like "0:15", "15s", "1:30", etc.)
-        const parseTimestamp = (text: string): number | null => {
-          // Try MM:SS or HH:MM:SS format first
-          const timeColonMatch = text.match(/(\d+):(\d+)/);
-          if (timeColonMatch) {
-            const minutes = parseInt(timeColonMatch[1], 10);
-            const seconds = parseInt(timeColonMatch[2], 10);
-            return minutes * 60 + seconds;
-          }
-
-          // Try 1m 30s format
-          const minSecMatch = text.match(/(\d+)m\s*(\d+)s/i);
-          if (minSecMatch) {
-            const minutes = parseInt(minSecMatch[1], 10);
-            const seconds = parseInt(minSecMatch[2], 10);
-            return minutes * 60 + seconds;
-          }
-
-          // Try 15s format
-          const secMatch = text.match(/(\d+)s/i);
-          if (secMatch) {
-            return parseInt(secMatch[1], 10);
-          }
-
-          // Try 1m format
-          const minMatch = text.match(/(\d+)m/i);
-          if (minMatch) {
-            return parseInt(minMatch[1], 10) * 60;
-          }
-
-          return null;
-        };
-
-        // Parse reasoning into summary and bullet points with timestamps
-        const parseReasoning = (reasoning: string) => {
-          if (!reasoning) return { summary: '', bullets: [] };
-          
-          console.log('[Parse] Original reasoning:', reasoning);
-          
-          // First, try to split by newlines or bullet points (more reliable for structured text)
-          const lines = reasoning.split(/\n+/).filter(l => l.trim().length > 0);
-          
-          // If we have multiple lines, use them as bullets
-          if (lines.length > 1) {
-            // First line or two as summary
-            const summaryLines = lines.slice(0, Math.min(2, lines.length));
-            const summary = summaryLines.join(' ').trim();
-            
-            // Rest as bullets
-            const bullets = lines.slice(summaryLines.length).map(line => {
-              const trimmed = line.trim().replace(/^[-•*]\s*/, '');
-              if (!trimmed) return null;
-              
-              // Try to extract timestamp (preserve original text)
-              const timestamp = parseTimestamp(trimmed);
-              
-              // Remove timestamp from text for cleaner display, but be more careful
-              let displayText = trimmed;
-              if (timestamp !== null) {
-                // Only remove the specific timestamp pattern we found, not all numbers
-                // This is more conservative to avoid removing important numbers
-                const timeColonMatch = trimmed.match(/(\d+):(\d+)/);
-                if (timeColonMatch) {
-                  displayText = trimmed.replace(timeColonMatch[0], '').trim();
-                } else {
-                  const minSecMatch = trimmed.match(/(\d+)m\s*(\d+)s/i);
-                  if (minSecMatch) {
-                    displayText = trimmed.replace(minSecMatch[0], '').trim();
-                  } else {
-                    const secMatch = trimmed.match(/(\d+)s/i);
-                    if (secMatch) {
-                      displayText = trimmed.replace(secMatch[0], '').trim();
-                    } else {
-                      const minMatch = trimmed.match(/(\d+)m/i);
-                      if (minMatch) {
-                        displayText = trimmed.replace(minMatch[0], '').trim();
-                      }
-                    }
-                  }
-                }
-                // Clean up extra spaces and punctuation
-                displayText = displayText.replace(/\s+/g, ' ').replace(/^[,\s]+|[,\s]+$/g, '').trim();
-              }
-              
-              console.log('[Parse] Line:', trimmed, 'Timestamp:', timestamp, 'Display:', displayText);
-              
-              return {
-                text: displayText || trimmed, // Fallback to original if we removed everything
-                timestamp: timestamp
-              };
-            }).filter((b): b is { text: string; timestamp: number | null } => b !== null);
-            
-            return { summary, bullets };
-          }
-          
-          // Fallback: Split by sentences
-          const sentences = reasoning.split(/[.!?]+/).filter(s => s.trim().length > 0);
-          
-          // First 1-2 sentences as summary
-          const summary = sentences.slice(0, 2).join('. ').trim() + (sentences.length > 2 ? '.' : '');
-          
-          // Rest as bullet points with timestamp extraction
-          const bullets = sentences.slice(2).map(s => {
-            const trimmed = s.trim();
-            if (!trimmed) return null;
-            
-            // Try to extract timestamp
-            const timestamp = parseTimestamp(trimmed);
-            
-            // Remove timestamp from text for display (conservative approach)
-            let displayText = trimmed;
-            if (timestamp !== null) {
-              const timeColonMatch = trimmed.match(/(\d+):(\d+)/);
-              if (timeColonMatch) {
-                displayText = trimmed.replace(timeColonMatch[0], '').trim();
-              } else {
-                const minSecMatch = trimmed.match(/(\d+)m\s*(\d+)s/i);
-                if (minSecMatch) {
-                  displayText = trimmed.replace(minSecMatch[0], '').trim();
-                } else {
-                  const secMatch = trimmed.match(/(\d+)s/i);
-                  if (secMatch) {
-                    displayText = trimmed.replace(secMatch[0], '').trim();
-                  } else {
-                    const minMatch = trimmed.match(/(\d+)m/i);
-                    if (minMatch) {
-                      displayText = trimmed.replace(minMatch[0], '').trim();
-                    }
-                  }
-                }
-              }
-              displayText = displayText.replace(/\s+/g, ' ').replace(/^[,\s]+|[,\s]+$/g, '').trim();
-            }
-            
-            return {
-              text: displayText || trimmed,
-              timestamp: timestamp
-            };
-          }).filter((b): b is { text: string; timestamp: number | null } => b !== null);
-          
-          // If no clear sentence breaks, try to split by newlines or create bullets from paragraphs
-          if (bullets.length === 0 && sentences.length <= 2) {
-            // Try splitting by newlines or common separators
-            const paragraphs = reasoning.split(/\n\n|\n/).filter(p => p.trim().length > 0);
-            if (paragraphs.length > 1) {
-              return {
-                summary: paragraphs[0].trim(),
-                bullets: paragraphs.slice(1).map(p => {
-                  const trimmed = p.trim().replace(/^[-•*]\s*/, '');
-                  const timestamp = parseTimestamp(trimmed);
-                  let displayText = trimmed;
-                  if (timestamp !== null) {
-                    displayText = trimmed
-                      .replace(/\d+:\d+/g, '')
-                      .replace(/\d+s/gi, '')
-                      .replace(/\d+m\s*\d+s/gi, '')
-                      .replace(/\d+m/gi, '')
-                      .trim()
-                      .replace(/\s+/g, ' ');
-                  }
-                  return { text: displayText, timestamp };
-                })
-              };
-            }
-            // If still no bullets, create them from the reasoning text
-            const parts = reasoning.split(/[;:]/).filter(p => p.trim().length > 0);
-            if (parts.length > 1) {
-              return {
-                summary: parts[0].trim(),
-                bullets: parts.slice(1).map(p => {
-                  const trimmed = p.trim();
-                  const timestamp = parseTimestamp(trimmed);
-                  let displayText = trimmed;
-                  if (timestamp !== null) {
-                    displayText = trimmed
-                      .replace(/\d+:\d+/g, '')
-                      .replace(/\d+s/gi, '')
-                      .replace(/\d+m\s*\d+s/gi, '')
-                      .replace(/\d+m/gi, '')
-                      .trim()
-                      .replace(/\s+/g, ' ');
-                  }
-                  return { text: displayText, timestamp };
-                })
-              };
-            }
-          }
-          
-          return { summary, bullets };
-        };
-
-        const { summary, bullets } = result.reasoning ? parseReasoning(result.reasoning) : { summary: '', bullets: [] };
-        const grade = result.estimatedGrade || 'N/A';
-        const title = result.title || "Unknown Comic";
-        const issue = result.issue ? `#${result.issue}` : "Unknown Issue";
-
-        return (
-          <div className="bg-gray-800 p-6 rounded-xl border-2 border-purple-500 max-w-2xl w-full shadow-2xl mb-4">
-            {/* CGC Slab Style Header */}
-            <div className="bg-gradient-to-b from-gray-900 to-gray-800 border-2 border-gray-600 rounded-lg p-4 mb-4">
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex-1">
-                  <h2 className="text-xl font-bold text-yellow-400 mb-1">
-                    {title}
-                  </h2>
-                  <p className="text-gray-400 text-sm">
-                    Issue {issue}
-                  </p>
-                </div>
-                {/* Large Grade Display - CGC Style */}
-                <div className="text-center ml-4">
-                  <div className="text-xs text-gray-500 uppercase tracking-wider mb-1">Grade</div>
-                  <div className="text-5xl font-bold text-green-400 leading-none">
-                    {grade}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Summary Section */}
-            {summary && (
-              <div className="mb-4 pb-4 border-b border-gray-700">
-                <p className="text-gray-300 text-sm leading-relaxed">
-                  {summary}
-                </p>
-              </div>
-            )}
-
-            {/* Grading Details - Bullet Points */}
-            {bullets.length > 0 && (
-              <div className="space-y-2">
-                <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wide mb-2">
-                  Grading Details
-                </h3>
-                <ul className="space-y-2">
-                  {bullets.map((bullet: { text: string; timestamp: number | null }, index: number) => {
-                    // Format timestamp for display
-                    const formatTimestamp = (seconds: number): string => {
-                      const mins = Math.floor(seconds / 60);
-                      const secs = Math.floor(seconds % 60);
-                      return `${mins}:${secs.toString().padStart(2, '0')}`;
-                    };
-
-                    return (
-                      <li key={index} className="flex items-start text-gray-300 text-sm">
-                        <span className="text-purple-400 mr-2 mt-1">•</span>
-                        <span className="flex-1">
-                          {bullet.text}
-                          {bullet.timestamp !== null && (
-                            <button
-                              onClick={() => seekToTimestamp(bullet.timestamp!)}
-                              className="ml-2 text-purple-400 hover:text-purple-300 underline text-xs font-medium transition-colors"
-                              title={`Jump to ${formatTimestamp(bullet.timestamp)}`}
-                            >
-                              [{formatTimestamp(bullet.timestamp)}]
-                            </button>
-                          )}
-                        </span>
-                      </li>
-                    );
-                  })}
-                </ul>
-              </div>
-            )}
-
-            {/* Fallback for unstructured data */}
-            {!summary && bullets.length === 0 && result.reasoning && (
-              <div className="text-gray-300 text-sm border-t border-gray-700 pt-4 whitespace-pre-wrap break-words">
-                <p className="mb-2 text-gray-400 text-xs italic">Raw reasoning (no timestamps detected):</p>
-                {result.reasoning}
-              </div>
-            )}
-            
-            {/* Show bullets even if they have no timestamps - helps debug */}
-            {bullets.length > 0 && bullets.every(b => b.timestamp === null) && (
-              <div className="mt-2 text-yellow-400 text-xs italic">
-                Note: No timestamps detected in grading details. The AI may not have included timestamps in MM:SS format.
-              </div>
-            )}
-
-            {/* JSON Fallback */}
-            {!result.title && !result.issue && !result.estimatedGrade && !result.reasoning && (
-              <div className="text-gray-400 text-sm pt-4 overflow-x-auto">
-                <pre className="whitespace-pre-wrap break-words">
-                  {JSON.stringify(result, null, 2)}
-                </pre>
-              </div>
-            )}
-          </div>
-        );
-      })()}
-
       {/* Error Message */}
       {error && (
         <div className="bg-red-500/20 border border-red-500 text-red-100 p-4 rounded mb-4 max-w-md w-full">
@@ -971,7 +553,6 @@ export default function Home() {
             <button
               onClick={(e) => {
                 navigator.clipboard.writeText(error);
-                // Show brief feedback
                 const btn = e.currentTarget;
                 const originalText = btn.textContent;
                 btn.textContent = 'Copied!';
@@ -988,7 +569,6 @@ export default function Home() {
           <pre 
             className="text-sm whitespace-pre-wrap break-words select-text cursor-text bg-black/20 p-2 rounded mt-2"
             onClick={(e) => {
-              // Select all text on click
               const range = document.createRange();
               range.selectNodeContents(e.currentTarget);
               const selection = window.getSelection();
@@ -1000,6 +580,68 @@ export default function Home() {
           </pre>
         </div>
       )}
+
+      {/* Video History List */}
+      <div className="w-full max-w-2xl mt-8">
+        <h2 className="text-xl font-bold text-yellow-400 mb-4">Video History</h2>
+        
+        {history.length === 0 ? (
+          <div className="text-center text-gray-400 py-8 border border-gray-700 rounded-lg">
+            <p>No videos analyzed yet.</p>
+            <p className="text-sm mt-2">Record or upload a video to get started!</p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {history.map((item) => (
+              <Link
+                key={item.id}
+                href={`/results/${item.id}`}
+                className="block bg-gray-800 hover:bg-gray-750 border border-gray-700 hover:border-purple-500 rounded-lg p-4 transition-all"
+              >
+                <div className="flex items-center gap-4">
+                  {/* Thumbnail */}
+                  {item.thumbnail ? (
+                    <div className="flex-shrink-0 w-24 h-16 rounded overflow-hidden bg-gray-700">
+                      <img 
+                        src={item.thumbnail} 
+                        alt={item.title}
+                        className="w-full h-full object-cover"
+                      />
+                    </div>
+                  ) : (
+                    <div className="flex-shrink-0 w-24 h-16 rounded bg-gray-700 flex items-center justify-center">
+                      <span className="text-gray-500 text-2xl">🎬</span>
+                    </div>
+                  )}
+                  
+                  {/* Info */}
+                  <div className="flex-1 min-w-0">
+                    <h3 className="font-bold text-yellow-400 truncate">
+                      {item.title}
+                    </h3>
+                    <div className="flex items-center gap-3 mt-1">
+                      <span className="text-gray-400 text-sm">
+                        Issue {item.issue}
+                      </span>
+                      <span className="bg-green-900 text-green-300 px-2 py-0.5 rounded-full text-xs font-bold">
+                        Grade: {item.grade}
+                      </span>
+                    </div>
+                    <p className="text-gray-500 text-xs mt-1">
+                      {formatDate(item.timestamp)}
+                    </p>
+                  </div>
+                  
+                  {/* Arrow */}
+                  <div className="flex-shrink-0 text-purple-400">
+                    →
+                  </div>
+                </div>
+              </Link>
+            ))}
+          </div>
+        )}
+      </div>
     </main>
   );
 }
