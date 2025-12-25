@@ -455,7 +455,7 @@ export default function Home() {
   }, [videoPreview]);
 
   return (
-    <main className="min-h-screen bg-gray-900 text-white p-4 flex flex-col items-center justify-center max-h-screen overflow-hidden">
+    <main className="min-h-screen bg-gray-900 text-white p-4 flex flex-col items-center justify-center overflow-y-auto">
       <h1 className="text-2xl sm:text-3xl font-bold mb-4 sm:mb-8">Comic Video Scanner</h1>
 
       {/* Camera Preview - Live Feed with Overlay Controls */}
@@ -622,9 +622,43 @@ export default function Home() {
           </div>
         )}
 
+      {/* Video Preview - Show above results in smaller landscape box */}
+      {videoPreview && result && !loading && (
+        <div className="mb-6 w-full max-w-2xl">
+          <p className="text-gray-400 text-sm mb-2 text-center">Video Preview:</p>
+          <div className="relative w-full" style={{ aspectRatio: '16/9', maxHeight: '400px' }}>
+            <video 
+              src={videoPreview} 
+              controls 
+              className="w-full h-full rounded-xl border border-gray-700 object-contain cursor-pointer"
+              onPlay={(e) => {
+                // Request fullscreen when video starts playing
+                const video = e.currentTarget;
+                // Small delay to ensure video is actually playing
+                setTimeout(() => {
+                  if (video.requestFullscreen) {
+                    video.requestFullscreen().catch(err => {
+                      console.log('Fullscreen request failed:', err);
+                    });
+                  } else if ((video as any).webkitRequestFullscreen) {
+                    (video as any).webkitRequestFullscreen();
+                  } else if ((video as any).mozRequestFullScreen) {
+                    (video as any).mozRequestFullScreen();
+                  } else if ((video as any).msRequestFullscreen) {
+                    (video as any).msRequestFullscreen();
+                  }
+                }, 100);
+              }}
+            >
+              Your browser does not support the video tag.
+            </video>
+          </div>
+        </div>
+      )}
+
       {/* The Result Card - Show prominently when available */}
       {result && (
-        <div className="bg-gray-800 p-6 rounded-xl border-2 border-purple-500 max-w-md w-full shadow-2xl mb-4">
+        <div className="bg-gray-800 p-6 rounded-xl border-2 border-purple-500 max-w-2xl w-full shadow-2xl mb-4">
           <h2 className="text-2xl font-bold text-yellow-400 mb-2">
             {result.title || "Unknown Comic"}
           </h2>
@@ -639,29 +673,17 @@ export default function Home() {
             )}
           </div>
           {result.reasoning && (
-            <p className="text-gray-300 text-sm border-t border-gray-700 pt-4">
+            <p className="text-gray-300 text-sm border-t border-gray-700 pt-4 whitespace-pre-wrap break-words">
               {result.reasoning}
             </p>
           )}
           {!result.title && !result.issue && !result.estimatedGrade && (
-            <p className="text-gray-400 text-sm pt-4">
-              Received response: {JSON.stringify(result, null, 2)}
-            </p>
+            <div className="text-gray-400 text-sm pt-4 overflow-x-auto">
+              <pre className="whitespace-pre-wrap break-words">
+                {JSON.stringify(result, null, 2)}
+              </pre>
+            </div>
           )}
-        </div>
-      )}
-
-      {/* Recorded Video Preview - Show below results */}
-      {videoPreview && result && !loading && (
-        <div className="mb-8 w-full max-w-md">
-          <p className="text-gray-400 text-sm mb-2 text-center">Video Preview:</p>
-          <video 
-            src={videoPreview} 
-            controls 
-            className="w-full rounded-xl border border-gray-700"
-          >
-            Your browser does not support the video tag.
-          </video>
         </div>
       )}
 
