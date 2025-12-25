@@ -3,7 +3,7 @@
  * Uploads large videos to Google File API to avoid token limits when sending to Gemini
  */
 
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleAIFileManager } from '@google/generative-ai/server';
 import { Readable } from 'stream';
 
 interface GoogleFileUploadResponse {
@@ -272,8 +272,7 @@ export async function uploadFileToGoogleFileAPI(
 ): Promise<string> {
   console.log(`[Google File API] Uploading file from path: ${filePath} (mimeType: ${mimeType})`);
   
-  const genAI = new GoogleGenerativeAI(apiKey);
-  const fileManager = genAI.getFileManager();
+  const fileManager = new GoogleAIFileManager(apiKey);
   
   try {
     // Upload file using SDK fileManager.uploadFile
