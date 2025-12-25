@@ -10,20 +10,18 @@ export default function SavedScanPage() {
   const router = useRouter();
   const id = params.id as string;
   const [savedScan, setSavedScan] = useState<SavedScan | null>(null);
-  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const loadScan = async () => {
       if (id) {
         const scan = await getSavedScanById(id);
         setSavedScan(scan);
-        setLoading(false);
       }
     };
     loadScan();
   }, [id]);
 
-  // Handle deletion - redirect to saved page to show updated list
+  // Handle deletion - redirect to saved page
   const handleDelete = () => {
     router.replace('/saved');
   };
@@ -32,19 +30,17 @@ export default function SavedScanPage() {
     router.back();
   };
 
-  if (loading) return null;
-  if (!savedScan) return null;
-
+  // Render immediately with isOpen=true
   return (
     <ResultSheet 
         isOpen={true}
         onClose={handleClose}
-        result={savedScan.result} 
-        videoUrl={savedScan.video_url} 
-        thumbnail={savedScan.thumbnail || undefined}
-        savedScanId={savedScan.id}
+        result={savedScan?.result} 
+        videoUrl={savedScan?.video_url || null} 
+        thumbnail={savedScan?.thumbnail || undefined}
+        savedScanId={savedScan?.id}
         onDelete={handleDelete}
+        isLoading={!savedScan} // Pass loading state
     />
   );
 }
-

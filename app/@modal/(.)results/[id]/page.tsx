@@ -10,7 +10,11 @@ export default function ResultPage() {
   const router = useRouter();
   const id = params.id as string;
   const [videoItem, setVideoItem] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
+  
+  // Try to load immediately during render if possible, 
+  // but be careful of hydration mismatches.
+  // Since getVideoById uses localStorage, we must wait for mount.
+  // However, we can render the sheet immediately in a loading state.
 
   useEffect(() => {
     if (id) {
@@ -18,7 +22,6 @@ export default function ResultPage() {
       if (item) {
         setVideoItem(item);
       }
-      setLoading(false);
     }
   }, [id]);
 
@@ -26,25 +29,16 @@ export default function ResultPage() {
     router.back();
   };
 
-  // While loading or if not found, we don't want to block the user completely
-  // but we also don't want to show nothing if it takes a moment.
-  // Since this is local storage, it should be instant.
-  if (loading) {
-    return null;
-  }
-
-  if (!videoItem) {
-    return null; // Don't show anything if item doesn't exist (or maybe show an error toast?)
-  }
-
+  // Render immediately with isOpen=true
+  // If videoItem is null, ResultSheet will handle the loading state or show skeleton
   return (
     <ResultSheet 
         isOpen={true} 
         onClose={handleClose}
-        result={videoItem.result} 
-        videoUrl={videoItem.videoUrl} 
-        thumbnail={videoItem.thumbnail} 
+        result={videoItem?.result} 
+        videoUrl={videoItem?.videoUrl} 
+        thumbnail={videoItem?.thumbnail}
+        isLoading={!videoItem} // Pass loading state
     />
   );
 }
-

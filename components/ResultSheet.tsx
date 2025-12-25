@@ -8,11 +8,12 @@ import ResultCard from '@/components/ResultCard';
 interface ResultSheetProps {
   isOpen: boolean;
   onClose: () => void;
-  result: any;
+  result?: any;
   videoUrl: string | null;
   thumbnail?: string;
   savedScanId?: string;
   onDelete?: () => void;
+  isLoading?: boolean;
 }
 
 export default function ResultSheet({ 
@@ -22,7 +23,8 @@ export default function ResultSheet({
   videoUrl, 
   thumbnail, 
   savedScanId, 
-  onDelete 
+  onDelete,
+  isLoading = false
 }: ResultSheetProps) {
   const [isVisible, setIsVisible] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
@@ -66,22 +68,36 @@ export default function ResultSheet({
 
         {/* Content Area - Scrollable */}
         <div className="flex-1 overflow-y-auto bg-gray-900 pb-8">
-            <div className="p-4 flex justify-center">
-                <ResultCard 
-                    result={result} 
-                    videoUrl={videoUrl} 
-                    thumbnail={thumbnail} 
-                    savedScanId={savedScanId} 
-                    onDelete={() => {
-                        if (onDelete) onDelete();
-                        handleClose();
-                    }}
-                    embedded={true} // Add embedded prop to adjust internal layout if needed
-                />
+            <div className="p-4 flex justify-center w-full">
+                {isLoading ? (
+                  <div className="w-full max-w-md animate-pulse space-y-4">
+                    <div className="h-64 bg-gray-800 rounded-xl w-full"></div>
+                    <div className="h-8 bg-gray-800 rounded w-3/4"></div>
+                    <div className="h-4 bg-gray-800 rounded w-1/2"></div>
+                    <div className="space-y-2 pt-4">
+                      <div className="h-4 bg-gray-800 rounded w-full"></div>
+                      <div className="h-4 bg-gray-800 rounded w-full"></div>
+                      <div className="h-4 bg-gray-800 rounded w-5/6"></div>
+                    </div>
+                  </div>
+                ) : result ? (
+                  <ResultCard 
+                      result={result} 
+                      videoUrl={videoUrl} 
+                      thumbnail={thumbnail} 
+                      savedScanId={savedScanId} 
+                      onDelete={() => {
+                          if (onDelete) onDelete();
+                          handleClose();
+                      }}
+                      embedded={true} // Add embedded prop to adjust internal layout if needed
+                  />
+                ) : (
+                   <div className="text-gray-500 py-10">No result data available</div>
+                )}
             </div>
         </div>
       </div>
     </div>
   );
 }
-
