@@ -656,36 +656,116 @@ export default function Home() {
         </div>
       )}
 
-      {/* The Result Card - Show prominently when available */}
-      {result && (
-        <div className="bg-gray-800 p-6 rounded-xl border-2 border-purple-500 max-w-2xl w-full shadow-2xl mb-4">
-          <h2 className="text-2xl font-bold text-yellow-400 mb-2">
-            {result.title || "Unknown Comic"}
-          </h2>
-          <div className="flex justify-between items-center mb-4">
-            <span className="text-gray-400">
-              {result.issue ? `Issue #${result.issue}` : "Issue Unknown"}
-            </span>
-            {result.estimatedGrade && (
-              <span className="bg-green-900 text-green-300 px-3 py-1 rounded-full font-bold">
-                Grade: {result.estimatedGrade}
-              </span>
+      {/* The Result Card - CGC Slab Style */}
+      {result && (() => {
+        // Parse reasoning into summary and bullet points
+        const parseReasoning = (reasoning: string) => {
+          if (!reasoning) return { summary: '', bullets: [] };
+          
+          // Split by sentences
+          const sentences = reasoning.split(/[.!?]+/).filter(s => s.trim().length > 0);
+          
+          // First 1-2 sentences as summary
+          const summary = sentences.slice(0, 2).join('. ').trim() + (sentences.length > 2 ? '.' : '');
+          
+          // Rest as bullet points
+          const bullets = sentences.slice(2).map(s => s.trim()).filter(s => s.length > 0);
+          
+          // If no clear sentence breaks, try to split by newlines or create bullets from paragraphs
+          if (bullets.length === 0 && sentences.length <= 2) {
+            // Try splitting by newlines or common separators
+            const paragraphs = reasoning.split(/\n\n|\n/).filter(p => p.trim().length > 0);
+            if (paragraphs.length > 1) {
+              return {
+                summary: paragraphs[0].trim(),
+                bullets: paragraphs.slice(1).map(p => p.trim().replace(/^[-•*]\s*/, ''))
+              };
+            }
+            // If still no bullets, create them from the reasoning text
+            const parts = reasoning.split(/[;:]/).filter(p => p.trim().length > 0);
+            if (parts.length > 1) {
+              return {
+                summary: parts[0].trim(),
+                bullets: parts.slice(1).map(p => p.trim())
+              };
+            }
+          }
+          
+          return { summary, bullets };
+        };
+
+        const { summary, bullets } = result.reasoning ? parseReasoning(result.reasoning) : { summary: '', bullets: [] };
+        const grade = result.estimatedGrade || 'N/A';
+        const title = result.title || "Unknown Comic";
+        const issue = result.issue ? `#${result.issue}` : "Unknown Issue";
+
+        return (
+          <div className="bg-gray-800 p-6 rounded-xl border-2 border-purple-500 max-w-2xl w-full shadow-2xl mb-4">
+            {/* CGC Slab Style Header */}
+            <div className="bg-gradient-to-b from-gray-900 to-gray-800 border-2 border-gray-600 rounded-lg p-4 mb-4">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex-1">
+                  <h2 className="text-xl font-bold text-yellow-400 mb-1">
+                    {title}
+                  </h2>
+                  <p className="text-gray-400 text-sm">
+                    Issue {issue}
+                  </p>
+                </div>
+                {/* Large Grade Display - CGC Style */}
+                <div className="text-center ml-4">
+                  <div className="text-xs text-gray-500 uppercase tracking-wider mb-1">Grade</div>
+                  <div className="text-5xl font-bold text-green-400 leading-none">
+                    {grade}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Summary Section */}
+            {summary && (
+              <div className="mb-4 pb-4 border-b border-gray-700">
+                <p className="text-gray-300 text-sm leading-relaxed">
+                  {summary}
+                </p>
+              </div>
+            )}
+
+            {/* Grading Details - Bullet Points */}
+            {bullets.length > 0 && (
+              <div className="space-y-2">
+                <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wide mb-2">
+                  Grading Details
+                </h3>
+                <ul className="space-y-2">
+                  {bullets.map((bullet: string, index: number) => (
+                    <li key={index} className="flex items-start text-gray-300 text-sm">
+                      <span className="text-purple-400 mr-2 mt-1">•</span>
+                      <span className="flex-1">{bullet}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {/* Fallback for unstructured data */}
+            {!summary && bullets.length === 0 && result.reasoning && (
+              <div className="text-gray-300 text-sm border-t border-gray-700 pt-4 whitespace-pre-wrap break-words">
+                {result.reasoning}
+              </div>
+            )}
+
+            {/* JSON Fallback */}
+            {!result.title && !result.issue && !result.estimatedGrade && !result.reasoning && (
+              <div className="text-gray-400 text-sm pt-4 overflow-x-auto">
+                <pre className="whitespace-pre-wrap break-words">
+                  {JSON.stringify(result, null, 2)}
+                </pre>
+              </div>
             )}
           </div>
-          {result.reasoning && (
-            <p className="text-gray-300 text-sm border-t border-gray-700 pt-4 whitespace-pre-wrap break-words">
-              {result.reasoning}
-            </p>
-          )}
-          {!result.title && !result.issue && !result.estimatedGrade && (
-            <div className="text-gray-400 text-sm pt-4 overflow-x-auto">
-              <pre className="whitespace-pre-wrap break-words">
-                {JSON.stringify(result, null, 2)}
-              </pre>
-            </div>
-          )}
-        </div>
-      )}
+        );
+      })()}
 
       {/* Error Message */}
       {error && (
