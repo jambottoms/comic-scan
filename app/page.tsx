@@ -708,7 +708,65 @@ export default function Home() {
         const parseReasoning = (reasoning: string) => {
           if (!reasoning) return { summary: '', bullets: [] };
           
-          // Split by sentences
+          console.log('[Parse] Original reasoning:', reasoning);
+          
+          // First, try to split by newlines or bullet points (more reliable for structured text)
+          const lines = reasoning.split(/\n+/).filter(l => l.trim().length > 0);
+          
+          // If we have multiple lines, use them as bullets
+          if (lines.length > 1) {
+            // First line or two as summary
+            const summaryLines = lines.slice(0, Math.min(2, lines.length));
+            const summary = summaryLines.join(' ').trim();
+            
+            // Rest as bullets
+            const bullets = lines.slice(summaryLines.length).map(line => {
+              const trimmed = line.trim().replace(/^[-•*]\s*/, '');
+              if (!trimmed) return null;
+              
+              // Try to extract timestamp (preserve original text)
+              const timestamp = parseTimestamp(trimmed);
+              
+              // Remove timestamp from text for cleaner display, but be more careful
+              let displayText = trimmed;
+              if (timestamp !== null) {
+                // Only remove the specific timestamp pattern we found, not all numbers
+                // This is more conservative to avoid removing important numbers
+                const timeColonMatch = trimmed.match(/(\d+):(\d+)/);
+                if (timeColonMatch) {
+                  displayText = trimmed.replace(timeColonMatch[0], '').trim();
+                } else {
+                  const minSecMatch = trimmed.match(/(\d+)m\s*(\d+)s/i);
+                  if (minSecMatch) {
+                    displayText = trimmed.replace(minSecMatch[0], '').trim();
+                  } else {
+                    const secMatch = trimmed.match(/(\d+)s/i);
+                    if (secMatch) {
+                      displayText = trimmed.replace(secMatch[0], '').trim();
+                    } else {
+                      const minMatch = trimmed.match(/(\d+)m/i);
+                      if (minMatch) {
+                        displayText = trimmed.replace(minMatch[0], '').trim();
+                      }
+                    }
+                  }
+                }
+                // Clean up extra spaces and punctuation
+                displayText = displayText.replace(/\s+/g, ' ').replace(/^[,\s]+|[,\s]+$/g, '').trim();
+              }
+              
+              console.log('[Parse] Line:', trimmed, 'Timestamp:', timestamp, 'Display:', displayText);
+              
+              return {
+                text: displayText || trimmed, // Fallback to original if we removed everything
+                timestamp: timestamp
+              };
+            }).filter((b): b is { text: string; timestamp: number | null } => b !== null);
+            
+            return { summary, bullets };
+          }
+          
+          // Fallback: Split by sentences
           const sentences = reasoning.split(/[.!?]+/).filter(s => s.trim().length > 0);
           
           // First 1-2 sentences as summary
@@ -722,21 +780,33 @@ export default function Home() {
             // Try to extract timestamp
             const timestamp = parseTimestamp(trimmed);
             
-            // Remove timestamp from text for display
+            // Remove timestamp from text for display (conservative approach)
             let displayText = trimmed;
             if (timestamp !== null) {
-              // Remove timestamp patterns from text
-              displayText = trimmed
-                .replace(/\d+:\d+/g, '')
-                .replace(/\d+s/gi, '')
-                .replace(/\d+m\s*\d+s/gi, '')
-                .replace(/\d+m/gi, '')
-                .trim()
-                .replace(/\s+/g, ' ');
+              const timeColonMatch = trimmed.match(/(\d+):(\d+)/);
+              if (timeColonMatch) {
+                displayText = trimmed.replace(timeColonMatch[0], '').trim();
+              } else {
+                const minSecMatch = trimmed.match(/(\d+)m\s*(\d+)s/i);
+                if (minSecMatch) {
+                  displayText = trimmed.replace(minSecMatch[0], '').trim();
+                } else {
+                  const secMatch = trimmed.match(/(\d+)s/i);
+                  if (secMatch) {
+                    displayText = trimmed.replace(secMatch[0], '').trim();
+                  } else {
+                    const minMatch = trimmed.match(/(\d+)m/i);
+                    if (minMatch) {
+                      displayText = trimmed.replace(minMatch[0], '').trim();
+                    }
+                  }
+                }
+              }
+              displayText = displayText.replace(/\s+/g, ' ').replace(/^[,\s]+|[,\s]+$/g, '').trim();
             }
             
             return {
-              text: displayText,
+              text: displayText || trimmed,
               timestamp: timestamp
             };
           }).filter((b): b is { text: string; timestamp: number | null } => b !== null);
@@ -869,7 +939,15 @@ export default function Home() {
             {/* Fallback for unstructured data */}
             {!summary && bullets.length === 0 && result.reasoning && (
               <div className="text-gray-300 text-sm border-t border-gray-700 pt-4 whitespace-pre-wrap break-words">
+                <p className="mb-2 text-gray-400 text-xs italic">Raw reasoning (no timestamps detected):</p>
                 {result.reasoning}
+              </div>
+            )}
+            
+            {/* Show bullets even if they have no timestamps - helps debug */}
+            {bullets.length > 0 && bullets.every(b => b.timestamp === null) && (
+              <div className="mt-2 text-yellow-400 text-xs italic">
+                Note: No timestamps detected in grading details. The AI may not have included timestamps in MM:SS format.
               </div>
             )}
 

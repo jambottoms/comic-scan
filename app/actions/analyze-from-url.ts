@@ -178,7 +178,7 @@ export async function analyzeComicFromUrl(videoUrl: string, mimeType?: string): 
     const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({ 
       model: "gemini-2.5-flash",
-      systemInstruction: "You are an expert comic book grader. Analyze the video of this comic book. Identify the comic (Series, Issue, Year, Variant) and look for visible defects across all frames. Return the response as clean JSON with fields: title, issue, estimatedGrade, reasoning."
+      systemInstruction: "You are an expert comic book grader. Analyze the video of this comic book. Identify the comic (Series, Issue, Year, Variant) and look for visible defects across all frames. For each defect or notable feature, include the timestamp in MM:SS format (e.g., '0:15' or '1:30') where it appears. Return the response as clean JSON with fields: title, issue, estimatedGrade, reasoning. In the reasoning field, list each issue with its timestamp in MM:SS format."
     });
     
     // Add timeout wrapper - Vercel has 300s timeout, so use 280s to be safe
@@ -196,7 +196,7 @@ export async function analyzeComicFromUrl(videoUrl: string, mimeType?: string): 
         } 
       }, 
       { 
-        text: "You are a professional comic book analyzer. From this video, 1) Identify all unique panels. 2) For each panel, extract the dialogue and specify which character is speaking. 3) Describe the visual action in each panel. Return the data as a clean JSON array of panels." 
+        text: "You are a professional comic book grader. Analyze this video and identify the comic (title, issue, year, variant) and assess its condition. For each defect or notable feature you find, include the timestamp in MM:SS format (e.g., '0:15' or '1:30') where it appears in the video. Return a JSON object with: title, issue, estimatedGrade, and reasoning (a detailed description with timestamps for each issue found). Format timestamps as MM:SS in your reasoning text." 
       }
     ];
     
