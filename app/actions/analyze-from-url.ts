@@ -176,9 +176,9 @@ export async function analyzeComicFromUrl(videoUrl: string, mimeType?: string): 
     // Step 5: Model ID - Use gemini-2.5-flash. (This is the verified stable ID for Dec 2025)
     console.log(`[Server Action] Using model: gemini-2.5-flash (verified stable ID for Dec 2025)`);
     const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ 
+    const model = genAI.getGenerativeModel({
       model: "gemini-2.5-flash",
-      systemInstruction: "You are an expert comic book grader. Analyze the video of this comic book. Identify the comic (Series, Issue, Year, Variant) and look for visible defects across all frames. For each defect or notable feature, include the timestamp in MM:SS format (e.g., '0:15' or '1:30') where it appears. Return the response as clean JSON with fields: title, issue, estimatedGrade, reasoning. In the reasoning field, list each issue with its timestamp in MM:SS format."
+      systemInstruction: "You are a professional comic book grading service. Analyze the video objectively and report findings using standard CGC grading terminology. Identify the comic (title, issue number, year, variant if applicable). Document all visible defects and condition issues factually. Use precise, clinical language. For each finding, include the timestamp in MM:SS format where it appears. Return JSON with: title, issue, estimatedGrade (CGC scale: 0.5-10.0), reasoning. In reasoning, list each defect or condition issue with its timestamp. Use objective descriptors: 'spine stress', 'corner blunting', 'color break', 'staple rust', etc. Avoid subjective language."
     });
     
     // Add timeout wrapper - Vercel has 300s timeout, so use 280s to be safe
@@ -196,7 +196,7 @@ export async function analyzeComicFromUrl(videoUrl: string, mimeType?: string): 
         } 
       }, 
       { 
-        text: "You are a professional comic book grader. Analyze this video and identify the comic (title, issue, year, variant) and assess its condition. For each defect or notable feature you find, include the timestamp in MM:SS format (e.g., '0:15' or '1:30') where it appears in the video. Return a JSON object with: title, issue, estimatedGrade, and reasoning (a detailed description with timestamps for each issue found). Format timestamps as MM:SS in your reasoning text." 
+        text: "Analyze this comic book video. Identify: title, issue number, year, variant (if any). Document all visible defects and condition issues using standard CGC grading terminology. For each finding, include timestamp in MM:SS format. Return JSON: {title, issue, estimatedGrade (0.5-10.0 CGC scale), reasoning}. In reasoning, list each defect with timestamp. Use objective terms: 'spine stress lines', 'corner wear', 'cover crease', 'page tanning', 'staple rust', 'color break', etc. Be concise and factual. Format: 'Defect name at MM:SS - brief description'." 
       }
     ];
     
