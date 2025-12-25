@@ -1,9 +1,10 @@
 'use server';
 
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import { uploadToGoogleFileAPI, uploadStreamToGoogleFileAPI } from "@/lib/google/file-api";
+import { uploadFileToGoogleFileAPI } from "@/lib/google/file-api";
 import { normalizeVideoFromUrl } from "@/lib/video/normalize";
-import { Readable } from 'stream';
+import { writeFile, unlink } from 'fs/promises';
+import path from 'path';
 
 /**
  * Result type for server action - returns success/error instead of throwing
@@ -32,16 +33,19 @@ export async function analyzeComicFromUrl(videoUrl: string, mimeType?: string): 
     
     // Step 1: Normalize video (downloads as stream, transcodes to H.264, 1080p, 1fps, no audio)
     // This handles all mobile video formats (HEVC, QuickTime, etc.)
-    let normalizedStream: Readable;
+    // Collects FFmpeg output into a Buffer (not a stream) because Google SDK doesn't support streams
+    let videoBuffer: Buffer;
     try {
       const startTime = Date.now();
-      normalizedStream = await normalizeVideoFromUrl(videoUrl, {
+      console.log(`[Server Action] Starting video normalization...`);
+      videoBuffer = await normalizeVideoFromUrl(videoUrl, {
         onProgress: (progress) => {
           const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-          console.log(`[Server Action] Normalization progress: ${progress.percent.toFixed(1)}% (${progress.frames} frames, ${elapsed}s elapsed)`);
+          console.log(`[Server Action] Normalization progress: ${progress.frames} frames processed (${elapsed}s elapsed)`);
         }
       });
-      console.log(`[Server Action] ✅ Video normalization complete`);
+      const bufferSizeMB = (videoBuffer.length / 1024 / 1024).toFixed(2);
+      console.log(`[Server Action] ✅ Video normalization complete: ${bufferSizeMB}MB`);
     } catch (normalizeError) {
       const errorDetails = normalizeError instanceof Error ? normalizeError.message : String(normalizeError);
       console.error(`[Server Action] ❌ Video normalization failed:`, errorDetails);
@@ -51,14 +55,19 @@ export async function analyzeComicFromUrl(videoUrl: string, mimeType?: string): 
       };
     }
     
-    // Step 2: Upload normalized stream directly to Google File API
-    // Explicitly set mimeType to video/mp4
-    const finalMimeType = 'video/mp4';
+    // Step 2: Save normalized video to temporary file (Vercel allows /tmp)
+    const tempPath = path.join('/tmp', `normalized_${Date.now()}.mp4`);
     let fileUri: string | null = null;
     
     try {
-      console.log(`[Server Action] Uploading normalized video to Google File API (mimeType: ${finalMimeType})...`);
-      fileUri = await uploadStreamToGoogleFileAPI(normalizedStream, apiKey, finalMimeType);
+      console.log(`[Server Action] Saving normalized video to temp file: ${tempPath}`);
+      await writeFile(tempPath, videoBuffer);
+      const fileSizeMB = (videoBuffer.length / 1024 / 1024).toFixed(2);
+      console.log(`[Server Action] Temp file saved: ${fileSizeMB}MB`);
+      
+      // Step 3: Upload temp file to Google File API using SDK fileManager
+      console.log(`[Server Action] Uploading temp file to Google File API (mimeType: video/mp4)...`);
+      fileUri = await uploadFileToGoogleFileAPI(tempPath, apiKey, 'video/mp4');
       console.log(`[Server Action] ✅ File uploaded to Google File API: ${fileUri}`);
     } catch (fileApiError) {
       const errorDetails = fileApiError instanceof Error ? {
@@ -69,10 +78,26 @@ export async function analyzeComicFromUrl(videoUrl: string, mimeType?: string): 
       
       console.error(`[Server Action] ❌ Google File API upload failed:`, errorDetails);
       
+      // Clean up temp file on error
+      try {
+        await unlink(tempPath);
+      } catch (unlinkError) {
+        console.error(`[Server Action] Failed to cleanup temp file:`, unlinkError);
+      }
+      
       return {
         success: false,
         error: `Failed to upload normalized video to Google File API. Error: ${errorDetails.message}`
       };
+    } finally {
+      // Step 4: Cleanup temp file
+      try {
+        await unlink(tempPath);
+        console.log(`[Server Action] Temp file cleaned up: ${tempPath}`);
+      } catch (unlinkError) {
+        console.error(`[Server Action] Failed to cleanup temp file:`, unlinkError);
+        // Don't fail the request if cleanup fails
+      }
     }
     
     // Initialize Google Generative AI

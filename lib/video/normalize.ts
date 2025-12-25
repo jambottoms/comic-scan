@@ -1,6 +1,9 @@
 /**
  * Video normalization pipeline using FFmpeg via child_process.spawn
  * Transcodes videos to H.264, 1080p, no audio, 1 fps for Gemini API
+ * 
+ * Collects FFmpeg output into a Buffer (not a stream) because Google SDK
+ * fileManager.uploadFile doesn't support direct streaming from child process stdout
  */
 
 import { spawn } from 'child_process';
@@ -13,7 +16,7 @@ export interface NormalizeOptions {
 
 /**
  * Normalize video stream: H.264, 1080p, no audio, 1 fps
- * Returns a readable stream of the normalized video
+ * Returns a Buffer of the normalized video (not a stream)
  * 
  * Uses exact ComicScan optimization flags:
  * -i pipe:0 -c:v libx264 -vf scale=-1:1080,fps=1 -an -f mp4 -movflags frag_keyframe+empty_moov pipe:1
@@ -21,7 +24,7 @@ export interface NormalizeOptions {
 export function normalizeVideoStream(
   inputStream: Readable,
   options: NormalizeOptions = {}
-): Promise<Readable> {
+): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     if (!ffmpegStatic) {
       reject(new Error('FFmpeg binary not found. Please ensure ffmpeg-static is installed.'));
@@ -43,8 +46,12 @@ export function normalizeVideoStream(
       stdio: ['pipe', 'pipe', 'pipe'] // stdin, stdout, stderr
     });
 
-    // FFmpeg stdout is already a Readable stream (normalized video)
-    const outputStream = ffmpegProcess.stdout as Readable;
+    // Collect FFmpeg stdout chunks into array
+    const chunks: Buffer[] = [];
+    
+    ffmpegProcess.stdout.on('data', (chunk: Buffer) => {
+      chunks.push(chunk);
+    });
     
     // Handle FFmpeg stderr for progress/logging
     let stderrBuffer = '';
@@ -53,7 +60,7 @@ export function normalizeVideoStream(
     ffmpegProcess.stderr.on('data', (data: Buffer) => {
       stderrBuffer += data.toString();
       
-      // Parse FFmpeg progress output (format: frame=  123 fps= 12 q=23.0 size=    1234kB time=00:00:12.34 bitrate= 123.4kbits/s speed=1.23x)
+      // Parse FFmpeg progress output
       const frameMatch = stderrBuffer.match(/frame=\s*(\d+)/);
       const fpsMatch = stderrBuffer.match(/fps=\s*([\d.]+)/);
       
@@ -89,21 +96,27 @@ export function normalizeVideoStream(
       reject(new Error(`FFmpeg process failed: ${err.message}`));
     });
 
-    // Handle process exit
-    ffmpegProcess.on('exit', (code, signal) => {
+    // Wait for FFmpeg to finish (on('close'))
+    ffmpegProcess.on('close', (code, signal) => {
       if (code === 0) {
-        console.log('[FFmpeg] Normalization complete');
+        // Combine chunks into single Buffer
+        const videoBuffer = Buffer.concat(chunks);
+        const fileSizeMB = (videoBuffer.length / 1024 / 1024).toFixed(2);
+        console.log(`[FFmpeg] Normalization complete: ${fileSizeMB}MB`);
+        
+        if (videoBuffer.length === 0) {
+          reject(new Error('FFmpeg produced empty output'));
+          return;
+        }
+        
+        resolve(videoBuffer);
       } else {
         const errorMsg = signal 
           ? `FFmpeg process killed by signal: ${signal}`
           : `FFmpeg process exited with code: ${code}`;
         console.error(`[FFmpeg] ${errorMsg}`);
         console.error(`[FFmpeg] stderr: ${stderrBuffer.slice(-1000)}`); // Last 1000 chars
-        
-        // Only reject if we haven't already resolved
-        if (!outputStream.destroyed) {
-          outputStream.destroy(new Error(`Video normalization failed: ${errorMsg}`));
-        }
+        reject(new Error(`Video normalization failed: ${errorMsg}`));
       }
     });
 
@@ -111,9 +124,7 @@ export function normalizeVideoStream(
     inputStream.on('error', (err) => {
       console.error('[FFmpeg] Input stream error:', err);
       ffmpegProcess.kill('SIGKILL');
-      if (!outputStream.destroyed) {
-        outputStream.destroy(err);
-      }
+      reject(new Error(`Input stream error: ${err.message}`));
     });
 
     // Pipe input stream to FFmpeg stdin
@@ -124,21 +135,17 @@ export function normalizeVideoStream(
       console.error('[FFmpeg] stdin error:', err);
       // Don't reject here, let the process handle it
     });
-
-    // Resolve immediately with the output stream
-    // The process will continue running and pipe data to stdout
-    resolve(outputStream);
   });
 }
 
 /**
  * Normalize video from a URL (downloads and normalizes)
- * Returns a readable stream of the normalized video
+ * Returns a Buffer of the normalized video
  */
 export async function normalizeVideoFromUrl(
   videoUrl: string,
   options: NormalizeOptions = {}
-): Promise<Readable> {
+): Promise<Buffer> {
   console.log(`[Video Normalize] Downloading video from: ${videoUrl}`);
   
   // Download video as stream (not ArrayBuffer to save memory)
