@@ -52,21 +52,21 @@ export default function VideoInvestigatorModal({
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 bg-black/90 backdrop-blur-sm z-50" />
-        <Dialog.Content className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="relative w-full max-w-6xl max-h-[90vh] bg-gray-900 rounded-xl border border-gray-700 overflow-hidden">
+        <Dialog.Content className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4">
+          <div className="relative w-full h-full sm:h-auto sm:max-h-[90vh] sm:max-w-6xl bg-gray-900 rounded-lg sm:rounded-xl border border-gray-700 overflow-hidden flex flex-col">
             {/* Header */}
-            <div className="absolute top-0 left-0 right-0 bg-gradient-to-b from-black/90 to-transparent p-4 z-10 flex items-center justify-between">
-              <div>
-                <Dialog.Title className="text-xl font-bold text-white mb-1">
+            <div className="absolute top-0 left-0 right-0 bg-gradient-to-b from-black/90 to-transparent p-3 sm:p-4 z-10 flex items-center justify-between gap-2">
+              <div className="flex-1 min-w-0">
+                <Dialog.Title className="text-base sm:text-xl font-bold text-white mb-0.5 sm:mb-1 truncate">
                   Video Investigator
                 </Dialog.Title>
-                <p className="text-sm text-gray-400">
+                <p className="text-xs sm:text-sm text-gray-400">
                   Frame at {formatTimestamp(timestamp)}
                 </p>
               </div>
               <Dialog.Close asChild>
                 <button
-                  className="bg-gray-800 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded-lg transition-colors"
+                  className="bg-gray-800 hover:bg-gray-700 text-white font-bold py-1.5 px-3 sm:py-2 sm:px-4 rounded-lg transition-colors text-sm sm:text-base flex-shrink-0"
                   aria-label="Close"
                 >
                   Close
@@ -75,12 +75,12 @@ export default function VideoInvestigatorModal({
             </div>
 
             {/* Video */}
-            <div className="w-full h-full flex items-center justify-center pt-20 pb-4">
+            <div className="w-full flex-1 flex items-center justify-center pt-14 sm:pt-20 pb-2 sm:pb-4 min-h-0">
               <video
                 ref={videoRef}
                 src={videoUrl}
                 controls
-                className="w-full h-full max-h-[calc(90vh-6rem)] object-contain rounded-lg"
+                className="w-full h-full max-h-[calc(100vh-4rem)] sm:max-h-[calc(90vh-6rem)] object-contain rounded-lg"
                 onLoadedMetadata={handleLoadedMetadata}
                 onSeeked={() => {
                   // Ensure video is paused after seeking

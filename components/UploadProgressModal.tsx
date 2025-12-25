@@ -22,8 +22,8 @@ export default function UploadProgressModal({
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50" />
-        <Dialog.Content className="fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-50 bg-gray-900 border border-gray-700 rounded-xl p-8 shadow-2xl w-full max-w-md mx-4">
-          <div className="flex flex-col items-center justify-center gap-6">
+        <Dialog.Content className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 bg-gray-900 border border-gray-700 rounded-xl shadow-2xl w-[calc(100vw-2rem)] max-w-md sm:w-full sm:max-w-md mx-auto p-6 sm:p-8">
+          <div className="flex flex-col items-center justify-center gap-4 sm:gap-6">
             {/* Close button */}
             <div className="absolute top-4 right-4">
               <Dialog.Close asChild>
@@ -55,15 +55,15 @@ export default function UploadProgressModal({
 
             {/* Circular Progress */}
             <div className="flex-shrink-0">
-              <CircularProgress progress={Math.max(0, Math.min(100, progress))} size={140} strokeWidth={10} />
+              <CircularProgress progress={Math.max(0, Math.min(100, progress))} size={120} strokeWidth={10} className="sm:w-[140px] sm:h-[140px]" />
             </div>
 
             {/* Message */}
-            <div className="text-center w-full">
-              <Dialog.Title className="text-xl font-bold text-white mb-2 text-center">
+            <div className="text-center w-full px-2">
+              <Dialog.Title className="text-lg sm:text-xl font-bold text-white mb-2 text-center">
                 {message}
               </Dialog.Title>
-              <p className="text-gray-400 text-sm text-center">
+              <p className="text-gray-400 text-xs sm:text-sm text-center">
                 Please wait while your video is being processed...
               </p>
             </div>
