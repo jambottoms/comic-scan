@@ -28,23 +28,56 @@ function detectMimeType(file: File): string {
   return extension && mimeTypes[extension] ? mimeTypes[extension] : 'video/mp4';
 }
 
+/**
+ * Read file completely into memory using FileReader
+ * This forces iOS to commit all bytes before upload
+ */
+function readFileAsArrayBuffer(file: File): Promise<ArrayBuffer> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (reader.result instanceof ArrayBuffer) {
+        resolve(reader.result);
+      } else {
+        reject(new Error('Failed to read file as ArrayBuffer'));
+      }
+    };
+    reader.onerror = () => reject(reader.error);
+    reader.readAsArrayBuffer(file);
+  });
+}
+
 export async function uploadToSupabase(originalFile: File): Promise<string> {
   const supabase = createClient();
   
-  // iOS FIX: Force iOS to resolve the file into a real Blob
-  // The slice() operation forces the mobile OS to actually provide the bytes
-  // This fixes the "size" and "type" issues that plague mobile Chrome/Safari
   console.log(`[Supabase Upload] Original file: ${originalFile.name}, Size: ${originalFile.size}, Type: ${originalFile.type || '(empty)'}`);
   
-  const blob = originalFile.slice(0, originalFile.size, 'video/mp4');
+  // iOS FIX: Read file completely into memory using FileReader
+  // This forces iOS to commit all bytes and resolve the file completely
+  // This is more reliable than slice() for HEVC/QuickTime files
+  console.log(`[Supabase Upload] Reading file into memory to force iOS commit...`);
   
-  // Rename and re-type the file to standard MP4
-  // This bypasses the Apple .MOV / .HEVC naming issues
+  let arrayBuffer: ArrayBuffer;
+  try {
+    arrayBuffer = await readFileAsArrayBuffer(originalFile);
+    console.log(`[Supabase Upload] File read into memory: ${arrayBuffer.byteLength} bytes`);
+  } catch (error) {
+    console.error(`[Supabase Upload] Failed to read file:`, error);
+    throw new Error(`Failed to read video file. This may be an iOS issue. Try: 1) Save video to Files app first, 2) Record in "Most Compatible" format (Settings > Camera > Formats). Error: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  
+  // Create new Blob and File from the ArrayBuffer
+  // This ensures we have a clean, committed file
+  const blob = new Blob([arrayBuffer], { type: 'video/mp4' });
   const fixedFile = new File([blob], 'comic_scan.mp4', { type: 'video/mp4' });
   
-  // Validation Check - iOS sometimes returns empty files
-  if (fixedFile.size === 0) {
+  // Validation Check
+  if (fixedFile.size === 0 || arrayBuffer.byteLength === 0) {
     throw new Error("iOS returned an empty file. Try saving the video to 'Files' first, then upload.");
+  }
+  
+  if (fixedFile.size !== originalFile.size) {
+    console.warn(`[Supabase Upload] Size mismatch: original=${originalFile.size}, fixed=${fixedFile.size}`);
   }
   
   console.log(`[Supabase Upload] Fixed file: ${fixedFile.name}, Size: ${fixedFile.size}, Type: ${fixedFile.type}`);
