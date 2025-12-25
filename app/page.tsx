@@ -25,7 +25,7 @@ export default function Dashboard() {
   
   // Modal State
   const [isGradeBookOpen, setIsGradeBookOpen] = useState(false);
-  const [initialTab, setInitialTab] = useState<'record' | 'upload'>('record');
+  const [initialTab, setInitialTab] = useState<'record' | 'upload' | 'identify'>('record');
 
   // Load history and saved scans only on client side after mount to prevent hydration mismatch
   useEffect(() => {
