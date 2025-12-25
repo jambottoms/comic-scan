@@ -1,6 +1,6 @@
 'use server';
 
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleGenerativeAI, GoogleAIFileManager } from "@google/generative-ai";
 
 /**
  * Result type for server action - returns success/error instead of throwing
@@ -69,79 +69,61 @@ export async function analyzeComicFromUrl(videoUrl: string, mimeType?: string): 
     const fileSizeMB = (arrayBuffer.byteLength / 1024 / 1024).toFixed(2);
     console.log(`[Server Action] Video downloaded: ${fileSizeMB}MB`);
     
-    const buffer = Buffer.from(arrayBuffer);
-    const base64Video = buffer.toString("base64");
-    const base64SizeMB = (base64Video.length / 1024 / 1024).toFixed(2);
-    const base64SizeChars = base64Video.length;
-    console.log(`[Server Action] Video converted to base64: ${base64SizeMB}MB (${base64SizeChars.toLocaleString()} characters)`);
-    
-    // Validate base64 encoding
-    if (!base64Video || base64Video.length === 0) {
-      return {
-        success: false,
-        error: "Failed to encode video to base64. The video file may be corrupted."
-      };
-    }
-    
-    // Validate base64 format (should only contain valid base64 characters)
-    const base64Regex = /^[A-Za-z0-9+/]*={0,2}$/;
-    if (!base64Regex.test(base64Video)) {
-      return {
-        success: false,
-        error: "Invalid base64 encoding detected. The video file may be corrupted."
-      };
-    }
-    
-    // Use provided mimeType or detect from URL, default to mp4
-    let detectedMimeType = mimeType || 'video/mp4';
-    
-    // If not provided, try to detect from URL extension
+    // Determine mimeType
+    let finalMimeType = mimeType || 'video/mp4';
     if (!mimeType) {
       const urlLower = videoUrl.toLowerCase();
       if (urlLower.endsWith('.webm')) {
-        detectedMimeType = 'video/webm';
+        finalMimeType = 'video/webm';
       } else if (urlLower.endsWith('.mov') || urlLower.endsWith('.qt')) {
-        detectedMimeType = 'video/quicktime';
+        finalMimeType = 'video/quicktime';
       } else if (urlLower.endsWith('.avi')) {
-        detectedMimeType = 'video/x-msvideo';
+        finalMimeType = 'video/x-msvideo';
       } else if (urlLower.endsWith('.mkv')) {
-        detectedMimeType = 'video/x-matroska';
+        finalMimeType = 'video/x-matroska';
       }
     }
     
-    // Validate mimeType format
-    if (!detectedMimeType.startsWith('video/')) {
-      console.warn(`[Server Action] Invalid mimeType detected: ${detectedMimeType}, defaulting to video/mp4`);
-      detectedMimeType = 'video/mp4';
+    if (!finalMimeType.startsWith('video/')) {
+      finalMimeType = 'video/mp4';
     }
     
-    const finalMimeType = detectedMimeType;
+    console.log(`[Server Action] Video file size: ${fileSizeMB}MB, MIME type: ${finalMimeType}`);
     
-    // Log file size info
-    // Note: Token estimation for video is unreliable - Gemini processes video frames efficiently
-    // and doesn't tokenize raw base64. The actual token count is much lower than base64 size.
-    // We'll let the API handle size limits and return proper errors if needed.
-    console.log(`[Server Action] Video file size: ${fileSizeMB}MB binary, ${base64SizeMB}MB base64`);
-    console.log(`[Server Action] MIME type: ${finalMimeType}`);
-    
-    // Warn for very large files, but don't reject - let API handle it
-    const binarySizeMB = parseFloat(fileSizeMB);
-    if (binarySizeMB > 50) {
-      console.warn(`[Server Action] WARNING: Video is very large (${fileSizeMB}MB). May exceed API limits or take a long time to process.`);
-    } else if (binarySizeMB > 20) {
-      console.warn(`[Server Action] WARNING: Video is large (${fileSizeMB}MB). Processing may take longer.`);
-    }
-
-    // Initialize Google Generative AI
-    // The SDK uses v1 (stable) API by default for stable models like gemini-2.5-flash
-    // v1beta is only used for preview/experimental models
+    // Initialize Google Generative AI and File Manager
     const genAI = new GoogleGenerativeAI(apiKey);
+    const fileManager = new GoogleAIFileManager(apiKey);
+    
+    // Upload video to Google's File API (NOT base64 inline - this fixes the 500 error!)
+    console.log("[Server Action] Uploading video to Google File API...");
+    const uploadResult = await fileManager.uploadFile(Buffer.from(arrayBuffer), {
+      mimeType: finalMimeType,
+      displayName: `comic-video-${Date.now()}`,
+    });
+    
+    console.log(`[Server Action] Video uploaded to Google File API. File URI: ${uploadResult.file.uri}`);
+    
+    // Wait for file to be processed (CRITICAL STEP - files must be ACTIVE before use)
+    let file = uploadResult.file;
+    while (file.state === 'PROCESSING') {
+      console.log("[Server Action] Waiting for video processing...");
+      await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds
+      file = await fileManager.getFile(file.name);
+    }
+    
+    if (file.state === 'FAILED') {
+      return {
+        success: false,
+        error: `Video processing failed: ${file.error?.message || 'Unknown error'}`
+      };
+    }
+    
+    console.log(`[Server Action] Video processing complete. State: ${file.state}`);
     
     // System instruction
     const systemInstruction = "You are an expert comic book grader. Analyze the video of this comic book. Identify the comic (Series, Issue, Year, Variant) and look for visible defects across all frames. Return the response as clean JSON with fields: title, issue, estimatedGrade, reasoning.";
 
     // Use gemini-2.5-flash (stable model, uses v1 API)
-    // Note: Stable models like gemini-2.5-flash use the v1 API endpoint automatically
     console.log(`[Server Action] Using model: gemini-2.5-flash (stable, v1 API)`);
     const model = genAI.getGenerativeModel({ 
       model: "gemini-2.5-flash",
@@ -153,14 +135,10 @@ export async function analyzeComicFromUrl(videoUrl: string, mimeType?: string): 
       setTimeout(() => reject(new Error("Video analysis timed out after 60 seconds. The video may be too long or the API is slow. Please try a shorter video.")), 60000);
     });
 
-    // Validate payload structure before sending
+    // Use file reference instead of base64 inline data (THIS IS THE FIX!)
+    console.log("[Server Action] Sending video file reference to Gemini API...");
     const payload = [
-      {
-        inlineData: {
-          data: base64Video,
-          mimeType: finalMimeType
-        }
-      },
+      file, // Pass the file object directly (not base64!)
       {
         text: "Analyze this comic book video. Look at all frames to identify the comic and assess its condition."
       }
