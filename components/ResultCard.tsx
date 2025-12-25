@@ -54,13 +54,33 @@ export default function ResultCard({ result, videoUrl }: ResultCardProps) {
   };
 
   // Parse reasoning into summary and bullet points with timestamps
-  const parseReasoning = (reasoning: string) => {
+  const parseReasoning = (reasoning: any) => {
     if (!reasoning) return { summary: '', bullets: [] };
     
-    console.log('[Parse] Original reasoning:', reasoning);
+    // Convert reasoning to string if it's not already
+    let reasoningText: string;
+    if (typeof reasoning === 'string') {
+      reasoningText = reasoning;
+    } else if (typeof reasoning === 'object') {
+      // If it's an object, try to stringify it or extract text
+      if (reasoning.text) {
+        reasoningText = String(reasoning.text);
+      } else if (reasoning.content) {
+        reasoningText = String(reasoning.content);
+      } else if (reasoning.reasoning) {
+        reasoningText = String(reasoning.reasoning);
+      } else {
+        // Try to stringify the whole object
+        reasoningText = JSON.stringify(reasoning, null, 2);
+      }
+    } else {
+      reasoningText = String(reasoning);
+    }
+    
+    console.log('[Parse] Original reasoning:', reasoningText);
     
     // First, try to split by newlines or bullet points (more reliable for structured text)
-    const lines = reasoning.split(/\n+/).filter(l => l.trim().length > 0);
+    const lines = reasoningText.split(/\n+/).filter(l => l.trim().length > 0);
     
     // If we have multiple lines, use them as bullets
     if (lines.length > 1) {
@@ -116,7 +136,7 @@ export default function ResultCard({ result, videoUrl }: ResultCardProps) {
     }
     
     // Fallback: Split by sentences
-    const sentences = reasoning.split(/[.!?]+/).filter(s => s.trim().length > 0);
+    const sentences = reasoningText.split(/[.!?]+/).filter(s => s.trim().length > 0);
     
     // First 1-2 sentences as summary
     const summary = sentences.slice(0, 2).join('. ').trim() + (sentences.length > 2 ? '.' : '');
@@ -163,7 +183,7 @@ export default function ResultCard({ result, videoUrl }: ResultCardProps) {
     // If no clear sentence breaks, try to split by newlines or create bullets from paragraphs
     if (bullets.length === 0 && sentences.length <= 2) {
       // Try splitting by newlines or common separators
-      const paragraphs = reasoning.split(/\n\n|\n/).filter(p => p.trim().length > 0);
+      const paragraphs = reasoningText.split(/\n\n|\n/).filter(p => p.trim().length > 0);
       if (paragraphs.length > 1) {
         return {
           summary: paragraphs[0].trim(),
@@ -185,7 +205,7 @@ export default function ResultCard({ result, videoUrl }: ResultCardProps) {
         };
       }
       // If still no bullets, create them from the reasoning text
-      const parts = reasoning.split(/[;:]/).filter(p => p.trim().length > 0);
+      const parts = reasoningText.split(/[;:]/).filter(p => p.trim().length > 0);
       if (parts.length > 1) {
         return {
           summary: parts[0].trim(),
