@@ -1,7 +1,8 @@
 /**
- * Saved scans management - uses API routes to proxy Supabase calls
- * This prevents Arc Browser's privacy features from blocking requests
+ * Saved scans management using Supabase database
  */
+
+import { createClient } from './supabase/client';
 
 export interface SavedScan {
   id: string;
@@ -29,16 +30,30 @@ export interface SaveScanInput {
  */
 export async function getSavedScans(limit?: number): Promise<SavedScan[]> {
   try {
-    const url = limit ? `/api/saved-scans?limit=${limit}` : '/api/saved-scans';
-    const response = await fetch(url);
+    const supabase = createClient();
     
-    if (!response.ok) {
-      console.error('Failed to fetch saved scans:', response.statusText);
+    // If Supabase is not configured, return empty array gracefully
+    if (!supabase) {
       return [];
     }
     
-    const data = await response.json();
-    return Array.isArray(data) ? data : [];
+    let query = supabase
+      .from('saved_scans')
+      .select('*')
+      .order('created_at', { ascending: false });
+    
+    if (limit) {
+      query = query.limit(limit);
+    }
+    
+    const { data, error } = await query;
+    
+    if (error) {
+      console.error('Failed to fetch saved scans:', error);
+      return [];
+    }
+    
+    return data || [];
   } catch (error) {
     console.error('Failed to fetch saved scans:', error);
     return [];
@@ -50,14 +65,24 @@ export async function getSavedScans(limit?: number): Promise<SavedScan[]> {
  */
 export async function getSavedScanById(id: string): Promise<SavedScan | null> {
   try {
-    const response = await fetch(`/api/saved-scans/${id}`);
+    const supabase = createClient();
     
-    if (!response.ok) {
-      console.error('Failed to fetch saved scan:', response.statusText);
+    if (!supabase) {
       return null;
     }
     
-    return await response.json();
+    const { data, error } = await supabase
+      .from('saved_scans')
+      .select('*')
+      .eq('id', id)
+      .single();
+    
+    if (error) {
+      console.error('Failed to fetch saved scan:', error);
+      return null;
+    }
+    
+    return data;
   } catch (error) {
     console.error('Failed to fetch saved scan:', error);
     return null;
@@ -69,20 +94,32 @@ export async function getSavedScanById(id: string): Promise<SavedScan | null> {
  */
 export async function saveScan(input: SaveScanInput): Promise<SavedScan | null> {
   try {
-    const response = await fetch('/api/saved-scans', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(input),
-    });
+    const supabase = createClient();
     
-    if (!response.ok) {
-      console.error('Failed to save scan:', response.statusText);
+    if (!supabase) {
+      console.warn('[SavedScans] Cannot save - Supabase not configured');
       return null;
     }
     
-    return await response.json();
+    const { data, error } = await supabase
+      .from('saved_scans')
+      .insert({
+        title: input.title,
+        issue: input.issue || null,
+        grade: input.grade,
+        video_url: input.videoUrl || null,
+        thumbnail: input.thumbnail || null,
+        result: input.result,
+      })
+      .select()
+      .single();
+    
+    if (error) {
+      console.error('Failed to save scan:', error);
+      return null;
+    }
+    
+    return data;
   } catch (error) {
     console.error('Failed to save scan:', error);
     return null;
@@ -94,12 +131,19 @@ export async function saveScan(input: SaveScanInput): Promise<SavedScan | null> 
  */
 export async function deleteSavedScan(id: string): Promise<boolean> {
   try {
-    const response = await fetch(`/api/saved-scans/${id}`, {
-      method: 'DELETE',
-    });
+    const supabase = createClient();
     
-    if (!response.ok) {
-      console.error('Failed to delete saved scan:', response.statusText);
+    if (!supabase) {
+      return false;
+    }
+    
+    const { error } = await supabase
+      .from('saved_scans')
+      .delete()
+      .eq('id', id);
+    
+    if (error) {
+      console.error('Failed to delete saved scan:', error);
       return false;
     }
     
@@ -115,22 +159,28 @@ export async function deleteSavedScan(id: string): Promise<boolean> {
  */
 export async function isScanSaved(title: string, issue: string, grade: string): Promise<string | null> {
   try {
-    const response = await fetch('/api/saved-scans/check', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ title, issue, grade }),
-    });
+    const supabase = createClient();
     
-    if (!response.ok) {
+    if (!supabase) {
       return null;
     }
     
-    const data = await response.json();
-    return data.savedId || null;
+    const { data, error } = await supabase
+      .from('saved_scans')
+      .select('id')
+      .eq('title', title)
+      .eq('issue', issue)
+      .eq('grade', grade)
+      .limit(1);
+    
+    if (error || !data || data.length === 0) {
+      return null;
+    }
+    
+    return data[0].id;
   } catch (error) {
     console.error('Failed to check if scan is saved:', error);
     return null;
   }
 }
+
