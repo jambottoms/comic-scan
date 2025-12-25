@@ -1,15 +1,13 @@
 /**
  * Video normalization pipeline for Next.js ESM on Vercel
- * Uses native child_process.spawn with ffmpeg-static
- * Transcodes videos to H.264, 1080p, no audio, 1 fps for Gemini API
+ * Uses physical files instead of streams for better FFmpeg compatibility
  */
 
 import { spawn } from 'child_process';
-import { Readable } from 'stream';
 import { createRequire } from 'module';
 import path from 'path';
-import { existsSync } from 'fs';
-import { chmodSync } from 'fs';
+import { existsSync, chmodSync } from 'fs';
+import { writeFile, unlink } from 'fs/promises';
 
 // Use createRequire for ESM compatibility
 const require = createRequire(import.meta.url);
@@ -63,46 +61,66 @@ function getFfmpegPath(): string {
 }
 
 /**
- * Normalize video stream: H.264, 1080p, no audio, 1 fps
- * Manually writes stream to ffmpeg.stdin and collects stdout into Buffer
+ * Normalize video from a URL using two-step file process
+ * 1. Download raw video to /tmp/raw_input.mov
+ * 2. Run FFmpeg on physical file to /tmp/normalized.mp4
  * 
- * Processing flags: -i pipe:0 -c:v libx264 -vf scale=-1:1080,fps=1 -an -f mp4 -movflags frag_keyframe+empty_moov pipe:1
+ * Flags: -c:v libx264 -vf scale=-1:1080,fps=1 -an -f mp4
  */
-export function normalizeVideoStream(
-  inputStream: Readable,
+export async function normalizeVideoFromUrl(
+  videoUrl: string,
   options: NormalizeOptions = {}
-): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    let ffmpegPath: string;
-    try {
-      ffmpegPath = getFfmpegPath();
-    } catch (error) {
-      reject(error);
-      return;
-    }
+): Promise<void> {
+  const rawInputPath = '/tmp/raw_input.mov';
+  const normalizedPath = '/tmp/normalized.mp4';
+  
+  console.log(`[Video Normalize] Downloading video from: ${videoUrl}`);
+  
+  // Step 1: Download raw video from Supabase to /tmp/raw_input.mov
+  const response = await fetch(videoUrl, {
+    headers: {
+      'Accept': 'video/*',
+    },
+  });
 
-    console.log(`[FFmpeg] Starting normalization (binary: ${ffmpegPath})...`);
-    
-    // Spawn FFmpeg process with exact flags
+  if (!response.ok) {
+    throw new Error(`Failed to download video: ${response.status} ${response.statusText}`);
+  }
+
+  if (!response.body) {
+    throw new Error('Response body is null');
+  }
+
+  // Read the entire response into a buffer
+  const arrayBuffer = await response.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);
+  
+  console.log(`[Video Normalize] Downloaded ${(buffer.length / 1024 / 1024).toFixed(2)}MB, writing to ${rawInputPath}`);
+  
+  // Write raw video to temporary file
+  await writeFile(rawInputPath, buffer);
+  console.log(`[Video Normalize] Raw video saved to ${rawInputPath}`);
+  
+  // Step 2: Run FFmpeg on the physical file
+  const ffmpegPath = getFfmpegPath();
+  
+  console.log(`[Video Normalize] Starting FFmpeg normalization...`);
+  console.log(`[FFmpeg] Input: ${rawInputPath}, Output: ${normalizedPath}`);
+  
+  return new Promise((resolve, reject) => {
+    // Spawn FFmpeg process with physical file paths
     const ffmpegProcess = spawn(ffmpegPath, [
-      '-i', 'pipe:0',                    // Input from stdin
+      '-y',                              // Overwrite output file
+      '-i', rawInputPath,                // Input from physical file
       '-c:v', 'libx264',                 // H.264 codec
       '-vf', 'scale=-1:1080,fps=1',      // Scale to 1080p height, 1 fps
       '-an',                             // No audio
       '-f', 'mp4',                       // MP4 format
-      '-movflags', 'frag_keyframe+empty_moov', // Streaming optimization
-      'pipe:1'                           // Output to stdout
+      normalizedPath                     // Output to physical file
     ], {
-      stdio: ['pipe', 'pipe', 'pipe'] // stdin, stdout, stderr
+      stdio: ['ignore', 'pipe', 'pipe'] // stdin ignored, stdout/stderr piped
     });
 
-    // Collect FFmpeg stdout chunks into array
-    const chunks: Buffer[] = [];
-    
-    ffmpegProcess.stdout.on('data', (chunk: Buffer) => {
-      chunks.push(chunk);
-    });
-    
     // Handle FFmpeg stderr for progress/logging
     let stderrBuffer = '';
     let lastProgressTime = Date.now();
@@ -149,17 +167,8 @@ export function normalizeVideoStream(
     // Wait for FFmpeg process to close
     ffmpegProcess.on('close', (code, signal) => {
       if (code === 0) {
-        // Combine chunks into single Buffer
-        const videoBuffer = Buffer.concat(chunks);
-        const fileSizeMB = (videoBuffer.length / 1024 / 1024).toFixed(2);
-        console.log(`[FFmpeg] Normalization complete: ${fileSizeMB}MB (${chunks.length} chunks)`);
-        
-        if (videoBuffer.length === 0) {
-          reject(new Error('FFmpeg produced empty output'));
-          return;
-        }
-        
-        resolve(videoBuffer);
+        console.log(`[FFmpeg] Normalization complete: ${normalizedPath}`);
+        resolve();
       } else {
         const errorMsg = signal 
           ? `FFmpeg process killed by signal: ${signal}`
@@ -172,56 +181,5 @@ export function normalizeVideoStream(
         reject(new Error(`Video normalization failed: ${errorMsg}. FFmpeg error: ${actualError}`));
       }
     });
-
-    // Handle input stream errors
-    inputStream.on('error', (err) => {
-      console.error('[FFmpeg] Input stream error:', err);
-      ffmpegProcess.kill('SIGKILL');
-      reject(new Error(`Input stream error: ${err.message}`));
-    });
-
-    // Pipe input stream to ffmpeg.stdin (simpler and more reliable)
-    // The pipe handles backpressure automatically
-    inputStream.pipe(ffmpegProcess.stdin);
-    
-    // Handle stdin errors
-    ffmpegProcess.stdin.on('error', (err) => {
-      console.error('[FFmpeg] stdin error:', err);
-      // Don't reject here, let the process handle it
-    });
   });
-}
-
-/**
- * Normalize video from a URL (downloads from Supabase and normalizes)
- * Returns a Buffer of the normalized video
- */
-export async function normalizeVideoFromUrl(
-  videoUrl: string,
-  options: NormalizeOptions = {}
-): Promise<Buffer> {
-  console.log(`[Video Normalize] Downloading video from: ${videoUrl}`);
-  
-  // Fetch video from Supabase as ReadableStream
-  const response = await fetch(videoUrl, {
-    headers: {
-      'Accept': 'video/*',
-    },
-  });
-
-  if (!response.ok) {
-    throw new Error(`Failed to download video: ${response.status} ${response.statusText}`);
-  }
-
-  if (!response.body) {
-    throw new Error('Response body is null');
-  }
-
-  // Convert Web ReadableStream to Node.js Readable stream
-  // Use Readable.fromWeb (available in Node.js 18+)
-  // @ts-ignore - Readable.fromWeb exists in Node 18+
-  const inputStream = Readable.fromWeb(response.body);
-  
-  console.log(`[Video Normalize] Starting FFmpeg normalization...`);
-  return normalizeVideoStream(inputStream, options);
 }

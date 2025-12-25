@@ -3,8 +3,7 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { uploadFileToGoogleFileAPI } from "@/lib/google/file-api";
 import { normalizeVideoFromUrl } from "@/lib/video/normalize";
-import { writeFile, unlink, stat } from 'fs/promises';
-import path from 'path';
+import { unlink, stat } from 'fs/promises';
 
 /**
  * Result type for server action - returns success/error instead of throwing
@@ -15,7 +14,7 @@ export type AnalyzeResult =
 
 /**
  * Analyze a comic book video from a Supabase Storage URL
- * This bypasses Vercel's 4.5MB body size limit by downloading from Supabase
+ * Uses two-step file process: download to /tmp/raw_input.mov, normalize to /tmp/normalized.mp4
  * Returns a result object instead of throwing to avoid Next.js error hiding
  */
 export async function analyzeComicFromUrl(videoUrl: string, mimeType?: string): Promise<AnalyzeResult> {
@@ -28,28 +27,32 @@ export async function analyzeComicFromUrl(videoUrl: string, mimeType?: string): 
 
   console.log(`[Server Action] API key present: ${apiKey ? 'Yes' : 'No'} (length: ${apiKey?.length || 0})`);
 
-  // Temporary file path for normalized video
-  const tempPath = path.join('/tmp', 'normalized.mp4');
+  // File paths for two-step process
+  const rawInputPath = '/tmp/raw_input.mov';
+  const normalizedPath = '/tmp/normalized.mp4';
   let fileUri: string | null = null;
 
   try {
     console.log(`[Server Action] Starting video normalization pipeline for: ${videoUrl}`);
     
-    // Step 1: Normalize video (downloads as stream, transcodes to H.264, 1080p, 1fps, no audio)
-    // This handles all mobile video formats (HEVC, QuickTime, etc.)
-    // Collects FFmpeg output into a Buffer (not a stream) because Google SDK doesn't support streams
-    let videoBuffer: Buffer;
+    // Step 1: Normalize video (downloads to /tmp/raw_input.mov, processes to /tmp/normalized.mp4)
     try {
       const startTime = Date.now();
       console.log(`[Server Action] Starting video normalization...`);
-      videoBuffer = await normalizeVideoFromUrl(videoUrl, {
+      await normalizeVideoFromUrl(videoUrl, {
         onProgress: (progress) => {
           const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
           console.log(`[Server Action] Normalization progress: ${progress.frames} frames processed (${elapsed}s elapsed)`);
         }
       });
-      const bufferSizeMB = (videoBuffer.length / 1024 / 1024).toFixed(2);
-      console.log(`[Server Action] ✅ Video normalization complete: ${bufferSizeMB}MB`);
+      
+      // Verify normalized file exists and has data
+      const stats = await stat(normalizedPath);
+      if (stats.size === 0) {
+        throw new Error('Normalized file is empty on disk');
+      }
+      const fileSizeMB = (stats.size / 1024 / 1024).toFixed(2);
+      console.log(`[Server Action] ✅ Video normalization complete: ${fileSizeMB}MB`);
     } catch (normalizeError) {
       const errorDetails = normalizeError instanceof Error ? normalizeError.message : String(normalizeError);
       console.error(`[Server Action] ❌ Video normalization failed:`, errorDetails);
@@ -59,28 +62,9 @@ export async function analyzeComicFromUrl(videoUrl: string, mimeType?: string): 
       };
     }
     
-    // Step 2: Save normalized video to /tmp/normalized.mp4
-    console.log(`[Server Action] Saving normalized video to: ${tempPath}`);
-    
-    // Write file and await completion to ensure it's on disk
-    await writeFile(tempPath, videoBuffer);
-    const fileSizeMB = (videoBuffer.length / 1024 / 1024).toFixed(2);
-    console.log(`[Server Action] Temp file written: ${fileSizeMB}MB`);
-    
-    // Step 3: Verification - Check if the file actually has data on disk
-    const stats = await stat(tempPath);
-    if (stats.size === 0) {
-      throw new Error('Normalized file is empty on disk');
-    }
-    if (stats.size !== videoBuffer.length) {
-      console.warn(`[Server Action] Size mismatch: buffer=${videoBuffer.length}, file=${stats.size}`);
-    }
-    console.log(`[Server Action] File verified on disk: ${stats.size} bytes`);
-    
-    // Step 4: Upload temp file to Google File API using SDK fileManager
-    // File is now guaranteed to be on disk before SDK reads it
-    console.log(`[Server Action] Uploading temp file to Google File API (mimeType: video/mp4)...`);
-    fileUri = await uploadFileToGoogleFileAPI(tempPath, apiKey, 'video/mp4');
+    // Step 2: Upload normalized file to Google File API
+    console.log(`[Server Action] Uploading normalized file to Google File API (mimeType: video/mp4)...`);
+    fileUri = await uploadFileToGoogleFileAPI(normalizedPath, apiKey, 'video/mp4');
     console.log(`[Server Action] ✅ File uploaded to Google File API: ${fileUri}`);
     
     // Initialize Google Generative AI
@@ -246,16 +230,18 @@ export async function analyzeComicFromUrl(videoUrl: string, mimeType?: string): 
     // This prevents Next.js from hiding the error in production
     return { success: false, error: errorMessage };
   } finally {
-    // Cleanup temp file - always runs, even on error
-    if (tempPath) {
-      try {
-        await unlink(tempPath);
-        console.log(`[Server Action] Temp file cleaned up: ${tempPath}`);
-      } catch (unlinkError) {
-        console.error(`[Server Action] Failed to cleanup temp file:`, unlinkError);
-        // Don't fail the request if cleanup fails
-      }
-    }
+    // Cleanup both temp files using Promise.allSettled
+    const cleanupPromises = [
+      unlink(rawInputPath).catch(err => {
+        console.warn(`[Server Action] Failed to cleanup ${rawInputPath}:`, err);
+      }),
+      unlink(normalizedPath).catch(err => {
+        console.warn(`[Server Action] Failed to cleanup ${normalizedPath}:`, err);
+      }),
+    ];
+    
+    const results = await Promise.allSettled(cleanupPromises);
+    const cleaned = results.filter(r => r.status === 'fulfilled').length;
+    console.log(`[Server Action] Cleaned up ${cleaned}/${cleanupPromises.length} temp files`);
   }
 }
-
