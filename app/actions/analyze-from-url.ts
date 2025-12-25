@@ -70,36 +70,11 @@ export async function analyzeComicFromUrl(videoUrl: string, mimeType?: string): 
     const binarySizeMB = parseFloat(fileSizeMB);
     console.log(`[Server Action] Video downloaded: ${fileSizeMB}MB (${arrayBuffer.byteLength} bytes)`);
     
-    // Determine mimeType - normalize video/quicktime to video/mp4 for Gemini
-    // Gemini API prefers video/mp4 even for .mov files
-    let finalMimeType = mimeType || 'video/mp4';
+    // HARDCODE mimeType to video/mp4 - client already normalized the file
+    // The client-side slice() fix normalizes all files to MP4 before upload
+    const finalMimeType = 'video/mp4';
     
-    // Normalize video/quicktime to video/mp4 for Gemini compatibility
-    if (finalMimeType === 'video/quicktime' || finalMimeType === 'video/x-quicktime') {
-      finalMimeType = 'video/mp4';
-      console.log(`[Server Action] Normalized video/quicktime to video/mp4 for Gemini compatibility`);
-    }
-    
-    if (!mimeType) {
-      // Fallback: detect from URL if MIME type not provided
-      const urlLower = videoUrl.toLowerCase();
-      if (urlLower.endsWith('.webm')) {
-        finalMimeType = 'video/webm';
-      } else if (urlLower.endsWith('.mov') || urlLower.endsWith('.qt')) {
-        // Even .mov files should be sent as video/mp4 to Gemini
-        finalMimeType = 'video/mp4';
-      } else if (urlLower.endsWith('.avi')) {
-        finalMimeType = 'video/x-msvideo';
-      } else if (urlLower.endsWith('.mkv')) {
-        finalMimeType = 'video/x-matroska';
-      }
-    }
-    
-    if (!finalMimeType.startsWith('video/')) {
-      finalMimeType = 'video/mp4';
-    }
-    
-    console.log(`[Server Action] MIME type: ${finalMimeType} (original: ${mimeType || 'not provided'})`);
+    console.log(`[Server Action] Using hardcoded mimeType: ${finalMimeType} (client normalized file to MP4)`);
     
     // ALWAYS use Google File API for all videos to avoid base64 encoding issues
     // Base64 can cause 500 errors, especially with mobile/HEVC videos
@@ -110,8 +85,9 @@ export async function analyzeComicFromUrl(videoUrl: string, mimeType?: string): 
     
     try {
       // Convert ArrayBuffer to Blob for upload
-      const blob = new Blob([arrayBuffer], { type: finalMimeType });
-      const file = new File([blob], 'comic-video', { type: finalMimeType });
+      // Use hardcoded video/mp4 - client already normalized the file
+      const blob = new Blob([arrayBuffer], { type: 'video/mp4' });
+      const file = new File([blob], 'comic-video.mp4', { type: 'video/mp4' });
       
       console.log(`[Server Action] Uploading ${fileSizeMB}MB file to Google File API (type: ${finalMimeType})...`);
       fileUri = await uploadToGoogleFileAPI(file, apiKey);

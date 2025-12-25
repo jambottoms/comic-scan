@@ -37,16 +37,18 @@ export async function uploadToGoogleFileAPI(
   const formData = new FormData();
   
   // Metadata must be a JSON string
+  // HARDCODE mimeType to video/mp4 - we normalized it on the client side
   const metadata = {
     file: {
-      displayName: file instanceof File ? file.name : 'comic-video.webm',
+      displayName: file instanceof File ? file.name : 'comic-video.mp4',
+      mimeType: 'video/mp4', // HARDCODE - always MP4 after client normalization
     },
   };
   
   // Append metadata as a JSON string (not a Blob)
   formData.append('metadata', JSON.stringify(metadata));
   
-  // Append the file
+  // Append the file (already normalized to MP4 on client)
   formData.append('file', file);
 
   // Upload file

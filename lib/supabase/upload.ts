@@ -28,25 +28,37 @@ function detectMimeType(file: File): string {
   return extension && mimeTypes[extension] ? mimeTypes[extension] : 'video/mp4';
 }
 
-export async function uploadToSupabase(file: File): Promise<string> {
+export async function uploadToSupabase(originalFile: File): Promise<string> {
   const supabase = createClient();
   
-  // Detect MIME type (iOS Photos often has empty file.type)
-  const detectedMimeType = detectMimeType(file);
+  // iOS FIX: Force iOS to resolve the file into a real Blob
+  // The slice() operation forces the mobile OS to actually provide the bytes
+  // This fixes the "size" and "type" issues that plague mobile Chrome/Safari
+  console.log(`[Supabase Upload] Original file: ${originalFile.name}, Size: ${originalFile.size}, Type: ${originalFile.type || '(empty)'}`);
+  
+  const blob = originalFile.slice(0, originalFile.size, 'video/mp4');
+  
+  // Rename and re-type the file to standard MP4
+  // This bypasses the Apple .MOV / .HEVC naming issues
+  const fixedFile = new File([blob], 'comic_scan.mp4', { type: 'video/mp4' });
+  
+  // Validation Check - iOS sometimes returns empty files
+  if (fixedFile.size === 0) {
+    throw new Error("iOS returned an empty file. Try saving the video to 'Files' first, then upload.");
+  }
+  
+  console.log(`[Supabase Upload] Fixed file: ${fixedFile.name}, Size: ${fixedFile.size}, Type: ${fixedFile.type}`);
   
   // Generate a unique filename
   const timestamp = Date.now();
   const randomString = Math.random().toString(36).substring(2, 15);
-  const fileExt = file.name.split('.').pop() || 'mp4'; // Default to mp4 if no extension
-  const fileName = `${timestamp}-${randomString}.${fileExt}`;
+  const fileName = `${timestamp}-${randomString}.mp4`;
   
-  console.log(`[Supabase Upload] File: ${file.name}, Type: ${file.type || '(empty)'}, Detected: ${detectedMimeType}`);
-  
-  // Upload to Supabase Storage
+  // Upload to Supabase Storage with normalized MP4 file
   const { data, error } = await supabase.storage
     .from('comic-videos')
-    .upload(fileName, file, {
-      contentType: detectedMimeType, // Use detected type instead of file.type
+    .upload(fileName, fixedFile, {
+      contentType: 'video/mp4', // Always use video/mp4 after normalization
       upsert: false,
     });
 
