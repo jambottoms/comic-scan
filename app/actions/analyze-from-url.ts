@@ -3,7 +3,7 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { uploadFileToGoogleFileAPI } from "@/lib/google/file-api";
 import { normalizeVideoFromUrl } from "@/lib/video/normalize";
-import { writeFile, unlink } from 'fs/promises';
+import { writeFile, unlink, stat } from 'fs/promises';
 import path from 'path';
 
 /**
@@ -56,16 +56,30 @@ export async function analyzeComicFromUrl(videoUrl: string, mimeType?: string): 
     }
     
     // Step 2: Save normalized video to temporary file (Vercel allows /tmp)
-    const tempPath = path.join('/tmp', `normalized_${Date.now()}.mp4`);
+    // CRITICAL: Use await to ensure file is fully written to disk before SDK reads it
+    const tempPath = path.join('/tmp', `comic_${Date.now()}.mp4`);
     let fileUri: string | null = null;
     
     try {
       console.log(`[Server Action] Saving normalized video to temp file: ${tempPath}`);
+      
+      // Write file and await completion to ensure it's on disk
       await writeFile(tempPath, videoBuffer);
       const fileSizeMB = (videoBuffer.length / 1024 / 1024).toFixed(2);
-      console.log(`[Server Action] Temp file saved: ${fileSizeMB}MB`);
+      console.log(`[Server Action] Temp file written: ${fileSizeMB}MB`);
       
-      // Step 3: Upload temp file to Google File API using SDK fileManager
+      // Step 3: Verification - Check if the file actually has data on disk
+      const stats = await stat(tempPath);
+      if (stats.size === 0) {
+        throw new Error('Normalized file is empty on disk');
+      }
+      if (stats.size !== videoBuffer.length) {
+        console.warn(`[Server Action] Size mismatch: buffer=${videoBuffer.length}, file=${stats.size}`);
+      }
+      console.log(`[Server Action] File verified on disk: ${stats.size} bytes`);
+      
+      // Step 4: Upload temp file to Google File API using SDK fileManager
+      // File is now guaranteed to be on disk before SDK reads it
       console.log(`[Server Action] Uploading temp file to Google File API (mimeType: video/mp4)...`);
       fileUri = await uploadFileToGoogleFileAPI(tempPath, apiKey, 'video/mp4');
       console.log(`[Server Action] ✅ File uploaded to Google File API: ${fileUri}`);

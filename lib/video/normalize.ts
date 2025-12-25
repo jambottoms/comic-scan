@@ -96,13 +96,14 @@ export function normalizeVideoStream(
       reject(new Error(`FFmpeg process failed: ${err.message}`));
     });
 
-    // Wait for FFmpeg to finish (on('close'))
+    // CRITICAL: Wait for FFmpeg process to close (not just end)
+    // The 'close' event ensures all file descriptors are closed and data is fully flushed
     ffmpegProcess.on('close', (code, signal) => {
       if (code === 0) {
         // Combine chunks into single Buffer
         const videoBuffer = Buffer.concat(chunks);
         const fileSizeMB = (videoBuffer.length / 1024 / 1024).toFixed(2);
-        console.log(`[FFmpeg] Normalization complete: ${fileSizeMB}MB`);
+        console.log(`[FFmpeg] Normalization complete: ${fileSizeMB}MB (${chunks.length} chunks)`);
         
         if (videoBuffer.length === 0) {
           reject(new Error('FFmpeg produced empty output'));
