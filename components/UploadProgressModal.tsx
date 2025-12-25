@@ -21,8 +21,8 @@ export default function UploadProgressModal({
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50" />
-        <Dialog.Content className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 bg-gray-900 border border-gray-700 rounded-xl shadow-2xl w-[calc(100vw-2rem)] max-w-md sm:w-full sm:max-w-md mx-auto p-6 sm:p-8">
+        <Dialog.Overlay className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 data-[state=open]:animate-in data-[state=closed]:animate-out" />
+        <Dialog.Content className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 bg-gray-900 border border-gray-700 rounded-xl shadow-2xl w-[calc(100vw-2rem)] max-w-md sm:w-full sm:max-w-md mx-auto p-6 sm:p-8 data-[state=open]:animate-in data-[state=open]:zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:zoom-out-95">
           <div className="flex flex-col items-center justify-center gap-4 sm:gap-6">
             {/* Close button */}
             <div className="absolute top-4 right-4">

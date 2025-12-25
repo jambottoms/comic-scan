@@ -45,11 +45,16 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
   }, [isOpen, initialTab]);
 
   // Initialize camera when switching to record OR identify tab
+  // Defer camera start slightly to let the sheet animation complete first
   useEffect(() => {
     const shouldUseCamera = (activeTab === 'record' || activeTab === 'identify');
     
     if (isOpen && shouldUseCamera && !loading && !showUploadModal) {
-      startCamera();
+      // Small delay to let the sheet animation start first (snappier feel)
+      const timer = setTimeout(() => {
+        startCamera();
+      }, 50);
+      return () => clearTimeout(timer);
     } else {
       stopCamera();
     }
@@ -262,18 +267,27 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
     }, 200); // Match animation duration
   };
 
-  if (!isOpen) return null;
-
   const tabs = [
     { id: 'record', label: 'Record', icon: Video },
     { id: 'upload', label: 'Upload', icon: Upload },
     { id: 'identify', label: 'Identify', icon: ScanLine },
   ] as const;
 
+  // Always render but control visibility - this makes animations instant
+  const isVisible = isOpen && !isClosing;
+  const shouldShow = isOpen || isClosing; // Keep visible during close animation
+
   return (
-    <div className={`fixed inset-0 z-50 flex flex-col justify-end transition-all duration-200 ${isClosing ? 'bg-black/0' : 'bg-black/80'} backdrop-blur-sm animate-in fade-in`}>
+    <div 
+      className={`fixed inset-0 z-50 flex flex-col justify-end transition-all duration-150 ease-out ${
+        shouldShow ? 'pointer-events-auto' : 'pointer-events-none'
+      } ${isVisible ? 'bg-black/80' : 'bg-black/0'} backdrop-blur-sm`}
+      style={{ visibility: shouldShow ? 'visible' : 'hidden' }}
+    >
       <div 
-        className={`w-full bg-gray-900 border-t border-gray-800 rounded-t-3xl shadow-2xl overflow-hidden flex flex-col transition-all duration-200 ease-in-out ${isClosing ? 'translate-y-full' : 'translate-y-0'}`}
+        className={`w-full bg-gray-900 border-t border-gray-800 rounded-t-3xl shadow-2xl overflow-hidden flex flex-col transition-transform duration-200 ease-out ${
+          isVisible ? 'translate-y-0' : 'translate-y-full'
+        }`}
         style={{ height: '95vh' }}
       >
         

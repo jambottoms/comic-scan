@@ -45,3 +45,60 @@ input, textarea, [contenteditable] {
 body {
   overscroll-behavior-y: none;
 }
+
+/* Animation keyframes for dialog/sheet transitions */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes fadeOut {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+@keyframes zoomIn {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes zoomOut {
+  from { opacity: 1; transform: scale(1); }
+  to { opacity: 0; transform: scale(0.95); }
+}
+
+@keyframes slideInFromBottom {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+
+@keyframes slideOutToBottom {
+  from { transform: translateY(0); }
+  to { transform: translateY(100%); }
+}
+
+/* Radix UI Dialog animations */
+[data-state="open"].animate-in {
+  animation: fadeIn 150ms ease-out;
+}
+
+[data-state="closed"].animate-out {
+  animation: fadeOut 150ms ease-in;
+}
+
+[data-state="open"].zoom-in-95 {
+  animation: zoomIn 150ms ease-out;
+}
+
+[data-state="closed"].zoom-out-95 {
+  animation: zoomOut 150ms ease-in;
+}
+
+/* Sheet slide animations */
+.sheet-slide-up {
+  animation: slideInFromBottom 200ms ease-out;
+}
+
+.sheet-slide-down {
+  animation: slideOutToBottom 200ms ease-in;
+}

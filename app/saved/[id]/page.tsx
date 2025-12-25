@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { getSavedScanById, SavedScan } from '@/lib/saved-scans';
-import ResultCard from '@/components/ResultCard';
+import ResultSheet from '@/components/ResultSheet';
 
 export default function SavedScanPage() {
   const params = useParams();
@@ -25,39 +25,47 @@ export default function SavedScanPage() {
 
   // Handle deletion - redirect to saved page
   const handleDelete = () => {
-    router.push('/saved');
+    router.replace('/saved');
+  };
+
+  const handleClose = () => {
+    router.back();
   };
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-900 text-white p-4 flex items-center justify-center">
-        <div className="text-gray-400">Loading...</div>
+      <div className="min-h-screen bg-black text-white p-4 flex items-center justify-center">
+        <div className="text-gray-400 animate-pulse">Loading...</div>
       </div>
     );
   }
 
   if (!savedScan) {
     return (
-      <div className="min-h-screen bg-gray-900 text-white p-4 flex items-center justify-center">
+      <div className="min-h-screen bg-black text-white p-4 flex items-center justify-center">
         <div className="text-center">
           <h1 className="text-2xl font-bold text-red-400 mb-4">Saved Scan Not Found</h1>
           <p className="text-gray-400 mb-4">The saved scan you&apos;re looking for doesn&apos;t exist or has been deleted.</p>
-          <a href="/saved" className="text-purple-400 hover:text-purple-300 underline">
+          <button onClick={() => router.push('/saved')} className="text-purple-400 hover:text-purple-300 underline">
             Return to Saved Scans
-          </a>
+          </button>
         </div>
       </div>
     );
   }
 
   return (
-    <ResultCard 
-      result={savedScan.result} 
-      videoUrl={savedScan.video_url} 
-      thumbnail={savedScan.thumbnail || undefined}
-      savedScanId={savedScan.id}
-      onDelete={handleDelete}
-    />
+    <div className="min-h-screen bg-black">
+        <ResultSheet 
+            isOpen={true}
+            onClose={handleClose}
+            result={savedScan.result} 
+            videoUrl={savedScan.video_url} 
+            thumbnail={savedScan.thumbnail || undefined}
+            savedScanId={savedScan.id}
+            onDelete={handleDelete}
+        />
+    </div>
   );
 }
 

@@ -32,6 +32,11 @@ export default function VideoInvestigatorModal({
     }
   }, [open, timestamp, isLoaded]);
 
+  // Reset loaded state when video URL changes
+  useEffect(() => {
+    setIsLoaded(false);
+  }, [videoUrl]);
+
   // Handle video loaded
   const handleLoadedMetadata = () => {
     setIsLoaded(true);
@@ -51,8 +56,8 @@ export default function VideoInvestigatorModal({
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 bg-black/90 backdrop-blur-sm z-50" />
-        <Dialog.Content className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4">
+        <Dialog.Overlay className="fixed inset-0 bg-black/90 backdrop-blur-sm z-50 data-[state=open]:animate-in data-[state=closed]:animate-out" />
+        <Dialog.Content className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 data-[state=open]:animate-in data-[state=open]:zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:zoom-out-95">
           <div className="relative w-full h-full sm:h-auto sm:max-h-[90vh] sm:max-w-6xl bg-gray-900 rounded-lg sm:rounded-xl border border-gray-700 overflow-hidden flex flex-col">
             {/* Header */}
             <div className="absolute top-0 left-0 right-0 bg-gradient-to-b from-black/90 to-transparent p-3 sm:p-4 z-10 flex items-center justify-between gap-2">
@@ -80,6 +85,7 @@ export default function VideoInvestigatorModal({
                 ref={videoRef}
                 src={videoUrl}
                 controls
+                preload="metadata"
                 className="w-full h-full max-h-[calc(100vh-4rem)] sm:max-h-[calc(90vh-6rem)] object-contain rounded-lg"
                 onLoadedMetadata={handleLoadedMetadata}
                 onSeeked={() => {

@@ -12,9 +12,10 @@ interface ResultCardProps {
   thumbnail?: string;
   savedScanId?: string; // If viewing from saved scans
   onDelete?: () => void; // Callback when deleted from saved
+  embedded?: boolean; // If true, remove internal padding/margins that might conflict with sheet
 }
 
-export default function ResultCard({ result, videoUrl, thumbnail, savedScanId, onDelete }: ResultCardProps) {
+export default function ResultCard({ result, videoUrl, thumbnail, savedScanId, onDelete, embedded = false }: ResultCardProps) {
   const previewVideoRef = useRef<HTMLVideoElement>(null);
   const [investigatorOpen, setInvestigatorOpen] = useState(false);
   const [selectedTimestamp, setSelectedTimestamp] = useState<number>(0);
@@ -311,16 +312,18 @@ export default function ResultCard({ result, videoUrl, thumbnail, savedScanId, o
   const issue = result.issue ? `#${result.issue}` : "Unknown Issue";
 
   return (
-    <div className="min-h-screen bg-gray-900 text-white p-4 flex flex-col items-center overflow-y-auto">
-      {/* Back to Dashboard Button */}
-      <div className="w-full max-w-2xl mb-4">
-        <Link
-          href="/"
-          className="inline-flex items-center text-purple-400 hover:text-purple-300 transition-colors text-sm font-medium"
-        >
-          ← Back to Dashboard
-        </Link>
-      </div>
+    <div className={`w-full max-w-2xl flex flex-col items-center ${embedded ? '' : 'min-h-screen bg-gray-900 text-white p-4 overflow-y-auto'}`}>
+      {/* Back to Dashboard Button - Only if NOT embedded */}
+      {!embedded && (
+        <div className="w-full max-w-2xl mb-4">
+          <Link
+            href="/"
+            className="inline-flex items-center text-purple-400 hover:text-purple-300 transition-colors text-sm font-medium"
+          >
+            ← Back to Dashboard
+          </Link>
+        </div>
+      )}
 
       {/* Video Preview - Show above results in smaller landscape box */}
       {videoUrl && (
