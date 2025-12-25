@@ -1,14 +1,15 @@
 'use client';
 
 import { useState } from 'react';
-import { Plus, BookOpen, ScanLine } from 'lucide-react';
+import { Plus, Upload, Video, ScanLine, Search } from 'lucide-react';
 
 interface FabMenuProps {
-  onGradeBook: () => void;
-  onAddBook: () => void;
+  onRecord: () => void;
+  onUpload: () => void;
+  onIdentify: () => void;
 }
 
-export default function FabMenu({ onGradeBook, onAddBook }: FabMenuProps) {
+export default function FabMenu({ onRecord, onUpload, onIdentify }: FabMenuProps) {
   const [isOpen, setIsOpen] = useState(false);
 
   return (
@@ -23,27 +24,43 @@ export default function FabMenu({ onGradeBook, onAddBook }: FabMenuProps) {
 
       {/* Menu Items */}
       <div className={`flex flex-col items-end gap-3 transition-all duration-200 ${isOpen ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 pointer-events-none'}`}>
+        
+        {/* Record Option */}
         <button 
-          onClick={() => { onGradeBook(); setIsOpen(false); }} 
+          onClick={() => { onRecord(); setIsOpen(false); }} 
           className="group flex items-center gap-3"
         >
-          <span className="bg-gray-900 text-white px-3 py-1.5 rounded-lg text-sm font-medium shadow-lg opacity-0 group-hover:opacity-100 transition-opacity">
-            Grade Book
+          <span className="bg-gray-900 text-white px-3 py-1.5 rounded-lg text-sm font-medium shadow-lg">
+            Record
           </span>
-          <div className="bg-purple-600 hover:bg-purple-500 text-white p-3 rounded-full shadow-lg transition-colors">
-            <ScanLine size={24} />
+          <div className="bg-red-600 hover:bg-red-500 text-white p-3 rounded-full shadow-lg transition-colors">
+            <Video size={24} />
           </div>
         </button>
 
+        {/* Upload Option */}
         <button 
-          onClick={() => { onAddBook(); setIsOpen(false); }} 
+          onClick={() => { onUpload(); setIsOpen(false); }} 
           className="group flex items-center gap-3"
         >
-          <span className="bg-gray-900 text-white px-3 py-1.5 rounded-lg text-sm font-medium shadow-lg opacity-0 group-hover:opacity-100 transition-opacity">
-            Add to Collection
+          <span className="bg-gray-900 text-white px-3 py-1.5 rounded-lg text-sm font-medium shadow-lg">
+            Upload
           </span>
           <div className="bg-blue-600 hover:bg-blue-500 text-white p-3 rounded-full shadow-lg transition-colors">
-            <BookOpen size={24} />
+            <Upload size={24} />
+          </div>
+        </button>
+
+        {/* Identify Option */}
+        <button 
+          onClick={() => { onIdentify(); setIsOpen(false); }} 
+          className="group flex items-center gap-3"
+        >
+          <span className="bg-gray-900 text-white px-3 py-1.5 rounded-lg text-sm font-medium shadow-lg">
+            Identify
+          </span>
+          <div className="bg-purple-600 hover:bg-purple-500 text-white p-3 rounded-full shadow-lg transition-colors">
+            <Search size={24} />
           </div>
         </button>
       </div>
@@ -58,4 +75,3 @@ export default function FabMenu({ onGradeBook, onAddBook }: FabMenuProps) {
     </div>
   );
 }
-

@@ -12,9 +12,10 @@ interface GradeBookModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess: (historyId: string) => void;
+  initialTab?: 'record' | 'upload';
 }
 
-export default function GradeBookModal({ isOpen, onClose, onSuccess }: GradeBookModalProps) {
+export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab = 'record' }: GradeBookModalProps) {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<'record' | 'upload'>('record');
   const [loading, setLoading] = useState(false);
@@ -34,6 +35,13 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess }: GradeBook
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [uploadMessage, setUploadMessage] = useState('Uploading and processing...');
   const uploadXhrRef = useRef<XMLHttpRequest | null>(null);
+
+  // Reset/Sync tab when opening
+  useEffect(() => {
+    if (isOpen) {
+      setActiveTab(initialTab);
+    }
+  }, [isOpen, initialTab]);
 
   // Initialize camera when switching to record tab
   useEffect(() => {
@@ -100,9 +108,6 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess }: GradeBook
       }
 
       setError(errorMessage);
-      
-      // Optional: Auto-switch to upload on fatal errors?
-      // For now, let user see error and decide.
     }
   };
 
@@ -379,4 +384,3 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess }: GradeBook
     </div>
   );
 }
-

@@ -22,6 +22,7 @@ export default function Dashboard() {
   
   // Modal State
   const [isGradeBookOpen, setIsGradeBookOpen] = useState(false);
+  const [initialTab, setInitialTab] = useState<'record' | 'upload'>('record');
 
   // Load history only on client side after mount to prevent hydration mismatch
   useEffect(() => {
@@ -52,9 +53,21 @@ export default function Dashboard() {
     router.push(`/results/${historyId}`);
   };
 
-  const handleAddBook = () => {
-    // Placeholder for now
-    console.log("Add Book clicked");
+  const handleRecord = () => {
+    setInitialTab('record');
+    setIsGradeBookOpen(true);
+  };
+
+  const handleUpload = () => {
+    setInitialTab('upload');
+    setIsGradeBookOpen(true);
+  };
+
+  const handleIdentify = () => {
+    // Placeholder for identify functionality
+    console.log("Identify clicked");
+    // For now, maybe just open record mode? Or do nothing?
+    // Let's leave it as a log for now until functionality is defined.
   };
 
   // Format date for display
@@ -150,14 +163,16 @@ export default function Dashboard() {
       </div>
 
       <FabMenu 
-        onGradeBook={() => setIsGradeBookOpen(true)}
-        onAddBook={handleAddBook}
+        onRecord={handleRecord}
+        onUpload={handleUpload}
+        onIdentify={handleIdentify}
       />
 
       <GradeBookModal 
         isOpen={isGradeBookOpen}
         onClose={() => setIsGradeBookOpen(false)}
         onSuccess={handleGradeSuccess}
+        initialTab={initialTab}
       />
     </main>
   );
