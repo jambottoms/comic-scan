@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { X, Upload, Video, Camera, Search, ScanLine } from 'lucide-react';
+import { X, Upload, Video, Camera, Search, ScanLine, ChevronDown } from 'lucide-react';
 import { uploadToSupabaseWithProgress } from '@/lib/supabase/upload-with-progress';
 import { analyzeComicFromUrl } from '@/app/actions/analyze-from-url';
 import { addToHistory, generateThumbnail } from '@/lib/history';
@@ -43,9 +43,11 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
     }
   }, [isOpen, initialTab]);
 
-  // Initialize camera when switching to record tab
+  // Initialize camera when switching to record OR identify tab
   useEffect(() => {
-    if (isOpen && activeTab === 'record' && !loading && !showUploadModal) {
+    const shouldUseCamera = (activeTab === 'record' || activeTab === 'identify');
+    
+    if (isOpen && shouldUseCamera && !loading && !showUploadModal) {
       startCamera();
     } else {
       stopCamera();
@@ -67,10 +69,11 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
       
       const constraints = {
         video: { 
+          // Request vertical-ish resolution for mobile full screen feel, or just high res
           width: { ideal: 1920, min: 1280 },
           height: { ideal: 1080, min: 720 },
           facingMode: 'environment',
-          aspectRatio: 16 / 9,
+        //   aspectRatio: 16 / 9, // Let it be natural aspect ratio to fill screen better
         },
         audio: false,
       };
@@ -254,25 +257,27 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
   const tabs = [
     { id: 'record', label: 'Record', icon: Video },
     { id: 'upload', label: 'Upload', icon: Upload },
-    { id: 'identify', label: 'Scan', icon: ScanLine },
+    { id: 'identify', label: 'Identify', icon: ScanLine },
   ] as const;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 animate-in fade-in duration-200">
-      <div className="bg-gray-900 border border-gray-800 rounded-2xl w-full max-w-lg max-h-[90vh] overflow-hidden flex flex-col shadow-2xl">
+    <div className="fixed inset-0 z-50 flex flex-col justify-end bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+      <div 
+        className="w-full bg-gray-900 border-t border-gray-800 rounded-t-3xl shadow-2xl overflow-hidden flex flex-col"
+        style={{ height: '95vh' }}
+      >
         
         {/* Header */}
-        <div className="p-4 border-b border-gray-800 flex items-center justify-between bg-gray-900/50 backdrop-blur">
-            <h2 className="text-xl font-bold text-white">Grade Book</h2>
+        <div className="p-4 flex items-center justify-between bg-gray-900 z-20 relative">
+            <h2 className="text-xl font-bold text-white pl-2">Grade Book</h2>
             <button onClick={onClose} className="p-2 hover:bg-gray-800 rounded-full text-gray-400 hover:text-white transition-colors">
-                <X size={20} />
+                <ChevronDown size={28} />
             </button>
         </div>
 
         {/* Segmented Control */}
-        <div className="p-4 bg-gray-900">
+        <div className="px-6 pb-4 bg-gray-900 z-20 relative">
           <div className="flex p-1 bg-gray-800 rounded-xl relative">
-             {/* Active Tab Indicator Background - Optional fancy animation, or just rely on bg color change */}
              {tabs.map((tab) => {
                const Icon = tab.icon;
                const isActive = activeTab === tab.id;
@@ -280,7 +285,7 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
                  <button
                    key={tab.id}
                    onClick={() => setActiveTab(tab.id)}
-                   className={`flex-1 flex items-center justify-center gap-2 py-2.5 text-sm font-medium rounded-lg transition-all z-10 ${
+                   className={`flex-1 flex items-center justify-center gap-2 py-2.5 text-sm font-medium rounded-lg transition-all duration-200 ${
                      isActive 
                        ? 'bg-gray-700 text-white shadow-sm' 
                        : 'text-gray-400 hover:text-gray-200'
@@ -294,48 +299,79 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
           </div>
         </div>
 
-        {/* Content */}
-        <div className="flex-1 overflow-y-auto p-4 flex flex-col items-center justify-center min-h-[300px]">
+        {/* Content Area - Full height relative */}
+        <div className="flex-1 relative bg-black flex flex-col overflow-hidden">
             
-            {/* Record View */}
-            {activeTab === 'record' && (
-                <div className="w-full flex flex-col items-center gap-4">
-                    <div className="relative w-full aspect-video bg-black rounded-xl overflow-hidden border border-gray-800">
+            {/* Record & Identify View (Camera) */}
+            {(activeTab === 'record' || activeTab === 'identify') && (
+                <div className="absolute inset-0 flex flex-col">
+                    {/* Camera Feed - Fills available space */}
+                    <div className="flex-1 relative bg-black overflow-hidden">
                         {!loading && (
                             <video
                                 ref={videoRef}
                                 autoPlay
                                 playsInline
                                 muted
-                                className={`w-full h-full object-cover ${isRecording ? 'border-2 border-red-500' : ''}`}
+                                className={`w-full h-full object-cover ${isRecording ? 'opacity-90' : ''}`}
                             />
                         )}
-                        {isRecording && (
-                             <div className="absolute top-4 right-4 flex items-center gap-2 bg-black/60 px-3 py-1 rounded-full text-red-500 font-mono text-sm">
-                                <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                        
+                        {/* Recording Timer Overlay */}
+                        {isRecording && activeTab === 'record' && (
+                             <div className="absolute top-6 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-red-600/90 text-white px-4 py-1.5 rounded-full font-mono text-sm shadow-lg z-10">
+                                <div className="w-2 h-2 rounded-full bg-white animate-pulse" />
                                 {Math.floor(recordingTime / 60)}:{(recordingTime % 60).toString().padStart(2, '0')}
+                            </div>
+                        )}
+
+                        {/* Identify Overlay Grid (Optional visual aid) */}
+                        {activeTab === 'identify' && !loading && (
+                            <div className="absolute inset-0 border-2 border-purple-500/30 pointer-events-none">
+                                <div className="absolute inset-0 flex items-center justify-center">
+                                    <div className="w-64 h-80 border-2 border-purple-400 rounded-lg shadow-[0_0_15px_rgba(168,85,247,0.5)] bg-transparent" />
+                                </div>
+                                <div className="absolute bottom-20 w-full text-center text-white/70 text-sm font-medium shadow-black drop-shadow-md">
+                                    Position comic cover in frame
+                                </div>
                             </div>
                         )}
                     </div>
 
-                    <div className="flex gap-4 w-full">
-                        {!isRecording ? (
-                            <button
-                                onClick={startRecording}
-                                disabled={loading}
-                                className="w-full py-4 bg-red-600 hover:bg-red-500 text-white font-bold rounded-xl flex items-center justify-center gap-2 transition-all active:scale-[0.98]"
-                            >
-                                <div className="w-4 h-4 rounded-full bg-white" />
-                                Start Recording
-                            </button>
-                        ) : (
-                            <button
-                                onClick={stopRecording}
-                                className="w-full py-4 bg-gray-800 hover:bg-gray-700 text-white font-bold rounded-xl flex items-center justify-center gap-2 transition-all active:scale-[0.98]"
-                            >
-                                <div className="w-4 h-4 rounded bg-red-500" />
-                                Stop Recording
-                            </button>
+                    {/* Controls Bar - Floating at bottom */}
+                    <div className="absolute bottom-0 left-0 right-0 p-6 sm:p-8 bg-gradient-to-t from-black/90 via-black/60 to-transparent pt-12">
+                        {activeTab === 'record' && (
+                             <div className="flex justify-center items-center w-full">
+                                {!isRecording ? (
+                                    <button
+                                        onClick={startRecording}
+                                        disabled={loading}
+                                        className="w-20 h-20 bg-white rounded-full flex items-center justify-center border-4 border-gray-300 shadow-lg active:scale-95 transition-transform"
+                                    >
+                                        <div className="w-16 h-16 bg-red-600 rounded-full" />
+                                    </button>
+                                ) : (
+                                    <button
+                                        onClick={stopRecording}
+                                        className="w-20 h-20 bg-white rounded-full flex items-center justify-center border-4 border-gray-300 shadow-lg active:scale-95 transition-transform"
+                                    >
+                                        <div className="w-8 h-8 bg-red-600 rounded-sm" />
+                                    </button>
+                                )}
+                            </div>
+                        )}
+
+                        {activeTab === 'identify' && (
+                            <div className="flex justify-center items-center w-full">
+                                <button
+                                    onClick={() => alert("Identify capture coming soon!")}
+                                    className="w-20 h-20 bg-white rounded-full flex items-center justify-center border-4 border-gray-300 shadow-lg active:scale-95 transition-transform"
+                                >
+                                    <div className="w-16 h-16 bg-purple-600 rounded-full flex items-center justify-center">
+                                        <Search className="text-white" size={32} />
+                                    </div>
+                                </button>
+                            </div>
                         )}
                     </div>
                 </div>
@@ -343,18 +379,18 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
 
             {/* Upload View */}
             {activeTab === 'upload' && (
-                <div className="w-full flex flex-col items-center gap-6 py-8">
-                    <div className="w-24 h-24 bg-gray-800 rounded-full flex items-center justify-center text-gray-600 mb-2">
-                        <Upload size={40} />
+                <div className="w-full h-full flex flex-col items-center justify-center gap-6 p-8 bg-gray-900">
+                    <div className="w-32 h-32 bg-gray-800 rounded-full flex items-center justify-center text-gray-600 mb-4">
+                        <Upload size={56} />
                     </div>
-                    <div className="text-center space-y-2">
-                        <h3 className="text-lg font-medium text-white">Upload Video</h3>
-                        <p className="text-gray-400 text-sm max-w-[260px] mx-auto">
-                            Select a video file from your device to analyze. Max 100MB.
+                    <div className="text-center space-y-3">
+                        <h3 className="text-2xl font-bold text-white">Upload Video</h3>
+                        <p className="text-gray-400 max-w-xs mx-auto text-base leading-relaxed">
+                            Select a video file from your device to analyze.
                         </p>
                     </div>
                     
-                    <label className="w-full">
+                    <label className="w-full max-w-sm mt-4">
                         <input 
                             type="file" 
                             accept="video/*" 
@@ -362,41 +398,29 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
                             onChange={handleFileUpload}
                             disabled={loading} 
                         />
-                        <div className="w-full py-4 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl flex items-center justify-center gap-2 cursor-pointer transition-all active:scale-[0.98]">
-                            Select File
+                        <div className="w-full py-4 bg-blue-600 hover:bg-blue-500 text-white text-lg font-bold rounded-2xl flex items-center justify-center gap-3 cursor-pointer transition-all active:scale-[0.98] shadow-lg shadow-blue-900/20">
+                            <Upload size={24} />
+                            Select Video File
                         </div>
                     </label>
                 </div>
             )}
 
-            {/* Identify/Scan View */}
-            {activeTab === 'identify' && (
-                <div className="w-full flex flex-col items-center gap-6 py-8">
-                    <div className="w-24 h-24 bg-gray-800 rounded-full flex items-center justify-center text-gray-600 mb-2">
-                        <ScanLine size={40} />
-                    </div>
-                    <div className="text-center space-y-2">
-                        <h3 className="text-lg font-medium text-white">Scan Comic</h3>
-                        <p className="text-gray-400 text-sm max-w-[260px] mx-auto">
-                           Identify comic issues by scanning the cover. Feature coming soon.
-                        </p>
-                    </div>
-                     <div className="w-full py-4 bg-gray-800 text-gray-500 font-bold rounded-xl flex items-center justify-center gap-2 cursor-not-allowed">
-                        Coming Soon
-                    </div>
-                </div>
-            )}
-
-            {/* Error Message */}
+            {/* Error Overlay */}
             {error && (
-                <div className="mt-4 p-3 bg-red-500/20 border border-red-500/50 rounded-lg text-red-200 text-sm w-full">
-                    {error}
+                <div className="absolute top-4 left-4 right-4 z-50 animate-in slide-in-from-top-4 fade-in">
+                    <div className="bg-red-500/90 backdrop-blur border border-red-500 text-white px-4 py-3 rounded-xl shadow-xl flex items-start gap-3">
+                        <div className="bg-white/20 p-1 rounded-full shrink-0 mt-0.5">
+                            <X size={16} />
+                        </div>
+                        <p className="text-sm font-medium">{error}</p>
+                    </div>
                 </div>
             )}
         </div>
       </div>
 
-      {/* Upload Progress Modal - Reusing the existing one but handling state internally */}
+      {/* Upload Progress Modal */}
       <UploadProgressModal 
         open={showUploadModal}
         onOpenChange={(open) => !open && setShowUploadModal(false)}

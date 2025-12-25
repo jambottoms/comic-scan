@@ -64,10 +64,8 @@ export default function Dashboard() {
   };
 
   const handleIdentify = () => {
-    // Placeholder for identify functionality
-    console.log("Identify clicked");
-    // For now, maybe just open record mode? Or do nothing?
-    // Let's leave it as a log for now until functionality is defined.
+    setInitialTab('identify');
+    setIsGradeBookOpen(true);
   };
 
   // Format date for display
