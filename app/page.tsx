@@ -3,9 +3,10 @@
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { uploadToSupabase } from '@/lib/supabase/upload';
+import { uploadToSupabaseWithProgress } from '@/lib/supabase/upload-with-progress';
 import { analyzeComicFromUrl } from './actions/analyze-from-url';
 import { getVideoHistory, addToHistory, generateThumbnail } from '@/lib/history';
+import UploadProgressModal from '@/components/UploadProgressModal';
 
 interface VersionInfo {
   version: string;
@@ -22,6 +23,8 @@ export default function Dashboard() {
   const [recordingTime, setRecordingTime] = useState(0);
   const [versionInfo, setVersionInfo] = useState<VersionInfo | null>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [showUploadModal, setShowUploadModal] = useState(false);
+  const [uploadMessage, setUploadMessage] = useState('Uploading and processing...');
   const [history, setHistory] = useState(getVideoHistory());
   
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -126,6 +129,8 @@ export default function Dashboard() {
         setLoading(true);
         setError(null);
         setUploadProgress(0);
+        setShowUploadModal(true);
+        setUploadMessage('Uploading video...');
         
         const fileSizeMB = (blob.size / 1024 / 1024).toFixed(2);
         console.log(`Uploading recorded video: ${fileSizeMB}MB`);
@@ -133,21 +138,30 @@ export default function Dashboard() {
         const file = new File([blob], "comic-video.webm", { type: "video/webm" });
 
         try {
-          console.log("Step 1: Uploading recorded video to Supabase Storage...");
-          setUploadProgress(10);
+          console.log("Step 1: Uploading recorded video to Supabase Storage with progress tracking...");
           
-          const supabaseUrl = await uploadToSupabase(file);
+          // Upload with progress tracking (0-80% for upload)
+          const supabaseUrl = await uploadToSupabaseWithProgress(
+            file,
+            (progress) => {
+              // Map upload progress to 0-80% of total
+              setUploadProgress(progress * 0.8);
+            }
+          );
           console.log("Recorded video uploaded to Supabase:", supabaseUrl);
-          setUploadProgress(50);
           
           console.log("Step 2: Sending URL to server for analysis...");
-          setUploadProgress(60);
+          setUploadMessage('Processing video...');
+          setUploadProgress(85);
           
           const result = await analyzeComicFromUrl(supabaseUrl, normalizeMimeTypeForGemini(file.type || 'video/mp4'));
           console.log("Analysis complete, received result:", result);
-          setUploadProgress(90);
+          setUploadProgress(95);
           
           if (result.success) {
+            setUploadMessage('Generating thumbnail...');
+            setUploadProgress(98);
+            
             // Generate thumbnail
             const thumbnail = await generateThumbnail(videoUrl);
             
@@ -163,8 +177,11 @@ export default function Dashboard() {
             
             setUploadProgress(100);
             
-            // Redirect to results page
-            router.push(`/results/${historyId}`);
+            // Close modal and redirect after brief delay
+            setTimeout(() => {
+              setShowUploadModal(false);
+              router.push(`/results/${historyId}`);
+            }, 500);
           } else {
             let errorMessage = result.error;
             
@@ -177,6 +194,7 @@ export default function Dashboard() {
             }
             
             setError(errorMessage);
+            setShowUploadModal(false);
             URL.revokeObjectURL(videoUrl);
           }
         } catch (err) {
@@ -198,10 +216,13 @@ export default function Dashboard() {
           }
           
           setError(errorMessage);
+          setShowUploadModal(false);
           URL.revokeObjectURL(videoUrl);
         } finally {
           setLoading(false);
-          setUploadProgress(0);
+          if (!showUploadModal) {
+            setUploadProgress(0);
+          }
           uploadXhrRef.current = null;
         }
       };
@@ -263,6 +284,8 @@ export default function Dashboard() {
     setLoading(true);
     setError(null);
     setUploadProgress(0);
+    setShowUploadModal(true);
+    setUploadMessage('Uploading video...');
 
     // Create video preview for thumbnail
     const videoUrl = URL.createObjectURL(file);
@@ -271,21 +294,30 @@ export default function Dashboard() {
     console.log(`Uploading video for analysis: ${fileSizeMB}MB`);
 
     try {
-      console.log("Step 1: Uploading to Supabase Storage...");
-      setUploadProgress(10);
+      console.log("Step 1: Uploading to Supabase Storage with progress tracking...");
       
-      const supabaseUrl = await uploadToSupabase(file);
+      // Upload with progress tracking (0-80% for upload)
+      const supabaseUrl = await uploadToSupabaseWithProgress(
+        file,
+        (progress) => {
+          // Map upload progress to 0-80% of total
+          setUploadProgress(progress * 0.8);
+        }
+      );
       console.log("File uploaded to Supabase:", supabaseUrl);
-      setUploadProgress(50);
       
       console.log("Step 2: Sending to server for analysis...");
-      setUploadProgress(60);
+      setUploadMessage('Processing video...');
+      setUploadProgress(85);
       
       const result = await analyzeComicFromUrl(supabaseUrl, normalizeMimeTypeForGemini(file.type || 'video/mp4'));
       console.log("Analysis complete, received result:", result);
-      setUploadProgress(90);
+      setUploadProgress(95);
       
       if (result.success) {
+        setUploadMessage('Generating thumbnail...');
+        setUploadProgress(98);
+        
         // Generate thumbnail
         const thumbnail = await generateThumbnail(videoUrl);
         
@@ -304,9 +336,12 @@ export default function Dashboard() {
         // Clean up local video URL
         URL.revokeObjectURL(videoUrl);
         
-        // Refresh history and redirect to results page
-        setHistory(getVideoHistory());
-        router.push(`/results/${historyId}`);
+        // Close modal and redirect after brief delay
+        setTimeout(() => {
+          setShowUploadModal(false);
+          setHistory(getVideoHistory());
+          router.push(`/results/${historyId}`);
+        }, 500);
       } else {
         let errorMessage = result.error;
         
@@ -513,37 +548,12 @@ export default function Dashboard() {
         </div>
       )}
 
-      {loading && (
-        <div className="w-full max-w-md mb-4">
-          <div className="text-blue-400 font-semibold text-base sm:text-lg mb-3 text-center">
-            <div className="animate-pulse">Analyzing video...</div>
-          </div>
-          
-          <div className="w-full bg-gray-700 rounded-full h-3 mb-2">
-            <div
-              className="bg-purple-500 h-3 rounded-full transition-all duration-300 ease-out"
-              style={{ width: `${uploadProgress}%` }}
-            />
-          </div>
-          
-          {uploadProgress > 0 && (
-            <div className="text-center text-sm text-gray-400">
-              {uploadProgress}% complete
-            </div>
-          )}
-          
-          <div className="text-xs text-gray-500 mt-2 text-center mb-3">
-            {uploadProgress < 100 ? 'Uploading and processing...' : 'Finalizing analysis...'}
-          </div>
-          
-          <button
-            onClick={cancelUpload}
-            className="w-full bg-gray-600 hover:bg-gray-500 active:bg-gray-700 text-white font-bold py-2 px-4 rounded-full text-sm transition"
-          >
-            ✕ Cancel Upload
-          </button>
-        </div>
-      )}
+      {/* Upload Progress Modal */}
+      <UploadProgressModal 
+        open={showUploadModal} 
+        progress={uploadProgress}
+        message={uploadMessage}
+      />
 
       {/* Error Message */}
       {error && (

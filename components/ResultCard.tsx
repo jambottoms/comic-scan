@@ -1,7 +1,8 @@
 'use client';
 
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import Link from 'next/link';
+import VideoInvestigatorModal from './VideoInvestigatorModal';
 
 interface ResultCardProps {
   result: any;
@@ -10,16 +11,13 @@ interface ResultCardProps {
 
 export default function ResultCard({ result, videoUrl }: ResultCardProps) {
   const previewVideoRef = useRef<HTMLVideoElement>(null);
+  const [investigatorOpen, setInvestigatorOpen] = useState(false);
+  const [selectedTimestamp, setSelectedTimestamp] = useState<number>(0);
 
-  // Function to seek video to timestamp and pause
-  const seekToTimestamp = (seconds: number) => {
-    if (previewVideoRef.current) {
-      const video = previewVideoRef.current;
-      video.currentTime = seconds;
-      video.pause();
-      // Scroll video into view
-      video.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }
+  // Function to open Video Investigator modal at timestamp
+  const openInvestigator = (seconds: number) => {
+    setSelectedTimestamp(seconds);
+    setInvestigatorOpen(true);
   };
 
   // Parse timestamp from text (supports formats like "0:15", "15s", "1:30", etc.)
@@ -319,9 +317,9 @@ export default function ResultCard({ result, videoUrl }: ResultCardProps) {
                       {bullet.text}
                       {bullet.timestamp !== null && (
                         <button
-                          onClick={() => seekToTimestamp(bullet.timestamp!)}
+                          onClick={() => openInvestigator(bullet.timestamp!)}
                           className="ml-2 text-purple-400 hover:text-purple-300 underline text-xs font-medium transition-colors"
-                          title={`Jump to ${formatTimestamp(bullet.timestamp)}`}
+                          title={`View frame at ${formatTimestamp(bullet.timestamp)}`}
                         >
                           [{formatTimestamp(bullet.timestamp)}]
                         </button>
@@ -358,6 +356,16 @@ export default function ResultCard({ result, videoUrl }: ResultCardProps) {
           </div>
         )}
       </div>
+
+      {/* Video Investigator Modal */}
+      {videoUrl && (
+        <VideoInvestigatorModal
+          open={investigatorOpen}
+          onOpenChange={setInvestigatorOpen}
+          videoUrl={videoUrl}
+          timestamp={selectedTimestamp}
+        />
+      )}
     </div>
   );
 }
