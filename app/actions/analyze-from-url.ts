@@ -1,6 +1,7 @@
 'use server';
 
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { uploadToGoogleFileAPI } from "@/lib/google/file-api";
 
 /**
  * Result type for server action - returns success/error instead of throwing
@@ -68,10 +69,6 @@ export async function analyzeComicFromUrl(videoUrl: string, mimeType?: string): 
     const fileSizeMB = (arrayBuffer.byteLength / 1024 / 1024).toFixed(2);
     console.log(`[Server Action] Video downloaded: ${fileSizeMB}MB`);
     
-    const buffer = Buffer.from(arrayBuffer);
-    const base64Video = buffer.toString("base64");
-    console.log(`[Server Action] Video converted to base64: ${(base64Video.length / 1024 / 1024).toFixed(2)}MB`);
-    
     // Determine mimeType
     let finalMimeType = mimeType || 'video/mp4';
     if (!mimeType) {
@@ -93,6 +90,47 @@ export async function analyzeComicFromUrl(videoUrl: string, mimeType?: string): 
     
     console.log(`[Server Action] MIME type: ${finalMimeType}`);
     
+    // For large files (>20MB), use Google File API to avoid token limits
+    // This preserves full video quality without compression
+    const binarySizeMB = parseFloat(fileSizeMB);
+    const useFileAPI = binarySizeMB > 20;
+    
+    let fileUri: string | null = null;
+    let base64Video: string | null = null;
+    
+    if (useFileAPI) {
+      // Upload to Google File API for large videos (preserves quality, avoids token limits)
+      console.log(`[Server Action] File is large (${fileSizeMB}MB), uploading to Google File API...`);
+      
+      try {
+        // Convert ArrayBuffer to Blob for upload
+        const blob = new Blob([arrayBuffer], { type: finalMimeType });
+        const file = new File([blob], 'comic-video', { type: finalMimeType });
+        
+        fileUri = await uploadToGoogleFileAPI(file, apiKey);
+        console.log(`[Server Action] File uploaded to Google File API: ${fileUri}`);
+      } catch (fileApiError) {
+        console.error(`[Server Action] Google File API upload failed:`, fileApiError);
+        // For very large files, fail if File API doesn't work
+        if (binarySizeMB > 50) {
+          return {
+            success: false,
+            error: `File is too large (${fileSizeMB}MB) and Google File API upload failed. Please try a shorter video (under 30 seconds). Error: ${fileApiError instanceof Error ? fileApiError.message : String(fileApiError)}`
+          };
+        }
+        // For medium files, fall back to base64 (may cause 500 error)
+        console.log(`[Server Action] Falling back to base64 inline (may cause 500 error)...`);
+        const buffer = Buffer.from(arrayBuffer);
+        base64Video = buffer.toString("base64");
+      }
+    } else {
+      // For small files, use base64 inline (faster)
+      console.log(`[Server Action] File is small (${fileSizeMB}MB), using base64 inline...`);
+      const buffer = Buffer.from(arrayBuffer);
+      base64Video = buffer.toString("base64");
+      console.log(`[Server Action] Base64 size: ${(base64Video.length / 1024 / 1024).toFixed(2)}MB`);
+    }
+    
     // Initialize Google Generative AI
     const genAI = new GoogleGenerativeAI(apiKey);
     
@@ -111,20 +149,36 @@ export async function analyzeComicFromUrl(videoUrl: string, mimeType?: string): 
       setTimeout(() => reject(new Error("Video analysis timed out after 60 seconds. The video may be too long or the API is slow. Please try a shorter video.")), 60000);
     });
 
-    // Use base64 inline data (NOTE: This may cause 500 errors for very large files)
-    // TODO: Implement Google File API upload when SDK properly supports it
-    console.log("[Server Action] Sending video to Gemini API (base64 inline)...");
-    const payload = [
-      {
+    // Build payload - use file URI if available, otherwise base64
+    console.log(`[Server Action] Sending video to Gemini API (${fileUri ? 'File API reference' : 'base64 inline'})...`);
+    const payload: any[] = [];
+    
+    if (fileUri) {
+      // Use Google File API reference (no token limit issues)
+      payload.push({
+        fileData: {
+          fileUri: fileUri,
+          mimeType: finalMimeType
+        }
+      });
+    } else if (base64Video) {
+      // Use base64 inline (for small files)
+      payload.push({
         inlineData: {
           data: base64Video,
           mimeType: finalMimeType
         }
-      },
-      {
-        text: "Analyze this comic book video. Look at all frames to identify the comic and assess its condition."
-      }
-    ];
+      });
+    } else {
+      return {
+        success: false,
+        error: 'Failed to prepare video data for analysis'
+      };
+    }
+    
+    payload.push({
+      text: "Analyze this comic book video. Look at all frames to identify the comic and assess its condition."
+    });
     
     // Generate content with the model
     const analysisPromise = model.generateContent(payload);
