@@ -251,15 +251,7 @@ export default function Home() {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    // Detect MIME type (iOS Photos often has empty/incorrect file.type)
-    const detectedMimeType = detectMimeType(file);
-    console.log(`[File Upload] File info:`, {
-      name: file.name,
-      size: `${(file.size / 1024 / 1024).toFixed(2)}MB`,
-      reportedType: file.type || '(empty)',
-      detectedType: detectedMimeType,
-      extension: file.name.split('.').pop() || '(none)'
-    });
+    console.log(`[File Upload] File: ${file.name}, ${(file.size / 1024 / 1024).toFixed(2)}MB, type: ${file.type || '(empty)'}`);
 
     // Check file size before upload
     // Next.js config allows up to 100MB locally
@@ -329,7 +321,7 @@ export default function Home() {
           errorMessage += " The video is still processing. Please wait and try again.";
         } else if (errorMessage.includes("too large") || errorMessage.includes("size")) {
           // iOS files might have size detection issues
-          errorMessage += ` (File: ${file.name}, Size: ${uploadFileSizeMB}MB, Type: ${detectedMimeType})`;
+          errorMessage += ` (File: ${file.name}, Size: ${uploadFileSizeMB}MB, Type: ${file.type || '(empty)'})`;
         }
         
         setError(errorMessage);
