@@ -1,9 +1,29 @@
 'use server';
 
+// Environment Fix: Use createRequire for ESM compatibility
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import { uploadFileToGoogleFileAPI } from "@/lib/google/file-api";
-import { normalizeVideoFromUrl } from "@/lib/video/normalize";
-import { unlink, stat } from 'fs/promises';
+import { GoogleAIFileManager } from '@google/generative-ai/server';
+import { spawn } from 'child_process';
+import { writeFile, unlink, stat } from 'fs/promises';
+import path from 'path';
+
+// Load ffmpeg-static at module level
+const ffmpegStatic = require('ffmpeg-static');
+let ffmpegPath: string;
+if (typeof ffmpegStatic === 'string') {
+  ffmpegPath = ffmpegStatic;
+} else if (ffmpegStatic?.default && typeof ffmpegStatic.default === 'string') {
+  ffmpegPath = ffmpegStatic.default;
+} else if (ffmpegStatic?.path && typeof ffmpegStatic.path === 'string') {
+  ffmpegPath = ffmpegStatic.path;
+} else {
+  throw new Error('ffmpeg-static returned invalid path format');
+}
+// Resolve to absolute path for Vercel compatibility
+ffmpegPath = path.resolve(ffmpegPath);
 
 /**
  * Result type for server action - returns success/error instead of throwing
@@ -14,8 +34,14 @@ export type AnalyzeResult =
 
 /**
  * Analyze a comic book video from a Supabase Storage URL
- * Uses two-step file process: download to /tmp/raw_input.mov, normalize to /tmp/normalized.mp4
- * Returns a result object instead of throwing to avoid Next.js error hiding
+ * Complete rewrite to fix 404 model errors and iPhone metadata issues
+ * 
+ * Process:
+ * 1. Download video to /tmp/input.mov
+ * 2. Transcode with FFmpeg to /tmp/output.mp4
+ * 3. Upload to Google File API and poll until ACTIVE
+ * 4. Call gemini-3-flash with file data
+ * 5. Cleanup both temp files
  */
 export async function analyzeComicFromUrl(videoUrl: string, mimeType?: string): Promise<AnalyzeResult> {
   const apiKey = process.env.GOOGLE_API_KEY;
@@ -27,80 +53,190 @@ export async function analyzeComicFromUrl(videoUrl: string, mimeType?: string): 
 
   console.log(`[Server Action] API key present: ${apiKey ? 'Yes' : 'No'} (length: ${apiKey?.length || 0})`);
 
-  // File paths for two-step process
-  const rawInputPath = '/tmp/raw_input.mov';
-  const normalizedPath = '/tmp/normalized.mp4';
-  let fileUri: string | null = null;
+  // File paths for brute force transcoding (iPhone fix)
+  const inputPath = '/tmp/input.mov';
+  const outputPath = '/tmp/output.mp4';
 
   try {
-    console.log(`[Server Action] Starting video normalization pipeline for: ${videoUrl}`);
+    console.log(`[Server Action] Starting video analysis pipeline for: ${videoUrl}`);
     
-    // Step 1: Normalize video (downloads to /tmp/raw_input.mov, processes to /tmp/normalized.mp4)
-    try {
-      const startTime = Date.now();
-      console.log(`[Server Action] Starting video normalization...`);
-      await normalizeVideoFromUrl(videoUrl, {
-        onProgress: (progress) => {
-          const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-          console.log(`[Server Action] Normalization progress: ${progress.frames} frames processed (${elapsed}s elapsed)`);
+    // Step 1: Download video from Supabase and save to /tmp/input.mov
+    console.log(`[Server Action] Downloading video from Supabase...`);
+    const response = await fetch(videoUrl, {
+      headers: {
+        'Accept': 'video/*',
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to download video: ${response.status} ${response.statusText}`);
+    }
+
+    if (!response.body) {
+      throw new Error('Response body is null');
+    }
+
+    // Read entire response into buffer and write to file
+    const arrayBuffer = await response.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    const fileSizeMB = (buffer.length / 1024 / 1024).toFixed(2);
+    console.log(`[Server Action] Downloaded ${fileSizeMB}MB, writing to ${inputPath}`);
+    
+    await writeFile(inputPath, buffer);
+    console.log(`[Server Action] ✅ Video saved to ${inputPath}`);
+    
+    // Step 2: Brute Force Transcoding (iPhone Fix)
+    // Use child_process.spawn with path.resolve(ffmpegPath) to transcode physical file
+    console.log(`[Server Action] Starting FFmpeg transcoding...`);
+    console.log(`[FFmpeg] Binary: ${ffmpegPath}`);
+    console.log(`[FFmpeg] Input: ${inputPath}, Output: ${outputPath}`);
+    
+    // Wrap spawn in Promise and await it so process finishes 100% before moving on
+    await new Promise<void>((resolve, reject) => {
+      const ffmpegProcess = spawn(path.resolve(ffmpegPath), [
+        '-y',                              // Overwrite output file
+        '-i', inputPath,                   // Input from physical file
+        '-c:v', 'libx264',                 // H.264 codec (iPhone compatibility)
+        '-vf', 'scale=-1:1080,fps=1',      // Scale to 1080p height, 1 fps
+        '-an',                             // No audio
+        '-f', 'mp4',                       // MP4 format
+        outputPath                         // Output to physical file
+      ], {
+        stdio: ['ignore', 'pipe', 'pipe'] // stdin ignored, stdout/stderr piped
+      });
+
+      // Collect stderr for logging
+      let stderrBuffer = '';
+      let lastProgressTime = Date.now();
+      
+      ffmpegProcess.stderr.on('data', (data: Buffer) => {
+        stderrBuffer += data.toString();
+        
+        // Parse FFmpeg progress output
+        const frameMatch = stderrBuffer.match(/frame=\s*(\d+)/);
+        const fpsMatch = stderrBuffer.match(/fps=\s*([\d.]+)/);
+        
+        if (frameMatch) {
+          const frames = parseInt(frameMatch[1], 10);
+          const fps = fpsMatch ? parseFloat(fpsMatch[1]) : 0;
+          
+          // Log progress every 5 seconds
+          const now = Date.now();
+          if (now - lastProgressTime > 5000) {
+            console.log(`[FFmpeg] Progress: ${frames} frames processed, ${fps.toFixed(1)} fps`);
+            lastProgressTime = now;
+          }
+        }
+        
+        // Clear buffer periodically
+        if (stderrBuffer.length > 10000) {
+          stderrBuffer = stderrBuffer.slice(-5000);
         }
       });
+
+      // Handle process errors
+      ffmpegProcess.on('error', (err) => {
+        console.error('[FFmpeg] Process error:', err);
+        reject(new Error(`FFmpeg process failed: ${err.message}`));
+      });
+
+      // Wait for FFmpeg process to close (100% completion)
+      ffmpegProcess.on('close', (code, signal) => {
+        if (code === 0) {
+          console.log(`[Server Action] ✅ FFmpeg transcoding complete`);
+          resolve();
+        } else {
+          const errorMsg = signal 
+            ? `FFmpeg process killed by signal: ${signal}`
+            : `FFmpeg process exited with code: ${code}`;
+          console.error(`[FFmpeg] ${errorMsg}`);
+          console.error(`[FFmpeg] Full stderr output:`, stderrBuffer);
+          const errorMatch = stderrBuffer.match(/error:\s*(.+)/i) || stderrBuffer.match(/Error\s+(.+)/i);
+          const actualError = errorMatch ? errorMatch[1].trim() : stderrBuffer.slice(-500);
+          reject(new Error(`Video transcoding failed: ${errorMsg}. FFmpeg error: ${actualError}`));
+        }
+      });
+    });
+    
+    // Verify output file exists and has data
+    const outputStats = await stat(outputPath);
+    if (outputStats.size === 0) {
+      throw new Error('Transcoded file is empty on disk');
+    }
+    const outputSizeMB = (outputStats.size / 1024 / 1024).toFixed(2);
+    console.log(`[Server Action] Transcoded file verified: ${outputSizeMB}MB`);
+    
+    // Step 3: Correct Google File Upload
+    console.log(`[Server Action] Uploading to Google File API...`);
+    const fileManager = new GoogleAIFileManager(apiKey);
+    
+    // Upload the file using fileManager.uploadFile('/tmp/output.mp4', { mimeType: 'video/mp4' })
+    const uploadResult = await fileManager.uploadFile(outputPath, {
+      mimeType: 'video/mp4',
+      displayName: 'ComicScan_Video',
+    });
+    
+    console.log(`[Server Action] File uploaded, URI: ${uploadResult.file.uri}`);
+    console.log(`[Server Action] File state: ${uploadResult.file.state}`);
+    console.log(`[Server Action] File name: ${uploadResult.file.name}`);
+    
+    // Critical: Implement polling loop - wait until file.state === 'ACTIVE'
+    console.log(`[Server Action] Polling for ACTIVE state...`);
+    const maxAttempts = 60; // 60 attempts = 30 seconds max
+    const pollInterval = 500; // 500ms between polls
+    
+    let activeFile = uploadResult.file;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      // Use fileManager.getFile(uploadResponse.file.name) to check state
+      activeFile = await fileManager.getFile(uploadResult.file.name);
       
-      // Verify normalized file exists and has data
-      const stats = await stat(normalizedPath);
-      if (stats.size === 0) {
-        throw new Error('Normalized file is empty on disk');
+      if (activeFile.state === 'ACTIVE') {
+        console.log(`[Server Action] ✅ File is ACTIVE after ${attempt + 1} attempts`);
+        break;
       }
-      const fileSizeMB = (stats.size / 1024 / 1024).toFixed(2);
-      console.log(`[Server Action] ✅ Video normalization complete: ${fileSizeMB}MB`);
-    } catch (normalizeError) {
-      const errorDetails = normalizeError instanceof Error ? normalizeError.message : String(normalizeError);
-      console.error(`[Server Action] ❌ Video normalization failed:`, errorDetails);
-      return {
-        success: false,
-        error: `Failed to normalize video. This may be due to unsupported format or corruption. Error: ${errorDetails}`
-      };
+      
+      if (activeFile.state === 'FAILED') {
+        const errorMsg = activeFile.error?.message || 'Unknown error';
+        throw new Error(`File upload failed: ${errorMsg}`);
+      }
+      
+      // Log state every 5 attempts
+      if (attempt % 5 === 0) {
+        console.log(`[Server Action] File state: ${activeFile.state} (attempt ${attempt + 1}/${maxAttempts})`);
+      }
+      
+      // Wait before next poll
+      if (attempt < maxAttempts - 1) {
+        await new Promise(resolve => setTimeout(resolve, pollInterval));
+      }
     }
     
-    // Step 2: Upload normalized file to Google File API
-    console.log(`[Server Action] Uploading normalized file to Google File API (mimeType: video/mp4)...`);
-    fileUri = await uploadFileToGoogleFileAPI(normalizedPath, apiKey, 'video/mp4');
-    console.log(`[Server Action] ✅ File uploaded to Google File API: ${fileUri}`);
+    // Do not proceed until it is ACTIVE
+    if (activeFile.state !== 'ACTIVE') {
+      throw new Error(`File upload timed out - file did not become ACTIVE within ${maxAttempts * pollInterval / 1000} seconds. Current state: ${activeFile.state}`);
+    }
     
-    // Initialize Google Generative AI
+    // Step 4: Model Naming & Call
+    // Use the December 2025 stable ID: gemini-3-flash
+    console.log(`[Server Action] Using model: gemini-3-flash (December 2025 stable)`);
     const genAI = new GoogleGenerativeAI(apiKey);
-    
-    // System instruction
-    const systemInstruction = "You are an expert comic book grader. Analyze the video of this comic book. Identify the comic (Series, Issue, Year, Variant) and look for visible defects across all frames. Return the response as clean JSON with fields: title, issue, estimatedGrade, reasoning.";
-
-    // Use gemini-2.5-flash (stable model, uses v1 API)
-    console.log(`[Server Action] Using model: gemini-2.5-flash (stable, v1 API)`);
     const model = genAI.getGenerativeModel({ 
-      model: "gemini-2.5-flash",
-      systemInstruction: systemInstruction
+      model: "gemini-3-flash",
+      systemInstruction: "You are an expert comic book grader. Analyze the video of this comic book. Identify the comic (Series, Issue, Year, Variant) and look for visible defects across all frames. Return the response as clean JSON with fields: title, issue, estimatedGrade, reasoning."
     });
     
     // Add timeout wrapper - Vercel has 300s timeout, so use 280s to be safe
     const timeoutPromise = new Promise((_, reject) => {
-      setTimeout(() => reject(new Error("Video analysis timed out after 280 seconds. The video normalization or API call took too long. Please try a shorter video.")), 280000);
+      setTimeout(() => reject(new Error("Video analysis timed out after 280 seconds. The video transcoding or API call took too long. Please try a shorter video.")), 280000);
     });
 
-    // Build payload - always use File API reference
-    if (!fileUri) {
-      return {
-        success: false,
-        error: 'Failed to get file URI from Google File API'
-      };
-    }
-    
-    console.log(`[Server Action] Sending video to Gemini API using File API reference: ${fileUri}`);
-    console.log(`[Server Action] Payload: fileUri=${fileUri}, mimeType=video/mp4`);
-    
+    // Call model.generateContent passing the file data exactly as specified
+    // { fileData: { mimeType: uploadResponse.file.mimeType, fileUri: uploadResponse.file.uri } }
     const payload = [
       {
         fileData: {
-          fileUri: fileUri,
-          mimeType: 'video/mp4'
+          mimeType: activeFile.mimeType,
+          fileUri: activeFile.uri
         }
       },
       {
@@ -108,9 +244,11 @@ export async function analyzeComicFromUrl(videoUrl: string, mimeType?: string): 
       }
     ];
     
-    // Generate content with the model
-    console.log(`[Server Action] Calling model.generateContent()...`);
+    console.log(`[Server Action] Sending to Gemini API...`);
+    console.log(`[Server Action] File URI: ${activeFile.uri}`);
+    console.log(`[Server Action] MIME Type: ${activeFile.mimeType}`);
     
+    // Generate content with the model
     let result: any;
     try {
       const analysisPromise = model.generateContent(payload);
@@ -144,8 +282,8 @@ export async function analyzeComicFromUrl(videoUrl: string, mimeType?: string): 
     }
     
     // Get the response text (text() is async and must be awaited)
-    const response = result.response;
-    const text = await response.text();
+    const geminiResponse = result.response;
+    const text = await geminiResponse.text();
     
     // Clean up markdown code blocks if Gemini sends them
     let cleanText = text.trim();
@@ -213,7 +351,7 @@ export async function analyzeComicFromUrl(videoUrl: string, mimeType?: string): 
         if (error.message.includes("500")) {
           errorMessage = `500 Internal Server Error from Gemini API. Possible causes: 1) Token overflow (video too large - try smaller/shorter video) 2) Malformed payload (invalid base64 or mimeType) 3) API quota/permission issue 4) Temporary API outage. Check Vercel logs for token estimates. Original error: ${error.message}`;
         } else {
-          errorMessage = `API error (${error.message.includes("404") ? "Model not found" : "Unknown"}). Using gemini-2.5-flash. Possible solutions: 1) Update your API key from https://aistudio.google.com/apikey 2) Ensure billing is enabled (even for free tier) 3) Try again in a few moments (API may be temporarily unavailable). Original error: ${error.message}`;
+          errorMessage = `API error (${error.message.includes("404") ? "Model not found" : "Unknown"}). Using gemini-3-flash. Possible solutions: 1) Update your API key from https://aistudio.google.com/apikey 2) Ensure billing is enabled (even for free tier) 3) Try again in a few moments (API may be temporarily unavailable). Original error: ${error.message}`;
         }
       } else if (error.message.includes("invalid") || error.message.includes("malformed") || error.message.includes("format")) {
         errorMessage = `Invalid payload format. The video may be corrupted or in an unsupported format. Error: ${error.message}`;
@@ -230,13 +368,13 @@ export async function analyzeComicFromUrl(videoUrl: string, mimeType?: string): 
     // This prevents Next.js from hiding the error in production
     return { success: false, error: errorMessage };
   } finally {
-    // Cleanup both temp files using Promise.allSettled
+    // Cleanup: In a finally block, use fs.promises.unlink to delete both /tmp/input.mov and /tmp/output.mp4
     const cleanupPromises = [
-      unlink(rawInputPath).catch(err => {
-        console.warn(`[Server Action] Failed to cleanup ${rawInputPath}:`, err);
+      unlink(inputPath).catch(err => {
+        console.warn(`[Server Action] Failed to cleanup ${inputPath}:`, err);
       }),
-      unlink(normalizedPath).catch(err => {
-        console.warn(`[Server Action] Failed to cleanup ${normalizedPath}:`, err);
+      unlink(outputPath).catch(err => {
+        console.warn(`[Server Action] Failed to cleanup ${outputPath}:`, err);
       }),
     ];
     
