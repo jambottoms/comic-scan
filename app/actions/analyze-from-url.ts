@@ -69,14 +69,24 @@ export async function analyzeComicFromUrl(videoUrl: string, mimeType?: string): 
     const fileSizeMB = (arrayBuffer.byteLength / 1024 / 1024).toFixed(2);
     console.log(`[Server Action] Video downloaded: ${fileSizeMB}MB`);
     
-    // Determine mimeType
+    // Determine mimeType - normalize video/quicktime to video/mp4 for Gemini
+    // Gemini API prefers video/mp4 even for .mov files
     let finalMimeType = mimeType || 'video/mp4';
+    
+    // Normalize video/quicktime to video/mp4 for Gemini compatibility
+    if (finalMimeType === 'video/quicktime' || finalMimeType === 'video/x-quicktime') {
+      finalMimeType = 'video/mp4';
+      console.log(`[Server Action] Normalized video/quicktime to video/mp4 for Gemini compatibility`);
+    }
+    
     if (!mimeType) {
+      // Fallback: detect from URL if MIME type not provided
       const urlLower = videoUrl.toLowerCase();
       if (urlLower.endsWith('.webm')) {
         finalMimeType = 'video/webm';
       } else if (urlLower.endsWith('.mov') || urlLower.endsWith('.qt')) {
-        finalMimeType = 'video/quicktime';
+        // Even .mov files should be sent as video/mp4 to Gemini
+        finalMimeType = 'video/mp4';
       } else if (urlLower.endsWith('.avi')) {
         finalMimeType = 'video/x-msvideo';
       } else if (urlLower.endsWith('.mkv')) {
