@@ -50,6 +50,8 @@ export async function uploadToGoogleFileAPI(
   formData.append('file', file);
 
   // Upload file
+  console.log(`[Google File API] Starting upload... (file size: ${file.size} bytes, type: ${file instanceof File ? file.type : 'Blob'})`);
+  
   const uploadResponse = await fetch(uploadUrl, {
     method: 'POST',
     body: formData,
@@ -58,6 +60,8 @@ export async function uploadToGoogleFileAPI(
 
   if (!uploadResponse.ok) {
     const errorText = await uploadResponse.text();
+    console.error(`[Google File API] Upload failed: ${uploadResponse.status} ${uploadResponse.statusText}`);
+    console.error(`[Google File API] Error response: ${errorText}`);
     throw new Error(`Failed to upload to Google File API: ${uploadResponse.status} ${uploadResponse.statusText}. ${errorText}`);
   }
 

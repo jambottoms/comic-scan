@@ -67,7 +67,8 @@ export async function analyzeComicFromUrl(videoUrl: string, mimeType?: string): 
     
     const arrayBuffer = await fetchResponse.arrayBuffer();
     const fileSizeMB = (arrayBuffer.byteLength / 1024 / 1024).toFixed(2);
-    console.log(`[Server Action] Video downloaded: ${fileSizeMB}MB`);
+    const binarySizeMB = parseFloat(fileSizeMB);
+    console.log(`[Server Action] Video downloaded: ${fileSizeMB}MB (${arrayBuffer.byteLength} bytes)`);
     
     // Determine mimeType - normalize video/quicktime to video/mp4 for Gemini
     // Gemini API prefers video/mp4 even for .mov files
@@ -98,47 +99,36 @@ export async function analyzeComicFromUrl(videoUrl: string, mimeType?: string): 
       finalMimeType = 'video/mp4';
     }
     
-    console.log(`[Server Action] MIME type: ${finalMimeType}`);
+    console.log(`[Server Action] MIME type: ${finalMimeType} (original: ${mimeType || 'not provided'})`);
     
-    // For large files (>20MB), use Google File API to avoid token limits
-    // This preserves full video quality without compression
-    const binarySizeMB = parseFloat(fileSizeMB);
-    const useFileAPI = binarySizeMB > 20;
+    // ALWAYS use Google File API for all videos to avoid base64 encoding issues
+    // Base64 can cause 500 errors, especially with mobile/HEVC videos
+    // This is the most reliable approach
+    console.log(`[Server Action] Using Google File API for all videos (${fileSizeMB}MB) to ensure reliability...`);
     
     let fileUri: string | null = null;
-    let base64Video: string | null = null;
     
-    if (useFileAPI) {
-      // Upload to Google File API for large videos (preserves quality, avoids token limits)
-      console.log(`[Server Action] File is large (${fileSizeMB}MB), uploading to Google File API...`);
+    try {
+      // Convert ArrayBuffer to Blob for upload
+      const blob = new Blob([arrayBuffer], { type: finalMimeType });
+      const file = new File([blob], 'comic-video', { type: finalMimeType });
       
-      try {
-        // Convert ArrayBuffer to Blob for upload
-        const blob = new Blob([arrayBuffer], { type: finalMimeType });
-        const file = new File([blob], 'comic-video', { type: finalMimeType });
-        
-        fileUri = await uploadToGoogleFileAPI(file, apiKey);
-        console.log(`[Server Action] File uploaded to Google File API: ${fileUri}`);
-      } catch (fileApiError) {
-        console.error(`[Server Action] Google File API upload failed:`, fileApiError);
-        // For very large files, fail if File API doesn't work
-        if (binarySizeMB > 50) {
-          return {
-            success: false,
-            error: `File is too large (${fileSizeMB}MB) and Google File API upload failed. Please try a shorter video (under 30 seconds). Error: ${fileApiError instanceof Error ? fileApiError.message : String(fileApiError)}`
-          };
-        }
-        // For medium files, fall back to base64 (may cause 500 error)
-        console.log(`[Server Action] Falling back to base64 inline (may cause 500 error)...`);
-        const buffer = Buffer.from(arrayBuffer);
-        base64Video = buffer.toString("base64");
-      }
-    } else {
-      // For small files, use base64 inline (faster)
-      console.log(`[Server Action] File is small (${fileSizeMB}MB), using base64 inline...`);
-      const buffer = Buffer.from(arrayBuffer);
-      base64Video = buffer.toString("base64");
-      console.log(`[Server Action] Base64 size: ${(base64Video.length / 1024 / 1024).toFixed(2)}MB`);
+      console.log(`[Server Action] Uploading ${fileSizeMB}MB file to Google File API (type: ${finalMimeType})...`);
+      fileUri = await uploadToGoogleFileAPI(file, apiKey);
+      console.log(`[Server Action] ✅ File uploaded to Google File API: ${fileUri}`);
+    } catch (fileApiError) {
+      const errorDetails = fileApiError instanceof Error ? {
+        message: fileApiError.message,
+        stack: fileApiError.stack,
+        name: fileApiError.name
+      } : { message: String(fileApiError) };
+      
+      console.error(`[Server Action] ❌ Google File API upload failed:`, errorDetails);
+      
+      return {
+        success: false,
+        error: `Failed to upload video (${fileSizeMB}MB) to Google File API. This may be due to HEVC encoding, file size, or API issues. Please try: 1) Record in "Most Compatible" format (Settings > Camera > Formats on iOS), 2) Try a shorter video, or 3) Try again in a few moments. Error: ${errorDetails.message}`
+      };
     }
     
     // Initialize Google Generative AI
@@ -159,36 +149,26 @@ export async function analyzeComicFromUrl(videoUrl: string, mimeType?: string): 
       setTimeout(() => reject(new Error("Video analysis timed out after 60 seconds. The video may be too long or the API is slow. Please try a shorter video.")), 60000);
     });
 
-    // Build payload - use file URI if available, otherwise base64
-    console.log(`[Server Action] Sending video to Gemini API (${fileUri ? 'File API reference' : 'base64 inline'})...`);
-    const payload: any[] = [];
+    // Build payload - always use File API reference
+    if (!fileUri) {
+      return {
+        success: false,
+        error: 'Failed to get file URI from Google File API'
+      };
+    }
     
-    if (fileUri) {
-      // Use Google File API reference (no token limit issues)
-      payload.push({
+    console.log(`[Server Action] Sending video to Gemini API using File API reference: ${fileUri}`);
+    const payload = [
+      {
         fileData: {
           fileUri: fileUri,
           mimeType: finalMimeType
         }
-      });
-    } else if (base64Video) {
-      // Use base64 inline (for small files)
-      payload.push({
-        inlineData: {
-          data: base64Video,
-          mimeType: finalMimeType
-        }
-      });
-    } else {
-      return {
-        success: false,
-        error: 'Failed to prepare video data for analysis'
-      };
-    }
-    
-    payload.push({
-      text: "Analyze this comic book video. Look at all frames to identify the comic and assess its condition."
-    });
+      },
+      {
+        text: "Analyze this comic book video. Look at all frames to identify the comic and assess its condition."
+      }
+    ];
     
     // Generate content with the model
     const analysisPromise = model.generateContent(payload);
