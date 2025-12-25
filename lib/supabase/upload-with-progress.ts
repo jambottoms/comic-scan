@@ -1,6 +1,7 @@
 'use client';
 
 import { createClient } from './client';
+import type { MutableRefObject } from 'react';
 
 /**
  * Upload a file to Supabase Storage with progress tracking
@@ -23,7 +24,8 @@ function readFileAsArrayBuffer(file: File): Promise<ArrayBuffer> {
 
 export async function uploadToSupabaseWithProgress(
   originalFile: File,
-  onProgress: (progress: number) => void
+  onProgress: (progress: number) => void,
+  xhrRef?: MutableRefObject<XMLHttpRequest | null>
 ): Promise<string> {
   const supabase = createClient();
   
@@ -66,15 +68,27 @@ export async function uploadToSupabaseWithProgress(
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     
+    // Store XHR reference for cancellation
+    if (xhrRef) {
+      xhrRef.current = xhr;
+    }
+    
     xhr.upload.addEventListener('progress', (e) => {
-      if (e.lengthComputable) {
+      if (e.lengthComputable && e.total > 0) {
         const percentComplete = (e.loaded / e.total) * 100;
-        onProgress(percentComplete);
-        console.log(`[Supabase Upload] Progress: ${percentComplete.toFixed(1)}%`);
+        // Ensure progress is between 0 and 100
+        const clampedProgress = Math.max(0, Math.min(100, percentComplete));
+        onProgress(clampedProgress);
+        console.log(`[Supabase Upload] Progress: ${clampedProgress.toFixed(1)}%`);
       }
     });
     
     xhr.addEventListener('load', () => {
+      // Clear XHR reference
+      if (xhrRef) {
+        xhrRef.current = null;
+      }
+      
       if (xhr.status >= 200 && xhr.status < 300) {
         // Get public URL using Supabase client
         const { data: urlData } = supabase.storage
@@ -99,10 +113,18 @@ export async function uploadToSupabaseWithProgress(
     });
     
     xhr.addEventListener('error', () => {
+      // Clear XHR reference
+      if (xhrRef) {
+        xhrRef.current = null;
+      }
       reject(new Error('Network error during upload'));
     });
     
     xhr.addEventListener('abort', () => {
+      // Clear XHR reference
+      if (xhrRef) {
+        xhrRef.current = null;
+      }
       reject(new Error('Upload was aborted'));
     });
     

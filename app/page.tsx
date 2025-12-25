@@ -145,8 +145,10 @@ export default function Dashboard() {
             file,
             (progress) => {
               // Map upload progress to 0-80% of total
-              setUploadProgress(progress * 0.8);
-            }
+              // Ensure progress doesn't go backwards
+              setUploadProgress((prev) => Math.max(prev, progress * 0.8));
+            },
+            uploadXhrRef
           );
           console.log("Recorded video uploaded to Supabase:", supabaseUrl);
           
@@ -301,8 +303,10 @@ export default function Dashboard() {
         file,
         (progress) => {
           // Map upload progress to 0-80% of total
-          setUploadProgress(progress * 0.8);
-        }
+          // Ensure progress doesn't go backwards
+          setUploadProgress((prev) => Math.max(prev, progress * 0.8));
+        },
+        uploadXhrRef
       );
       console.log("File uploaded to Supabase:", supabaseUrl);
       
@@ -368,11 +372,14 @@ export default function Dashboard() {
         errorMessage += "Check browser console and Vercel logs for details.";
       }
       
-      setError(errorMessage);
-      URL.revokeObjectURL(videoUrl);
+        setError(errorMessage);
+        setShowUploadModal(false);
+        URL.revokeObjectURL(videoUrl);
     } finally {
       setLoading(false);
-      setUploadProgress(0);
+      if (!showUploadModal) {
+        setUploadProgress(0);
+      }
       uploadXhrRef.current = null;
     }
   };
@@ -385,6 +392,7 @@ export default function Dashboard() {
     }
     setLoading(false);
     setUploadProgress(0);
+    setShowUploadModal(false);
     setError(null);
   };
 
@@ -550,9 +558,15 @@ export default function Dashboard() {
 
       {/* Upload Progress Modal */}
       <UploadProgressModal 
-        open={showUploadModal} 
+        open={showUploadModal}
+        onOpenChange={(open) => {
+          if (!open && !loading) {
+            setShowUploadModal(false);
+          }
+        }}
         progress={uploadProgress}
         message={uploadMessage}
+        onCancel={cancelUpload}
       />
 
       {/* Error Message */}
