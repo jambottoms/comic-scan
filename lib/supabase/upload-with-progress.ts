@@ -56,6 +56,7 @@ export async function uploadToSupabaseWithProgress(
   // So we'll simulate progress based on file size and upload time
   const fileSize = fixedFile.size;
   const startTime = Date.now();
+  const maxUploadTime = 300000; // 5 minutes max upload time
   
   // Simulate initial progress
   onProgress(5);
@@ -68,23 +69,47 @@ export async function uploadToSupabaseWithProgress(
       upsert: false,
     });
   
+  // Add timeout to prevent hanging
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    setTimeout(() => {
+      reject(new Error(`Upload timeout after ${maxUploadTime / 1000} seconds. File may be too large or network connection is slow.`));
+    }, maxUploadTime);
+  });
+  
   // Simulate progress during upload (since we can't track real progress)
-  const progressInterval = setInterval(() => {
+  let progressInterval: NodeJS.Timeout | null = setInterval(() => {
     const elapsed = Date.now() - startTime;
     // Estimate: assume 1MB per second upload speed
     const estimatedSpeed = 1024 * 1024; // 1MB per second
     const estimatedProgress = Math.min(80, (elapsed * estimatedSpeed / fileSize) * 100);
     onProgress(Math.max(5, estimatedProgress));
+    
+    // Stop progress simulation if we've exceeded max time
+    if (elapsed > maxUploadTime) {
+      if (progressInterval) {
+        clearInterval(progressInterval);
+        progressInterval = null;
+      }
+    }
   }, 100); // Update every 100ms
   
   try {
-    const { data, error } = await uploadPromise;
+    // Race between upload and timeout
+    const { data, error } = await Promise.race([uploadPromise, timeoutPromise]);
     
-    clearInterval(progressInterval);
+    // Clear progress interval
+    if (progressInterval) {
+      clearInterval(progressInterval);
+      progressInterval = null;
+    }
     
     if (error) {
       console.error('[Supabase] Upload error:', error);
       throw new Error(`Failed to upload to Supabase: ${error.message}`);
+    }
+    
+    if (!data) {
+      throw new Error('Upload completed but no data returned');
     }
     
     // Get public URL
@@ -100,7 +125,11 @@ export async function uploadToSupabaseWithProgress(
     onProgress(100);
     return urlData.publicUrl;
   } catch (err) {
-    clearInterval(progressInterval);
+    // Clear progress interval on error
+    if (progressInterval) {
+      clearInterval(progressInterval);
+      progressInterval = null;
+    }
     throw err;
   }
 }
