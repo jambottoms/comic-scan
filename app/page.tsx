@@ -147,8 +147,7 @@ export default function Dashboard() {
               // Map upload progress to 0-80% of total
               // Ensure progress doesn't go backwards
               setUploadProgress((prev) => Math.max(prev, progress * 0.8));
-            },
-            uploadXhrRef
+            }
           );
           console.log("Recorded video uploaded to Supabase:", supabaseUrl);
           
@@ -305,8 +304,7 @@ export default function Dashboard() {
           // Map upload progress to 0-80% of total
           // Ensure progress doesn't go backwards
           setUploadProgress((prev) => Math.max(prev, progress * 0.8));
-        },
-        uploadXhrRef
+        }
       );
       console.log("File uploaded to Supabase:", supabaseUrl);
       
@@ -385,15 +383,14 @@ export default function Dashboard() {
   };
 
   // Cancel upload function
+  // Note: Supabase client uploads can't be cancelled mid-upload
+  // This will just close the modal and reset state
   const cancelUpload = () => {
-    if (uploadXhrRef.current) {
-      uploadXhrRef.current.abort();
-      uploadXhrRef.current = null;
-    }
     setLoading(false);
     setUploadProgress(0);
     setShowUploadModal(false);
     setError(null);
+    // Note: The upload will continue in the background, but the UI will reset
   };
 
   // Cancel recording function

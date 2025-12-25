@@ -1,7 +1,6 @@
 'use client';
 
 import { createClient } from './client';
-import type { MutableRefObject } from 'react';
 
 /**
  * Upload a file to Supabase Storage with progress tracking
@@ -24,8 +23,7 @@ function readFileAsArrayBuffer(file: File): Promise<ArrayBuffer> {
 
 export async function uploadToSupabaseWithProgress(
   originalFile: File,
-  onProgress: (progress: number) => void,
-  xhrRef?: MutableRefObject<XMLHttpRequest | null>
+  onProgress: (progress: number) => void
 ): Promise<string> {
   const supabase = createClient();
   
@@ -53,87 +51,58 @@ export async function uploadToSupabaseWithProgress(
   const randomString = Math.random().toString(36).substring(2, 15);
   const fileName = `${timestamp}-${randomString}.mp4`;
   
-  // Get Supabase URL and key from environment
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  // Use Supabase client's built-in upload method which handles the new key format automatically
+  // Unfortunately, Supabase JS client doesn't support progress callbacks natively
+  // So we'll simulate progress based on file size and upload time
+  const fileSize = fixedFile.size;
+  const startTime = Date.now();
   
-  if (!supabaseUrl || !supabaseKey) {
-    throw new Error('Supabase environment variables are not set');
-  }
+  // Simulate initial progress
+  onProgress(5);
   
-  // Get the storage URL for upload
-  const storageUrl = `${supabaseUrl}/storage/v1/object/comic-videos/${fileName}`;
+  // Start upload using Supabase client (handles new key format automatically)
+  const uploadPromise = supabase.storage
+    .from('comic-videos')
+    .upload(fileName, fixedFile, {
+      contentType: 'video/mp4',
+      upsert: false,
+    });
   
-  // Upload using XMLHttpRequest for progress tracking
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
+  // Simulate progress during upload (since we can't track real progress)
+  const progressInterval = setInterval(() => {
+    const elapsed = Date.now() - startTime;
+    // Estimate: assume 1MB per second upload speed
+    const estimatedSpeed = 1024 * 1024; // 1MB per second
+    const estimatedProgress = Math.min(80, (elapsed * estimatedSpeed / fileSize) * 100);
+    onProgress(Math.max(5, estimatedProgress));
+  }, 100); // Update every 100ms
+  
+  try {
+    const { data, error } = await uploadPromise;
     
-    // Store XHR reference for cancellation
-    if (xhrRef) {
-      xhrRef.current = xhr;
+    clearInterval(progressInterval);
+    
+    if (error) {
+      console.error('[Supabase] Upload error:', error);
+      throw new Error(`Failed to upload to Supabase: ${error.message}`);
     }
     
-    xhr.upload.addEventListener('progress', (e) => {
-      if (e.lengthComputable && e.total > 0) {
-        const percentComplete = (e.loaded / e.total) * 100;
-        // Ensure progress is between 0 and 100
-        const clampedProgress = Math.max(0, Math.min(100, percentComplete));
-        onProgress(clampedProgress);
-        console.log(`[Supabase Upload] Progress: ${clampedProgress.toFixed(1)}%`);
-      }
-    });
+    // Get public URL
+    const { data: urlData } = supabase.storage
+      .from('comic-videos')
+      .getPublicUrl(data.path);
     
-    xhr.addEventListener('load', () => {
-      // Clear XHR reference
-      if (xhrRef) {
-        xhrRef.current = null;
-      }
-      
-      if (xhr.status >= 200 && xhr.status < 300) {
-        // Get public URL using Supabase client
-        const { data: urlData } = supabase.storage
-          .from('comic-videos')
-          .getPublicUrl(fileName);
-        
-        if (!urlData?.publicUrl) {
-          reject(new Error('Failed to get public URL from Supabase'));
-          return;
-        }
-        
-        console.log(`[Supabase] File uploaded successfully: ${urlData.publicUrl}`);
-        resolve(urlData.publicUrl);
-      } else {
-        try {
-          const error = JSON.parse(xhr.responseText || '{}');
-          reject(new Error(`Failed to upload to Supabase: ${error.message || xhr.statusText}`));
-        } catch {
-          reject(new Error(`Failed to upload to Supabase: ${xhr.statusText || 'Unknown error'}`));
-        }
-      }
-    });
+    if (!urlData?.publicUrl) {
+      throw new Error('Failed to get public URL from Supabase');
+    }
     
-    xhr.addEventListener('error', () => {
-      // Clear XHR reference
-      if (xhrRef) {
-        xhrRef.current = null;
-      }
-      reject(new Error('Network error during upload'));
-    });
-    
-    xhr.addEventListener('abort', () => {
-      // Clear XHR reference
-      if (xhrRef) {
-        xhrRef.current = null;
-      }
-      reject(new Error('Upload was aborted'));
-    });
-    
-    xhr.open('POST', storageUrl);
-    xhr.setRequestHeader('Authorization', `Bearer ${supabaseKey}`);
-    xhr.setRequestHeader('Content-Type', 'video/mp4');
-    xhr.setRequestHeader('x-upsert', 'false');
-    
-    xhr.send(fixedFile);
-  });
+    console.log(`[Supabase] File uploaded successfully: ${urlData.publicUrl}`);
+    onProgress(100);
+    return urlData.publicUrl;
+  } catch (err) {
+    clearInterval(progressInterval);
+    throw err;
+  }
 }
+
 
