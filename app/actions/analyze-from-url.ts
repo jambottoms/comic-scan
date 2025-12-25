@@ -7,7 +7,7 @@ const require = createRequire(import.meta.url);
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { GoogleAIFileManager } from '@google/generative-ai/server';
 import { spawnSync } from 'child_process';
-import { writeFile, unlink, stat } from 'fs/promises';
+import { writeFile, unlink, stat, access } from 'fs/promises';
 import path from 'path';
 
 // Load ffmpeg-static at module level
@@ -196,7 +196,7 @@ export async function analyzeComicFromUrl(videoUrl: string, mimeType?: string): 
         } 
       }, 
       { 
-        text: "Analyze this comic video." 
+        text: "You are a professional comic book analyzer. From this video, 1) Identify all unique panels. 2) For each panel, extract the dialogue and specify which character is speaking. 3) Describe the visual action in each panel. Return the data as a clean JSON array of panels." 
       }
     ];
     
@@ -325,6 +325,7 @@ export async function analyzeComicFromUrl(videoUrl: string, mimeType?: string): 
     return { success: false, error: errorMessage };
   } finally {
     // Step 7: Cleanup - Delete both files in /tmp in a finally block
+    // Use Promise.allSettled so that if one file is missing, the other still gets deleted
     const cleanupPromises = [
       unlink(inputPath).catch(err => {
         console.warn(`[Server Action] Failed to cleanup ${inputPath}:`, err);
@@ -337,5 +338,21 @@ export async function analyzeComicFromUrl(videoUrl: string, mimeType?: string): 
     const results = await Promise.allSettled(cleanupPromises);
     const cleaned = results.filter(r => r.status === 'fulfilled').length;
     console.log(`[Server Action] Cleaned up ${cleaned}/${cleanupPromises.length} temp files`);
+    
+    // Safety check: After unlinking, use fs.promises.access to check if files still exist
+    // If they do, log an error
+    try {
+      await access(inputPath);
+      console.error(`[Server Action] ⚠️ SAFETY CHECK FAILED: ${inputPath} still exists after unlink!`);
+    } catch (err) {
+      // File doesn't exist (expected) - this is fine
+    }
+    
+    try {
+      await access(outputPath);
+      console.error(`[Server Action] ⚠️ SAFETY CHECK FAILED: ${outputPath} still exists after unlink!`);
+    } catch (err) {
+      // File doesn't exist (expected) - this is fine
+    }
   }
 }
