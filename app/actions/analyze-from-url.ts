@@ -1,6 +1,6 @@
 'use server';
 
-import { GoogleGenerativeAI, GoogleAIFileManager } from "@google/generative-ai";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 /**
  * Result type for server action - returns success/error instead of throwing
@@ -31,10 +31,22 @@ export async function analyzeComicFromGoogleFile(fileName: string): Promise<Anal
   try {
     console.log(`[Server Action] Getting file from Google File API: ${fileName}`);
     
-    // Get the file object from Google File API
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const fileManager = new GoogleAIFileManager(apiKey);
-    const file = await fileManager.getFile(fileName);
+    // Get the file object from Google File API using REST API
+    const fileResponse = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/files/${fileName}?key=${apiKey}`,
+      {
+        method: 'GET',
+      }
+    );
+
+    if (!fileResponse.ok) {
+      return {
+        success: false,
+        error: `Failed to get file from Google File API: ${fileResponse.statusText}`
+      };
+    }
+
+    const file = await fileResponse.json();
     
     if (file.state !== 'ACTIVE') {
       return {
@@ -44,6 +56,9 @@ export async function analyzeComicFromGoogleFile(fileName: string): Promise<Anal
     }
     
     console.log(`[Server Action] File is ready. URI: ${file.uri}`);
+    
+    // Initialize Google Generative AI
+    const genAI = new GoogleGenerativeAI(apiKey);
     
     // System instruction
     const systemInstruction = "You are an expert comic book grader. Analyze the video of this comic book. Identify the comic (Series, Issue, Year, Variant) and look for visible defects across all frames. Return the response as clean JSON with fields: title, issue, estimatedGrade, reasoning.";

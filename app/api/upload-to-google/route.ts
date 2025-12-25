@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { GoogleAIFileManager } from "@google/generative-ai";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 export const maxDuration = 300; // 5 minutes for large uploads
 
@@ -73,21 +73,44 @@ export async function POST(request: NextRequest) {
     const fileSizeMB = (buffer.length / 1024 / 1024).toFixed(2);
     console.log(`[API Route] Video downloaded: ${fileSizeMB}MB`);
 
-    // Upload to Google File API
-    const fileManager = new GoogleAIFileManager(apiKey);
+    // Upload to Google File API using REST API with multipart form data
     console.log(`[API Route] Uploading ${fileSizeMB}MB to Google File API...`);
     
-    const uploadResult = await fileManager.uploadFile(Buffer.from(buffer), {
-      mimeType: mimeType,
-      displayName: fileName || `comic-video-${Date.now()}`,
-    });
+    // Create multipart form data using FormData (Node.js 18+ has native FormData)
+    const formData = new FormData();
+    const metadata = {
+      file: {
+        display_name: fileName || `comic-video-${Date.now()}`,
+      }
+    };
+    formData.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
+    formData.append('file', new Blob([buffer], { type: mimeType }), fileName || 'video.mp4');
+    
+    // Use Google's File API REST endpoint
+    const uploadResponse = await fetch(
+      `https://generativelanguage.googleapis.com/upload/v1beta/files?key=${apiKey}`,
+      {
+        method: 'POST',
+        body: formData,
+      }
+    );
 
-    console.log(`[API Route] Video uploaded. File URI: ${uploadResult.file.uri}, State: ${uploadResult.file.state}`);
+    if (!uploadResponse.ok) {
+      const errorText = await uploadResponse.text();
+      console.error('[API Route] Upload failed:', errorText);
+      return NextResponse.json(
+        { error: `Failed to upload to Google File API: ${uploadResponse.statusText}` },
+        { status: uploadResponse.status }
+      );
+    }
+
+    const uploadResult = await uploadResponse.json();
+    console.log(`[API Route] Video uploaded. File:`, uploadResult);
 
     return NextResponse.json({
-      uri: uploadResult.file.uri,
-      name: uploadResult.file.name,
-      state: uploadResult.file.state,
+      uri: uploadResult.file?.uri || uploadResult.name,
+      name: uploadResult.file?.name || uploadResult.name,
+      state: uploadResult.file?.state || uploadResult.state || 'PROCESSING',
     });
 
   } catch (error) {

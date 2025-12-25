@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { GoogleAIFileManager } from "@google/generative-ai";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 /**
  * API route to check Google File API file state
@@ -23,8 +23,22 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const fileManager = new GoogleAIFileManager(apiKey);
-    const file = await fileManager.getFile(fileName);
+    // Use Google's File API REST endpoint to get file state
+    const fileResponse = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/files/${fileName}?key=${apiKey}`,
+      {
+        method: 'GET',
+      }
+    );
+
+    if (!fileResponse.ok) {
+      return NextResponse.json(
+        { error: `Failed to get file state: ${fileResponse.statusText}` },
+        { status: fileResponse.status }
+      );
+    }
+
+    const file = await fileResponse.json();
     
     return NextResponse.json({
       state: file.state,
