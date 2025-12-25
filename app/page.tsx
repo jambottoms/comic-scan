@@ -242,10 +242,51 @@ export default function Home() {
     }
   };
 
+  // Helper function to detect MIME type from file name/extension
+  // iOS Photos often doesn't set file.type correctly
+  const detectMimeType = (file: File): string => {
+    // First, try file.type if it's valid
+    if (file.type && file.type.startsWith('video/')) {
+      return file.type;
+    }
+    
+    // Fall back to extension detection
+    const fileName = file.name.toLowerCase();
+    const extension = fileName.split('.').pop();
+    
+    const mimeTypes: Record<string, string> = {
+      'mp4': 'video/mp4',
+      'mov': 'video/quicktime', // iOS Photos default format
+      'webm': 'video/webm',
+      'avi': 'video/x-msvideo',
+      'mkv': 'video/x-matroska',
+      'm4v': 'video/x-m4v',
+      '3gp': 'video/3gpp',
+      'hevc': 'video/mp4', // HEVC videos from iOS
+    };
+    
+    if (extension && mimeTypes[extension]) {
+      return mimeTypes[extension];
+    }
+    
+    // Default to mp4 if we can't detect
+    return 'video/mp4';
+  };
+
   // Handle file upload with progress tracking
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    // Detect MIME type (iOS Photos often has empty/incorrect file.type)
+    const detectedMimeType = detectMimeType(file);
+    console.log(`[File Upload] File info:`, {
+      name: file.name,
+      size: `${(file.size / 1024 / 1024).toFixed(2)}MB`,
+      reportedType: file.type || '(empty)',
+      detectedType: detectedMimeType,
+      extension: file.name.split('.').pop() || '(none)'
+    });
 
     // Check file size before upload
     // Next.js config allows up to 100MB locally
@@ -294,10 +335,8 @@ export default function Home() {
       console.log("Step 2: Sending to server for analysis...");
       setUploadProgress(60);
       
-      // Use the original analyzeComicFromUrl which downloads and uses base64
-      // For now, we'll accept the 500 error risk for very large files
-      // TODO: Implement proper Google File API upload when SDK supports it
-      const result = await analyzeComicFromUrl(supabaseUrl, file.type || "video/mp4");
+      // Use detected MIME type (iOS Photos often has empty file.type)
+      const result = await analyzeComicFromUrl(supabaseUrl, detectedMimeType);
       console.log("Analysis complete, received result:", result);
       setUploadProgress(90);
       
@@ -316,6 +355,9 @@ export default function Home() {
           errorMessage += " Try recording a shorter video (5-10 seconds).";
         } else if (errorMessage.includes("not ready") || errorMessage.includes("PROCESSING")) {
           errorMessage += " The video is still processing. Please wait and try again.";
+        } else if (errorMessage.includes("too large") || errorMessage.includes("size")) {
+          // iOS files might have size detection issues
+          errorMessage += ` (File: ${file.name}, Size: ${uploadFileSizeMB}MB, Type: ${detectedMimeType})`;
         }
         
         setError(errorMessage);
