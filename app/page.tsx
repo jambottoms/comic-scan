@@ -23,6 +23,7 @@ export default function Home() {
   const [usingFallback, setUsingFallback] = useState(false);
   
   const videoRef = useRef<HTMLVideoElement>(null);
+  const previewVideoRef = useRef<HTMLVideoElement>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -628,6 +629,7 @@ export default function Home() {
           <p className="text-gray-400 text-sm mb-2 text-center">Video Preview:</p>
           <div className="relative w-full" style={{ aspectRatio: '16/9', maxHeight: '400px' }}>
             <video 
+              ref={previewVideoRef}
               src={videoPreview} 
               controls 
               className="w-full h-full rounded-xl border border-gray-700 object-contain cursor-pointer"
@@ -658,7 +660,51 @@ export default function Home() {
 
       {/* The Result Card - CGC Slab Style */}
       {result && (() => {
-        // Parse reasoning into summary and bullet points
+        // Function to seek video to timestamp and pause
+        const seekToTimestamp = (seconds: number) => {
+          if (previewVideoRef.current) {
+            const video = previewVideoRef.current;
+            video.currentTime = seconds;
+            video.pause();
+            // Scroll video into view
+            video.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+        };
+
+        // Parse timestamp from text (supports formats like "0:15", "15s", "1:30", etc.)
+        const parseTimestamp = (text: string): number | null => {
+          // Try MM:SS or HH:MM:SS format first
+          const timeColonMatch = text.match(/(\d+):(\d+)/);
+          if (timeColonMatch) {
+            const minutes = parseInt(timeColonMatch[1], 10);
+            const seconds = parseInt(timeColonMatch[2], 10);
+            return minutes * 60 + seconds;
+          }
+
+          // Try 1m 30s format
+          const minSecMatch = text.match(/(\d+)m\s*(\d+)s/i);
+          if (minSecMatch) {
+            const minutes = parseInt(minSecMatch[1], 10);
+            const seconds = parseInt(minSecMatch[2], 10);
+            return minutes * 60 + seconds;
+          }
+
+          // Try 15s format
+          const secMatch = text.match(/(\d+)s/i);
+          if (secMatch) {
+            return parseInt(secMatch[1], 10);
+          }
+
+          // Try 1m format
+          const minMatch = text.match(/(\d+)m/i);
+          if (minMatch) {
+            return parseInt(minMatch[1], 10) * 60;
+          }
+
+          return null;
+        };
+
+        // Parse reasoning into summary and bullet points with timestamps
         const parseReasoning = (reasoning: string) => {
           if (!reasoning) return { summary: '', bullets: [] };
           
@@ -668,8 +714,32 @@ export default function Home() {
           // First 1-2 sentences as summary
           const summary = sentences.slice(0, 2).join('. ').trim() + (sentences.length > 2 ? '.' : '');
           
-          // Rest as bullet points
-          const bullets = sentences.slice(2).map(s => s.trim()).filter(s => s.length > 0);
+          // Rest as bullet points with timestamp extraction
+          const bullets = sentences.slice(2).map(s => {
+            const trimmed = s.trim();
+            if (!trimmed) return null;
+            
+            // Try to extract timestamp
+            const timestamp = parseTimestamp(trimmed);
+            
+            // Remove timestamp from text for display
+            let displayText = trimmed;
+            if (timestamp !== null) {
+              // Remove timestamp patterns from text
+              displayText = trimmed
+                .replace(/\d+:\d+/g, '')
+                .replace(/\d+s/gi, '')
+                .replace(/\d+m\s*\d+s/gi, '')
+                .replace(/\d+m/gi, '')
+                .trim()
+                .replace(/\s+/g, ' ');
+            }
+            
+            return {
+              text: displayText,
+              timestamp: timestamp
+            };
+          }).filter((b): b is { text: string; timestamp: number | null } => b !== null);
           
           // If no clear sentence breaks, try to split by newlines or create bullets from paragraphs
           if (bullets.length === 0 && sentences.length <= 2) {
@@ -678,7 +748,21 @@ export default function Home() {
             if (paragraphs.length > 1) {
               return {
                 summary: paragraphs[0].trim(),
-                bullets: paragraphs.slice(1).map(p => p.trim().replace(/^[-•*]\s*/, ''))
+                bullets: paragraphs.slice(1).map(p => {
+                  const trimmed = p.trim().replace(/^[-•*]\s*/, '');
+                  const timestamp = parseTimestamp(trimmed);
+                  let displayText = trimmed;
+                  if (timestamp !== null) {
+                    displayText = trimmed
+                      .replace(/\d+:\d+/g, '')
+                      .replace(/\d+s/gi, '')
+                      .replace(/\d+m\s*\d+s/gi, '')
+                      .replace(/\d+m/gi, '')
+                      .trim()
+                      .replace(/\s+/g, ' ');
+                  }
+                  return { text: displayText, timestamp };
+                })
               };
             }
             // If still no bullets, create them from the reasoning text
@@ -686,7 +770,21 @@ export default function Home() {
             if (parts.length > 1) {
               return {
                 summary: parts[0].trim(),
-                bullets: parts.slice(1).map(p => p.trim())
+                bullets: parts.slice(1).map(p => {
+                  const trimmed = p.trim();
+                  const timestamp = parseTimestamp(trimmed);
+                  let displayText = trimmed;
+                  if (timestamp !== null) {
+                    displayText = trimmed
+                      .replace(/\d+:\d+/g, '')
+                      .replace(/\d+s/gi, '')
+                      .replace(/\d+m\s*\d+s/gi, '')
+                      .replace(/\d+m/gi, '')
+                      .trim()
+                      .replace(/\s+/g, ' ');
+                  }
+                  return { text: displayText, timestamp };
+                })
               };
             }
           }
@@ -738,12 +836,32 @@ export default function Home() {
                   Grading Details
                 </h3>
                 <ul className="space-y-2">
-                  {bullets.map((bullet: string, index: number) => (
-                    <li key={index} className="flex items-start text-gray-300 text-sm">
-                      <span className="text-purple-400 mr-2 mt-1">•</span>
-                      <span className="flex-1">{bullet}</span>
-                    </li>
-                  ))}
+                  {bullets.map((bullet: { text: string; timestamp: number | null }, index: number) => {
+                    // Format timestamp for display
+                    const formatTimestamp = (seconds: number): string => {
+                      const mins = Math.floor(seconds / 60);
+                      const secs = Math.floor(seconds % 60);
+                      return `${mins}:${secs.toString().padStart(2, '0')}`;
+                    };
+
+                    return (
+                      <li key={index} className="flex items-start text-gray-300 text-sm">
+                        <span className="text-purple-400 mr-2 mt-1">•</span>
+                        <span className="flex-1">
+                          {bullet.text}
+                          {bullet.timestamp !== null && (
+                            <button
+                              onClick={() => seekToTimestamp(bullet.timestamp!)}
+                              className="ml-2 text-purple-400 hover:text-purple-300 underline text-xs font-medium transition-colors"
+                              title={`Jump to ${formatTimestamp(bullet.timestamp)}`}
+                            >
+                              [{formatTimestamp(bullet.timestamp)}]
+                            </button>
+                          )}
+                        </span>
+                      </li>
+                    );
+                  })}
                 </ul>
               </div>
             )}
