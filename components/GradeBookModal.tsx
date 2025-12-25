@@ -20,6 +20,7 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
   const [activeTab, setActiveTab] = useState<'record' | 'upload' | 'identify'>('record');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isClosing, setIsClosing] = useState(false);
   
   // Recording State
   const [isRecording, setIsRecording] = useState(false);
@@ -252,6 +253,15 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
     await handleVideoProcessing(file, file.name, file.type || 'video/mp4');
   };
 
+  // Handle close animation
+  const handleClose = () => {
+    setIsClosing(true);
+    setTimeout(() => {
+      onClose();
+      setIsClosing(false);
+    }, 200); // Match animation duration
+  };
+
   if (!isOpen) return null;
 
   const tabs = [
@@ -261,16 +271,16 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
   ] as const;
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col justify-end bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+    <div className={`fixed inset-0 z-50 flex flex-col justify-end transition-all duration-200 ${isClosing ? 'bg-black/0' : 'bg-black/80'} backdrop-blur-sm animate-in fade-in`}>
       <div 
-        className="w-full bg-gray-900 border-t border-gray-800 rounded-t-3xl shadow-2xl overflow-hidden flex flex-col"
+        className={`w-full bg-gray-900 border-t border-gray-800 rounded-t-3xl shadow-2xl overflow-hidden flex flex-col transition-all duration-200 ease-in-out ${isClosing ? 'translate-y-full' : 'translate-y-0'}`}
         style={{ height: '95vh' }}
       >
         
         {/* Header */}
         <div className="p-4 flex items-center justify-between bg-gray-900 z-20 relative">
             <h2 className="text-xl font-bold text-white pl-2">Grade Book</h2>
-            <button onClick={onClose} className="p-2 hover:bg-gray-800 rounded-full text-gray-400 hover:text-white transition-colors">
+            <button onClick={handleClose} className="p-2 hover:bg-gray-800 rounded-full text-gray-400 hover:text-white transition-colors">
                 <ChevronDown size={28} />
             </button>
         </div>
@@ -327,12 +337,12 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
 
                         {/* Identify Overlay Grid (Optional visual aid) */}
                         {activeTab === 'identify' && !loading && (
-                            <div className="absolute inset-0 border-2 border-purple-500/30 pointer-events-none">
-                                <div className="absolute inset-0 flex items-center justify-center">
+                            <div className="absolute inset-0 pointer-events-none">
+                                <div className="absolute top-[15%] left-0 right-0 flex flex-col items-center justify-center gap-4">
                                     <div className="w-64 h-80 border-2 border-purple-400 rounded-lg shadow-[0_0_15px_rgba(168,85,247,0.5)] bg-transparent" />
-                                </div>
-                                <div className="absolute bottom-20 w-full text-center text-white/70 text-sm font-medium shadow-black drop-shadow-md">
-                                    Position comic cover in frame
+                                    <div className="text-center text-white/90 text-sm font-medium shadow-black drop-shadow-md bg-black/40 px-4 py-2 rounded-full backdrop-blur-sm">
+                                        Position comic cover in frame
+                                    </div>
                                 </div>
                             </div>
                         )}
