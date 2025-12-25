@@ -70,26 +70,32 @@ export async function analyzeComicFromUrl(videoUrl: string, mimeType?: string): 
     const binarySizeMB = parseFloat(fileSizeMB);
     console.log(`[Server Action] Video downloaded: ${fileSizeMB}MB (${arrayBuffer.byteLength} bytes)`);
     
+    // Validate ArrayBuffer - check first/last bytes to ensure file isn't corrupted
+    const firstBytes = new Uint8Array(arrayBuffer.slice(0, Math.min(16, arrayBuffer.byteLength)));
+    const lastBytes = new Uint8Array(arrayBuffer.slice(Math.max(0, arrayBuffer.byteLength - 16), arrayBuffer.byteLength));
+    console.log(`[Server Action] File validation - First 16 bytes: ${Array.from(firstBytes).map(b => b.toString(16).padStart(2, '0')).join(' ')}`);
+    console.log(`[Server Action] File validation - Last 16 bytes: ${Array.from(lastBytes).map(b => b.toString(16).padStart(2, '0')).join(' ')}`);
+    
     // HARDCODE mimeType to video/mp4 - client already normalized the file
-    // The client-side slice() fix normalizes all files to MP4 before upload
     const finalMimeType = 'video/mp4';
     
-    console.log(`[Server Action] Using hardcoded mimeType: ${finalMimeType} (client normalized file to MP4)`);
-    
-    // ALWAYS use Google File API for all videos to avoid base64 encoding issues
-    // Base64 can cause 500 errors, especially with mobile/HEVC videos
-    // This is the most reliable approach
+    console.log(`[Server Action] Using hardcoded mimeType: ${finalMimeType}`);
     console.log(`[Server Action] Using Google File API for all videos (${fileSizeMB}MB) to ensure reliability...`);
     
     let fileUri: string | null = null;
     
     try {
       // Convert ArrayBuffer to Blob for upload
-      // Use hardcoded video/mp4 - client already normalized the file
       const blob = new Blob([arrayBuffer], { type: 'video/mp4' });
       const file = new File([blob], 'comic-video.mp4', { type: 'video/mp4' });
       
-      console.log(`[Server Action] Uploading ${fileSizeMB}MB file to Google File API (type: ${finalMimeType})...`);
+      // Validate the File object
+      console.log(`[Server Action] Created File object: size=${file.size}, type=${file.type}, name=${file.name}`);
+      if (file.size !== arrayBuffer.byteLength) {
+        console.error(`[Server Action] ⚠️ Size mismatch: ArrayBuffer=${arrayBuffer.byteLength}, File=${file.size}`);
+      }
+      
+      console.log(`[Server Action] Uploading ${fileSizeMB}MB file to Google File API...`);
       fileUri = await uploadToGoogleFileAPI(file, apiKey);
       console.log(`[Server Action] ✅ File uploaded to Google File API: ${fileUri}`);
     } catch (fileApiError) {
@@ -134,6 +140,8 @@ export async function analyzeComicFromUrl(videoUrl: string, mimeType?: string): 
     }
     
     console.log(`[Server Action] Sending video to Gemini API using File API reference: ${fileUri}`);
+    console.log(`[Server Action] Payload: fileUri=${fileUri}, mimeType=${finalMimeType}`);
+    
     const payload = [
       {
         fileData: {
@@ -147,11 +155,39 @@ export async function analyzeComicFromUrl(videoUrl: string, mimeType?: string): 
     ];
     
     // Generate content with the model
-    const analysisPromise = model.generateContent(payload);
+    console.log(`[Server Action] Calling model.generateContent()...`);
     
-    const result = await Promise.race([analysisPromise, timeoutPromise]) as any;
-    
-    console.log("[Server Action] Received response from Gemini API");
+    let result: any;
+    try {
+      const analysisPromise = model.generateContent(payload);
+      result = await Promise.race([analysisPromise, timeoutPromise]) as any;
+      console.log("[Server Action] ✅ Received response from Gemini API");
+    } catch (geminiError: any) {
+      // Log the full error from Gemini API
+      console.error("[Server Action] ❌ Gemini API error:", {
+        name: geminiError?.name,
+        message: geminiError?.message,
+        stack: geminiError?.stack,
+        response: geminiError?.response,
+        status: geminiError?.status,
+        statusText: geminiError?.statusText,
+        fullError: JSON.stringify(geminiError, Object.getOwnPropertyNames(geminiError))
+      });
+      
+      // Try to extract more details from the error
+      let errorMessage = geminiError?.message || String(geminiError);
+      if (geminiError?.response) {
+        try {
+          const errorText = await geminiError.response.text();
+          console.error("[Server Action] Gemini API error response body:", errorText);
+          errorMessage += ` | Response: ${errorText}`;
+        } catch (e) {
+          // Ignore if we can't read the response
+        }
+      }
+      
+      throw new Error(`Gemini API error: ${errorMessage}`);
+    }
     
     // Get the response text (text() is async and must be awaited)
     const response = result.response;
