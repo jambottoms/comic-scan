@@ -134,75 +134,77 @@ export default function Home() {
         
         // Show file size info
         const fileSizeMB = (blob.size / 1024 / 1024).toFixed(2);
-        console.log(`Uploading video: ${fileSizeMB}MB`);
-        
+        console.log(`Uploading recorded video: ${fileSizeMB}MB`);
+
+        // Convert blob to File for Supabase upload
+        const file = new File([blob], "comic-video.webm", { type: "video/webm" });
+
         try {
-          const formData = new FormData();
-          formData.append("file", blob, "comic-video.webm");
-
-          // Use XMLHttpRequest to track upload progress for recorded videos too
-          const data = await new Promise<any>((resolve, reject) => {
-            const xhr = new XMLHttpRequest();
-            uploadXhrRef.current = xhr; // Store for cancellation
-
-            // Track upload progress
-            xhr.upload.addEventListener('progress', (event) => {
-              if (event.lengthComputable) {
-                const percentComplete = Math.round((event.loaded / event.total) * 100);
-                setUploadProgress(percentComplete);
-              }
-            });
-
-            // Handle completion
-            xhr.addEventListener('load', () => {
-              uploadXhrRef.current = null;
-              if (xhr.status === 200) {
-                try {
-                  const response = JSON.parse(xhr.responseText);
-                  if (response.error) {
-                    reject(new Error(response.error));
-                  } else {
-                    resolve(response);
-                  }
-                } catch (parseError) {
-                  reject(new Error('Failed to parse response'));
-                }
-              } else {
-                reject(new Error(`Server error: ${xhr.status}`));
-              }
-            });
-
-            xhr.addEventListener('error', () => {
-              uploadXhrRef.current = null;
-              reject(new Error('Network error during upload'));
-            });
-
-            xhr.addEventListener('abort', () => {
-              uploadXhrRef.current = null;
-              reject(new Error('Upload cancelled'));
-            });
-
-            xhr.open('POST', '/api/analyze');
-            xhr.send(formData);
-          });
-
-          console.log("Analysis complete:", data);
-          setResult(data);
-          setUploadProgress(100);
-        } catch (err) {
-          console.error("Analysis error:", err);
-          const errorMessage = err instanceof Error ? err.message : "Failed to analyze. Check terminal for details.";
+          // Use the same Supabase flow as file upload to bypass Vercel's 4.5MB limit
+          // Step 1: Upload to Supabase Storage (client-side, no size limit)
+          console.log("Step 1: Uploading recorded video to Supabase Storage...");
+          setUploadProgress(10);
           
-          // Don't show error if it was cancelled
-          if (!errorMessage.includes('cancelled')) {
+          const supabaseUrl = await uploadToSupabase(file);
+          console.log("Recorded video uploaded to Supabase:", supabaseUrl);
+          setUploadProgress(50);
+          
+          // Step 2: Send URL to server action (small payload, bypasses 4.5MB limit)
+          console.log("Step 2: Sending URL to server for analysis...");
+          setUploadProgress(60);
+          
+          const result = await analyzeComicFromUrl(supabaseUrl, file.type || "video/webm");
+          console.log("Analysis complete, received result:", result);
+          setUploadProgress(90);
+          
+          if (result.success) {
+            setResult(result.data);
+            setUploadProgress(100);
+            console.log("Result set, should display now");
+          } else {
+            // Handle error from server action
+            let errorMessage = result.error;
+            
+            // Add helpful context for common errors
+            if (errorMessage.includes("GOOGLE_API_KEY")) {
+              errorMessage += " Please check Vercel environment variables.";
+            } else if (errorMessage.includes("timeout") || errorMessage.includes("timed out")) {
+              errorMessage += " Try recording a shorter video (5-10 seconds).";
+            } else if (errorMessage.includes("Failed to download")) {
+              errorMessage += " There may be an issue with Supabase Storage. Please try again.";
+            }
+            
             setError(errorMessage);
           }
+        } catch (err) {
+          console.error("Upload analysis error:", err);
+          console.error("Error details:", {
+            name: err instanceof Error ? err.name : 'Unknown',
+            message: err instanceof Error ? err.message : String(err),
+            stack: err instanceof Error ? err.stack : undefined
+          });
           
-          setUploadProgress(0);
+          let errorMessage = "Failed to analyze video. ";
+          if (err instanceof Error) {
+            errorMessage = err.message;
+            
+            // Add helpful context for common errors
+            if (err.message.includes("GOOGLE_API_KEY")) {
+              errorMessage += " Please check Vercel environment variables.";
+            } else if (err.message.includes("timeout") || err.message.includes("timed out")) {
+              errorMessage += " Try recording a shorter video (5-10 seconds).";
+            } else if (err.message.includes("Failed to download")) {
+              errorMessage += " There may be an issue with Supabase Storage. Please try again.";
+            }
+          } else {
+            errorMessage += "Check browser console and Vercel logs for details.";
+          }
+          
+          setError(errorMessage);
         } finally {
           setLoading(false);
+          setUploadProgress(0);
           uploadXhrRef.current = null;
-          setTimeout(() => setUploadProgress(0), 2000);
         }
       };
 
