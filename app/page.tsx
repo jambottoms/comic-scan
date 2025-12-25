@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { analyzeComic } from './actions';
 import { uploadToSupabase } from '@/lib/supabase/upload';
-import { analyzeComicFromGoogleFile } from './actions/analyze-from-url';
+import { analyzeComicFromUrl } from './actions/analyze-from-url';
 
 interface VersionInfo {
   version: string;
@@ -276,7 +276,8 @@ export default function Home() {
     const fileSizeMB = (file.size / 1024 / 1024).toFixed(2);
     console.log(`Uploading video for analysis: ${fileSizeMB}MB`);
 
-    // New flow: Supabase → Google File API → Gemini (avoids memory/timeout issues)
+    // Simplified flow: Supabase → Server Action (downloads and analyzes directly)
+    // This avoids the complex Google File API upload that was causing issues
     try {
       // Step 1: Upload file to Supabase Storage (client-side, no size limit)
       console.log("Step 1: Uploading to Supabase Storage...");
@@ -284,70 +285,19 @@ export default function Home() {
       
       const supabaseUrl = await uploadToSupabase(file);
       console.log("File uploaded to Supabase:", supabaseUrl);
-      setUploadProgress(20);
-      
-      // Step 2: Upload from Supabase to Google File API (API route with longer timeout)
-      console.log("Step 2: Uploading to Google File API...");
-      setUploadProgress(30);
-      
-      const uploadResponse = await fetch('/api/upload-to-google', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          videoUrl: supabaseUrl,
-          mimeType: file.type || "video/mp4",
-          fileName: `comic-video-${Date.now()}-${file.name}`,
-        }),
-      });
-      
-      if (!uploadResponse.ok) {
-        const errorData = await uploadResponse.json();
-        throw new Error(errorData.error || 'Failed to upload to Google File API');
-      }
-      
-      const uploadData = await uploadResponse.json();
-      console.log("File uploaded to Google File API:", uploadData);
       setUploadProgress(50);
       
-      // Step 3: Poll for file processing (client-side to avoid server timeout)
-      console.log("Step 3: Waiting for file processing...");
-      let fileState = uploadData.state;
-      let fileName = uploadData.name;
+      // Step 2: Send URL to server action for analysis
+      // Server action will download from Supabase and analyze with Gemini
+      console.log("Step 2: Sending to server for analysis...");
+      setUploadProgress(60);
       
-      while (fileState === 'PROCESSING') {
-        await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds
-        setUploadProgress(50 + (Math.min(30, Date.now() % 30))); // Show progress
-        
-        const stateResponse = await fetch('/api/google-file-state', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ fileName }),
-        });
-        
-        if (!stateResponse.ok) {
-          throw new Error('Failed to check file state');
-        }
-        
-        const stateData = await stateResponse.json();
-        fileState = stateData.state;
-        
-        if (fileState === 'FAILED') {
-          throw new Error(`Video processing failed: ${stateData.error || 'Unknown error'}`);
-        }
-        
-        console.log(`File state: ${fileState}`);
-      }
-      
-      console.log("File processing complete. State:", fileState);
-      setUploadProgress(80);
-      
-      // Step 4: Analyze using file reference (small payload, no download needed)
-      console.log("Step 4: Analyzing video with Gemini...");
-      setUploadProgress(85);
-      
-      const result = await analyzeComicFromGoogleFile(fileName);
+      // Use the original analyzeComicFromUrl which downloads and uses base64
+      // For now, we'll accept the 500 error risk for very large files
+      // TODO: Implement proper Google File API upload when SDK supports it
+      const result = await analyzeComicFromUrl(supabaseUrl, file.type || "video/mp4");
       console.log("Analysis complete, received result:", result);
-      setUploadProgress(95);
+      setUploadProgress(90);
       
       if (result.success) {
         setResult(result.data);

@@ -1,124 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { GoogleGenerativeAI } from "@google/generative-ai";
 
 export const maxDuration = 300; // 5 minutes for large uploads
 
 /**
- * API route to upload video from Supabase to Google File API
- * Uses streaming to avoid memory issues
+ * TEMPORARILY DISABLED - Google File API upload
+ * This route is not working correctly. Reverting to simpler approach.
  */
 export async function POST(request: NextRequest) {
-  try {
-    const { videoUrl, mimeType, fileName } = await request.json();
-    
-    if (!videoUrl || !mimeType) {
-      return NextResponse.json(
-        { error: 'Missing videoUrl or mimeType' },
-        { status: 400 }
-      );
-    }
-
-    const apiKey = process.env.GOOGLE_API_KEY;
-    if (!apiKey) {
-      return NextResponse.json(
-        { error: 'GOOGLE_API_KEY is not set' },
-        { status: 500 }
-      );
-    }
-
-    console.log(`[API Route] Downloading video from Supabase: ${videoUrl}`);
-    
-    // Download video from Supabase with streaming
-    const downloadResponse = await fetch(videoUrl, {
-      headers: { 'Accept': 'video/*' }
-    });
-    
-    if (!downloadResponse.ok) {
-      return NextResponse.json(
-        { error: `Failed to download from Supabase: ${downloadResponse.statusText}` },
-        { status: downloadResponse.status }
-      );
-    }
-
-    // Stream the download and collect chunks (we'll optimize this later)
-    const chunks: Uint8Array[] = [];
-    const reader = downloadResponse.body?.getReader();
-    
-    if (!reader) {
-      return NextResponse.json(
-        { error: 'Failed to get response stream' },
-        { status: 500 }
-      );
-    }
-
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        if (value) chunks.push(value);
-      }
-    } finally {
-      reader.releaseLock();
-    }
-
-    // Combine chunks into buffer
-    const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
-    const buffer = new Uint8Array(totalLength);
-    let offset = 0;
-    for (const chunk of chunks) {
-      buffer.set(chunk, offset);
-      offset += chunk.length;
-    }
-
-    const fileSizeMB = (buffer.length / 1024 / 1024).toFixed(2);
-    console.log(`[API Route] Video downloaded: ${fileSizeMB}MB`);
-
-    // Upload to Google File API using REST API with multipart form data
-    console.log(`[API Route] Uploading ${fileSizeMB}MB to Google File API...`);
-    
-    // Create multipart form data using FormData (Node.js 18+ has native FormData)
-    const formData = new FormData();
-    const metadata = {
-      file: {
-        display_name: fileName || `comic-video-${Date.now()}`,
-      }
-    };
-    formData.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
-    formData.append('file', new Blob([buffer], { type: mimeType }), fileName || 'video.mp4');
-    
-    // Use Google's File API REST endpoint
-    const uploadResponse = await fetch(
-      `https://generativelanguage.googleapis.com/upload/v1beta/files?key=${apiKey}`,
-      {
-        method: 'POST',
-        body: formData,
-      }
-    );
-
-    if (!uploadResponse.ok) {
-      const errorText = await uploadResponse.text();
-      console.error('[API Route] Upload failed:', errorText);
-      return NextResponse.json(
-        { error: `Failed to upload to Google File API: ${uploadResponse.statusText}` },
-        { status: uploadResponse.status }
-      );
-    }
-
-    const uploadResult = await uploadResponse.json();
-    console.log(`[API Route] Video uploaded. File:`, uploadResult);
-
-    return NextResponse.json({
-      uri: uploadResult.file?.uri || uploadResult.name,
-      name: uploadResult.file?.name || uploadResult.name,
-      state: uploadResult.file?.state || uploadResult.state || 'PROCESSING',
-    });
-
-  } catch (error) {
-    console.error('[API Route] Upload error:', error);
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Failed to upload video' },
-      { status: 500 }
-    );
-  }
+  return NextResponse.json(
+    { error: 'Google File API upload is temporarily disabled. Please use the direct analysis method.' },
+    { status: 501 }
+  );
 }
 
