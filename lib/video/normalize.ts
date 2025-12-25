@@ -10,41 +10,68 @@ import { spawn } from 'child_process';
 import { Readable } from 'stream';
 import { existsSync } from 'fs';
 import { chmodSync } from 'fs';
+import { loadFfmpegPath } from './ffmpeg-loader';
 
-// Import ffmpeg-static - use require for better compatibility with static binaries
-// This is initialized at module load time to ensure the binary path is available
+// Lazy load ffmpeg-static to avoid issues with top-level await
+let ffmpegPathCache: string | null = null;
+
+// Get FFmpeg binary path with lazy loading
 function getFfmpegPath(): string {
+  // Return cached path if available
+  if (ffmpegPathCache) {
+    return ffmpegPathCache;
+  }
+  
   try {
-    // Try both import methods for compatibility
-    const ffmpegStatic = require('ffmpeg-static');
-    let path = typeof ffmpegStatic === 'string' ? ffmpegStatic : ffmpegStatic.default || ffmpegStatic;
+    // Load path from separate module to prevent bundler static analysis
+    let ffmpegBinaryPath = loadFfmpegPath();
     
-    if (!path) {
-      throw new Error('ffmpeg-static returned null/undefined path');
+    if (!ffmpegBinaryPath || typeof ffmpegBinaryPath !== 'string') {
+      throw new Error('ffmpeg-static returned invalid path. The binary may not be available for this platform.');
     }
     
-    // Verify the binary exists and is accessible
-    if (!existsSync(path)) {
+    // On Vercel, paths might be different - try to resolve the actual path
+    const originalPath = ffmpegBinaryPath;
+    
+    // Verify the binary exists
+    if (!existsSync(ffmpegBinaryPath)) {
       // Log diagnostic information
-      console.error(`[FFmpeg] Binary not found at path: ${path}`);
-      console.error(`[FFmpeg] Current working directory: ${process.cwd()}`);
-      console.error(`[FFmpeg] Node version: ${process.version}`);
-      throw new Error(`FFmpeg binary not found at: ${path}. This may be a Vercel deployment issue - ensure ffmpeg-static is properly installed.`);
+      console.error(`[FFmpeg] Binary not found at original path: ${ffmpegBinaryPath}`);
+      console.error(`[FFmpeg] CWD: ${process.cwd()}, Platform: ${process.platform}, Arch: ${process.arch}`);
+      
+      // Try alternative paths for Vercel
+      const alternatives = [
+        ffmpegBinaryPath.replace(/^\/ROOT\//, process.cwd() + '/'),
+        ffmpegBinaryPath.replace(/^\/var\/task\//, process.cwd() + '/'),
+      ].filter(Boolean);
+      
+      for (const altPath of alternatives) {
+        if (altPath && existsSync(altPath)) {
+          console.log(`[FFmpeg] Found binary at alternative path: ${altPath}`);
+          ffmpegBinaryPath = altPath;
+          break;
+        }
+      }
+      
+      if (!existsSync(ffmpegBinaryPath)) {
+        throw new Error(`FFmpeg binary not found at: ${originalPath}. This is likely a Vercel deployment issue. Ensure ffmpeg-static is in dependencies and the binary is included in the build.`);
+      }
     }
     
     // Ensure binary is executable
     try {
-      chmodSync(path, 0o755);
+      chmodSync(ffmpegBinaryPath, 0o755);
     } catch (chmodError) {
-      // Ignore chmod errors (might not have permission or file might already be executable)
-      console.warn(`[FFmpeg] Could not set execute permissions (this is usually OK): ${chmodError}`);
+      // Ignore - binary is usually already executable
+      console.warn(`[FFmpeg] Could not set execute permissions (usually OK)`);
     }
     
-    console.log(`[FFmpeg] Binary found and ready at: ${path}`);
-    return path;
-  } catch (importError: any) {
-    console.error('[FFmpeg] Failed to import or locate ffmpeg-static:', importError);
-    throw new Error(`FFmpeg setup failed: ${importError?.message || String(importError)}. Please ensure ffmpeg-static is installed: npm install ffmpeg-static`);
+    console.log(`[FFmpeg] Binary ready at: ${ffmpegBinaryPath}`);
+    ffmpegPathCache = ffmpegBinaryPath;
+    return ffmpegBinaryPath;
+  } catch (error: any) {
+    console.error('[FFmpeg] Failed to load ffmpeg-static:', error);
+    throw new Error(`FFmpeg setup failed: ${error?.message || String(error)}. Ensure ffmpeg-static is installed: npm install ffmpeg-static`);
   }
 }
 
