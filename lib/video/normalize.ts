@@ -7,8 +7,46 @@
  */
 
 import { spawn } from 'child_process';
-import ffmpegStatic from 'ffmpeg-static';
 import { Readable } from 'stream';
+import { existsSync } from 'fs';
+import { chmodSync } from 'fs';
+
+// Import ffmpeg-static - use require for better compatibility with static binaries
+// This is initialized at module load time to ensure the binary path is available
+function getFfmpegPath(): string {
+  try {
+    // Try both import methods for compatibility
+    const ffmpegStatic = require('ffmpeg-static');
+    let path = typeof ffmpegStatic === 'string' ? ffmpegStatic : ffmpegStatic.default || ffmpegStatic;
+    
+    if (!path) {
+      throw new Error('ffmpeg-static returned null/undefined path');
+    }
+    
+    // Verify the binary exists and is accessible
+    if (!existsSync(path)) {
+      // Log diagnostic information
+      console.error(`[FFmpeg] Binary not found at path: ${path}`);
+      console.error(`[FFmpeg] Current working directory: ${process.cwd()}`);
+      console.error(`[FFmpeg] Node version: ${process.version}`);
+      throw new Error(`FFmpeg binary not found at: ${path}. This may be a Vercel deployment issue - ensure ffmpeg-static is properly installed.`);
+    }
+    
+    // Ensure binary is executable
+    try {
+      chmodSync(path, 0o755);
+    } catch (chmodError) {
+      // Ignore chmod errors (might not have permission or file might already be executable)
+      console.warn(`[FFmpeg] Could not set execute permissions (this is usually OK): ${chmodError}`);
+    }
+    
+    console.log(`[FFmpeg] Binary found and ready at: ${path}`);
+    return path;
+  } catch (importError: any) {
+    console.error('[FFmpeg] Failed to import or locate ffmpeg-static:', importError);
+    throw new Error(`FFmpeg setup failed: ${importError?.message || String(importError)}. Please ensure ffmpeg-static is installed: npm install ffmpeg-static`);
+  }
+}
 
 export interface NormalizeOptions {
   onProgress?: (progress: { percent: number; frames: number; currentFps: number }) => void;
@@ -26,15 +64,18 @@ export function normalizeVideoStream(
   options: NormalizeOptions = {}
 ): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    if (!ffmpegStatic) {
-      reject(new Error('FFmpeg binary not found. Please ensure ffmpeg-static is installed.'));
+    let ffmpegPath: string;
+    try {
+      ffmpegPath = getFfmpegPath();
+    } catch (error) {
+      reject(error);
       return;
     }
 
-    console.log('[FFmpeg] Starting normalization with spawn...');
+    console.log(`[FFmpeg] Starting normalization with spawn (binary: ${ffmpegPath})...`);
     
     // Spawn FFmpeg process with exact ComicScan optimization flags
-    const ffmpegProcess = spawn(ffmpegStatic, [
+    const ffmpegProcess = spawn(ffmpegPath, [
       '-i', 'pipe:0',                    // Input from stdin
       '-c:v', 'libx264',                 // H.264 codec
       '-vf', 'scale=-1:1080,fps=1',      // Scale to 1080p height, 1 fps
