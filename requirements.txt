@@ -1,0 +1,16 @@
+# Comic Book Grading - Video-to-Frame Pipeline
+# High-precision computer vision dependencies
+# Compatible with Python 3.9+
+
+# Core Computer Vision
+opencv-python==4.9.0.80
+numpy==1.26.4
+
+# YOLOv11 Object Detection (ultralytics)
+ultralytics==8.3.50
+
+# Scientific Computing (Python 3.9 compatible)
+scipy==1.13.1
+
+# Image Processing Utilities
+pillow==10.4.0

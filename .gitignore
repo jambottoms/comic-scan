@@ -1,5 +1,29 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
+# Python
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+# lib/ - commented out, conflicts with project lib folder
+# lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
 # dependencies
 /node_modules
 /.pnp
