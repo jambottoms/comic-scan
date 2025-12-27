@@ -75,11 +75,6 @@ export default function Dashboard() {
     setIsGradeBookOpen(true);
   };
 
-  const handleIdentify = () => {
-    setInitialTab('identify');
-    setIsGradeBookOpen(true);
-  };
-
   const handleTrain = () => {
     setIsTrainingOpen(true);
   };
@@ -259,7 +254,6 @@ export default function Dashboard() {
       <FabMenu 
         onRecord={handleRecord}
         onUpload={handleUpload}
-        onIdentify={handleIdentify}
         onTrain={handleTrain}
       />
 

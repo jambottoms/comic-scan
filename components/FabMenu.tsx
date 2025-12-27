@@ -1,16 +1,15 @@
 'use client';
 
 import { useState } from 'react';
-import { Plus, Upload, Video, Search, BrainCircuit } from 'lucide-react';
+import { Plus, Upload, Video, BrainCircuit } from 'lucide-react';
 
 interface FabMenuProps {
   onRecord: () => void;
   onUpload: () => void;
-  onIdentify: () => void;
   onTrain: () => void;
 }
 
-export default function FabMenu({ onRecord, onUpload, onIdentify, onTrain }: FabMenuProps) {
+export default function FabMenu({ onRecord, onUpload, onTrain }: FabMenuProps) {
   const [isOpen, setIsOpen] = useState(false);
 
   return (
@@ -52,20 +51,7 @@ export default function FabMenu({ onRecord, onUpload, onIdentify, onTrain }: Fab
           </div>
         </button>
 
-        {/* Identify Option */}
-        <button 
-          onClick={() => { onIdentify(); setIsOpen(false); }} 
-          className="group flex items-center gap-3"
-        >
-          <span className="bg-gray-900 text-white px-3 py-1.5 rounded-lg text-sm font-medium shadow-lg">
-            Identify
-          </span>
-          <div className="bg-purple-600 hover:bg-purple-500 text-white p-3 rounded-full shadow-lg transition-colors">
-            <Search size={24} />
-          </div>
-        </button>
-
-        {/* Train Option */}
+        {/* Train AI Option (Formerly Identify) */}
         <button 
           onClick={() => { onTrain(); setIsOpen(false); }} 
           className="group flex items-center gap-3"
@@ -73,7 +59,7 @@ export default function FabMenu({ onRecord, onUpload, onIdentify, onTrain }: Fab
           <span className="bg-gray-900 text-white px-3 py-1.5 rounded-lg text-sm font-medium shadow-lg">
             Train AI
           </span>
-          <div className="bg-emerald-600 hover:bg-emerald-500 text-white p-3 rounded-full shadow-lg transition-colors">
+          <div className="bg-purple-600 hover:bg-purple-500 text-white p-3 rounded-full shadow-lg transition-colors">
             <BrainCircuit size={24} />
           </div>
         </button>

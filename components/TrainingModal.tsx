@@ -31,17 +31,14 @@ const REGION_TYPES = [
   "Bottom Right Corner"
 ];
 
-type TrainingMode = 'defect' | 'region';
-
 export default function TrainingModal({ onClose }: { onClose: () => void }) {
   const [imageSrc, setImageSrc] = useState<string | null>(null);
   const [crop, setCrop] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
   const [croppedAreaPixels, setCroppedAreaPixels] = useState<Area | null>(null);
-  const [selectedLabel, setSelectedLabel] = useState<string>("");
+  const [selectedLabels, setSelectedLabels] = useState<string[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [step, setStep] = useState<'mode' | 'capture' | 'crop' | 'tag'>('mode');
-  const [trainingMode, setTrainingMode] = useState<TrainingMode>('defect');
+  const [step, setStep] = useState<'capture' | 'crop' | 'tag'>('capture');
   
   // Use camera hook
   const { videoRef, isStreaming, error: cameraError, startCamera, stopCamera, capturePhoto } = useCamera();
@@ -121,9 +118,20 @@ export default function TrainingModal({ onClose }: { onClose: () => void }) {
     });
   }, [imageSrc, croppedAreaPixels]);
 
+  // Toggle label selection
+  const toggleLabel = (label: string) => {
+    setSelectedLabels(prev => {
+      if (prev.includes(label)) {
+        return prev.filter(l => l !== label);
+      } else {
+        return [...prev, label];
+      }
+    });
+  };
+
   // 3. Submit
   const handleSubmit = async () => {
-    if (!selectedLabel) return;
+    if (selectedLabels.length === 0) return;
     setIsSubmitting(true);
 
     try {
@@ -134,7 +142,11 @@ export default function TrainingModal({ onClose }: { onClose: () => void }) {
       const supabase = createClient();
       if (!supabase) throw new Error("Failed to create Supabase client");
       
-      const prefix = trainingMode === 'defect' ? 'defect' : 'region';
+      // Determine prefix based on selected labels
+      const hasDefect = selectedLabels.some(l => DEFECT_TYPES.includes(l));
+      const hasRegion = selectedLabels.some(l => REGION_TYPES.includes(l));
+      const prefix = hasDefect && hasRegion ? 'mixed' : hasDefect ? 'defect' : 'region';
+      
       const filename = `${prefix}-${Date.now()}.jpg`;
       const { error: uploadError } = await supabase.storage
         .from('training-data')
@@ -146,17 +158,37 @@ export default function TrainingModal({ onClose }: { onClose: () => void }) {
         .from('training-data')
         .getPublicUrl(filename);
 
-      // Send to appropriate Nyckel function
-      const result = trainingMode === 'defect'
-        ? await trainDefect(publicUrl, selectedLabel)
-        : await trainRegion(publicUrl, selectedLabel);
+      // Smart Routing: Send to appropriate Nyckel functions in parallel
+      const promises = [];
+
+      // 1. Process Defect Labels
+      const defectLabels = selectedLabels.filter(l => DEFECT_TYPES.includes(l));
+      if (defectLabels.length > 0) {
+        // Nyckel API typically takes one label per sample for classification functions.
+        // We'll send a request for each label if multiple are selected.
+        defectLabels.forEach(label => {
+          promises.push(trainDefect(publicUrl, label));
+        });
+      }
+
+      // 2. Process Region Labels
+      const regionLabels = selectedLabels.filter(l => REGION_TYPES.includes(l));
+      if (regionLabels.length > 0) {
+        regionLabels.forEach(label => {
+          promises.push(trainRegion(publicUrl, label));
+        });
+      }
+
+      const results = await Promise.all(promises);
       
-      if (!result.success) {
-        throw new Error(result.error);
+      // Check for failures
+      const failures = results.filter(r => !r.success);
+      if (failures.length > 0) {
+        throw new Error(`Failed to train ${failures.length} labels: ${failures[0].error}`);
       }
       
       onClose();
-      alert(`${trainingMode === 'defect' ? 'Defect' : 'Region'} training sample added successfully!`); 
+      alert(`Successfully added ${selectedLabels.length} training sample(s)!`); 
     } catch (e) {
       console.error(e);
       alert(`Failed to save sample: ${(e as Error).message}`);
@@ -165,12 +197,10 @@ export default function TrainingModal({ onClose }: { onClose: () => void }) {
     }
   };
 
-  const labelOptions = trainingMode === 'defect' ? DEFECT_TYPES : REGION_TYPES;
   const headerTitle = 
-    step === 'mode' ? 'Choose Training Type' :
     step === 'capture' ? 'New Sample' : 
-    step === 'crop' ? `Crop ${trainingMode === 'defect' ? 'Defect' : 'Region'}` : 
-    `Label ${trainingMode === 'defect' ? 'Defect' : 'Region'}`;
+    step === 'crop' ? 'Crop Sample' : 
+    'Select Tags';
 
   return (
     <div className="fixed inset-0 z-50 bg-black/95 flex flex-col">
@@ -187,39 +217,6 @@ export default function TrainingModal({ onClose }: { onClose: () => void }) {
       {/* Content */}
       <div className="flex-1 relative flex flex-col items-center justify-center p-4 w-full">
         
-        {/* Step 1: Choose Training Mode */}
-        {step === 'mode' && (
-          <div className="w-full max-w-md space-y-4">
-            <button
-              onClick={() => {
-                setTrainingMode('defect');
-                setStep('capture');
-              }}
-              className="w-full p-6 rounded-xl bg-gradient-to-br from-purple-600 to-purple-700 hover:from-purple-500 hover:to-purple-600 text-white text-left transition-all"
-            >
-              <div className="text-2xl mb-2">🔍</div>
-              <div className="font-bold text-xl mb-1">Train Defect Detection</div>
-              <div className="text-sm text-purple-100">
-                Teach the AI to identify specific types of defects (creases, tears, stains, etc.)
-              </div>
-            </button>
-
-            <button
-              onClick={() => {
-                setTrainingMode('region');
-                setStep('capture');
-              }}
-              className="w-full p-6 rounded-xl bg-gradient-to-br from-emerald-600 to-emerald-700 hover:from-emerald-500 hover:to-emerald-600 text-white text-left transition-all"
-            >
-              <div className="text-2xl mb-2">📍</div>
-              <div className="font-bold text-xl mb-1">Train Region Detection</div>
-              <div className="text-sm text-emerald-100">
-                Teach the AI to locate key areas (spine, corners, staples)
-              </div>
-            </button>
-          </div>
-        )}
-
         {step === 'capture' && (
           <div className="w-full max-w-2xl flex flex-col items-center gap-4">
             {/* Camera Stream */}
@@ -289,22 +286,47 @@ export default function TrainingModal({ onClose }: { onClose: () => void }) {
         )}
 
         {step === 'tag' && (
-          <div className="grid grid-cols-2 gap-3 w-full max-w-md overflow-y-auto max-h-[60vh] pb-20">
-            {labelOptions.map(label => (
-              <button
-                key={label}
-                onClick={() => setSelectedLabel(label)}
-                className={`p-4 rounded-xl text-left font-medium transition-all ${
-                  selectedLabel === label 
-                    ? trainingMode === 'defect'
-                      ? 'bg-purple-600 text-white shadow-lg shadow-purple-900/50'
-                      : 'bg-emerald-600 text-white shadow-lg shadow-emerald-900/50'
-                    : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
-                }`}
-              >
-                {label}
-              </button>
-            ))}
+          <div className="w-full max-w-md overflow-y-auto max-h-[70vh] pb-20 space-y-6">
+            
+            {/* Defect Section */}
+            <div>
+              <h3 className="text-purple-400 text-sm font-bold uppercase tracking-wider mb-3 px-1">Defects</h3>
+              <div className="grid grid-cols-2 gap-2">
+                {DEFECT_TYPES.map(label => (
+                  <button
+                    key={label}
+                    onClick={() => toggleLabel(label)}
+                    className={`p-3 rounded-xl text-left font-medium text-sm transition-all ${
+                      selectedLabels.includes(label)
+                        ? 'bg-purple-600 text-white shadow-lg ring-2 ring-purple-400' 
+                        : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Region Section */}
+            <div>
+              <h3 className="text-emerald-400 text-sm font-bold uppercase tracking-wider mb-3 px-1">Regions</h3>
+              <div className="grid grid-cols-2 gap-2">
+                {REGION_TYPES.map(label => (
+                  <button
+                    key={label}
+                    onClick={() => toggleLabel(label)}
+                    className={`p-3 rounded-xl text-left font-medium text-sm transition-all ${
+                      selectedLabels.includes(label)
+                        ? 'bg-emerald-600 text-white shadow-lg ring-2 ring-emerald-400' 
+                        : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
         )}
       </div>
@@ -323,16 +345,23 @@ export default function TrainingModal({ onClose }: { onClose: () => void }) {
         {step === 'tag' && (
           <button 
             onClick={handleSubmit}
-            disabled={!selectedLabel || isSubmitting}
-            className={`w-full disabled:bg-gray-700 text-white font-bold py-4 rounded-full flex items-center justify-center gap-2 ${
-              trainingMode === 'defect' ? 'bg-purple-600' : 'bg-emerald-600'
+            disabled={selectedLabels.length === 0 || isSubmitting}
+            className={`w-full disabled:bg-gray-700 disabled:opacity-50 text-white font-bold py-4 rounded-full flex items-center justify-center gap-2 transition-colors ${
+              selectedLabels.some(l => DEFECT_TYPES.includes(l)) && selectedLabels.some(l => REGION_TYPES.includes(l))
+                ? 'bg-gradient-to-r from-purple-600 to-emerald-600' // Mixed
+                : selectedLabels.some(l => REGION_TYPES.includes(l))
+                  ? 'bg-emerald-600' // Only Regions
+                  : 'bg-purple-600' // Only Defects (or empty)
             }`}
           >
-            {isSubmitting ? <Loader2 className="animate-spin" /> : 'Submit Training Data'}
+            {isSubmitting ? (
+              <Loader2 className="animate-spin" />
+            ) : (
+              `Submit ${selectedLabels.length > 0 ? `(${selectedLabels.length})` : ''}`
+            )}
           </button>
         )}
       </div>
     </div>
   );
 }
-
