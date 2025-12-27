@@ -584,7 +584,7 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
         className={`w-full bg-gray-900 border-t border-gray-800 rounded-t-3xl shadow-2xl overflow-hidden overscroll-behavior-none flex flex-col ${
           !isCameraTab ? 'transition-transform duration-200 ease-out' : ''
         } ${
-          isVisible ? 'translate-y-0' : (isCameraTab ? 'translate-y-0' : 'translate-y-full')
+          isVisible || isCameraTab ? 'translate-y-0' : 'translate-y-full'
         }`}
         style={{ height: `${viewportHeight}px` }}
       >
