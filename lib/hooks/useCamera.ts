@@ -58,6 +58,12 @@ export function useCamera(): UseCameraReturn {
       setError(null);
       shouldBeStreamingRef.current = true; // Mark that camera should be active
       
+      // Check if we already have an active stream
+      if (streamRef.current && streamRef.current.active) {
+        setIsStreaming(true);
+        return;
+      }
+      
       // Request camera access
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {

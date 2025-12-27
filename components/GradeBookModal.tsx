@@ -127,12 +127,16 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
     
     if (isOpen && shouldUseCamera && !loading && !showUploadModal) {
       startCamera();
-    } else {
+    } else if (!shouldUseCamera) {
+      // Only stop if we're NOT on a camera tab
       stopCamera();
     }
     
     return () => {
-      stopCamera();
+      // Only cleanup when modal closes, not on every effect run
+      if (!isOpen) {
+        stopCamera();
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, activeTab, loading, showUploadModal]);
@@ -578,9 +582,9 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
     >
       <div 
         className={`w-full bg-gray-900 border-t border-gray-800 rounded-t-3xl shadow-2xl overflow-hidden overscroll-behavior-none flex flex-col ${
-          isCameraTab ? '' : 'transition-transform duration-200 ease-out'
+          !isCameraTab ? 'transition-transform duration-200 ease-out' : ''
         } ${
-          isVisible ? 'translate-y-0' : 'translate-y-full'
+          isVisible ? 'translate-y-0' : (isCameraTab ? 'translate-y-0' : 'translate-y-full')
         }`}
         style={{ height: `${viewportHeight}px` }}
       >
