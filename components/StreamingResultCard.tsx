@@ -236,11 +236,22 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
         // Save CV results to localStorage first
         saveDeepScanResults(historyId, result);
         
-        // Now reload entry to get updated results
+        // Force UI update by reloading entry AND triggering a state change
         const updated = getVideoById(historyId);
         if (updated) {
           setEntry(updated);
+          console.log('[Deep Scan] Entry updated with CV results:', {
+            hasDefectMask: !!updated.result?.defectMask,
+            hasRegionCrops: !!updated.result?.regionCrops,
+            damageScore: updated.result?.damageScore,
+            regionScores: updated.result?.regionScores
+          });
         }
+        
+        // Also dispatch event for any other listeners
+        window.dispatchEvent(new CustomEvent('cv-analysis-complete', {
+          detail: { historyId, cvResult: result }
+        }));
       } else if (result.skipped) {
         setDeepScanError('Deep scan not configured on server');
       } else {

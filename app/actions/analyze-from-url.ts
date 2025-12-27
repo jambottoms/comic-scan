@@ -1,9 +1,5 @@
 'use server';
 
-// Force dynamic rendering to prevent action ID caching issues
-export const dynamic = 'force-dynamic';
-export const revalidate = 0;
-
 // Environment Fix: Use createRequire for ESM compatibility
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
