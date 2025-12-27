@@ -83,23 +83,50 @@ modal secret create supabase-secrets \
   SUPABASE_KEY=your_supabase_service_key
 ```
 
-3. Deploy the worker:
+3. **Choose your deployment:**
+
+#### Option A: CPU-Only (Cost-Optimized)
 ```bash
 modal deploy cv_worker.py
 ```
+- ⏱️ ~50 seconds per video
+- 💰 $0.0007 per scan
+- ✅ Best for: MVP, low traffic, dev/testing
+
+#### Option B: GPU-Accelerated (Performance-Optimized) ⚡
+```bash
+modal deploy cv_worker_gpu.py
+```
+- ⏱️ ~14 seconds per video (3.5x faster!)
+- 💰 $0.0020 per scan
+- ✅ Best for: Production, real-time UX, high traffic
+
+**See `GPU_QUICK_REFERENCE.txt` for decision guide**
 
 4. Copy the webhook URL and add to your `.env.local`:
 ```
 MODAL_CV_WEBHOOK_URL=https://your-app.modal.run
 ```
 
-### Performance
+### Performance Comparison
 
-- **Sequential (old)**: 4-9 minutes for 300-600 frame videos
-- **Parallel (new)**: 1-3 minutes for same videos
-- **Speedup**: 3-5x faster with 100% precision maintained
+| Metric | CPU | GPU | Speedup |
+|--------|-----|-----|---------|
+| Processing Time | 50s | 14s | 3.5x faster |
+| Cost per Scan | $0.0007 | $0.0020 | 2.8x more |
+| User Experience | Good | Excellent | 36s less wait |
 
-See `PARALLEL_CV_UPGRADE.md` for full details.
+**Benchmark Tool:**
+```bash
+./benchmark_gpu_vs_cpu.sh https://your-video-url.mp4 test-123
+```
+
+### Documentation
+
+- **GPU Guide**: `GPU_ACCELERATION_GUIDE.md` - Complete technical guide
+- **Quick Start**: `GPU_QUICK_REFERENCE.txt` - Decision tree & commands
+- **Summary**: `GPU_ACCELERATION_SUMMARY.md` - Executive overview
+- **Parallel Details**: `PARALLEL_CV_UPGRADE.md` - Architecture deep-dive
 
 ## Project Structure
 

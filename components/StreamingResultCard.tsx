@@ -729,28 +729,59 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
               </div>
             )}
             
-            {/* Per-region scores */}
+            {/* Per-region scores with images */}
             {result.regionScores && Object.keys(result.regionScores).length > 0 && (
               <div>
                 <p className="text-[10px] text-gray-500 mb-2">Region Damage (lower = better condition):</p>
-                <div className="grid grid-cols-3 gap-2 text-xs">
+                <div className="grid grid-cols-2 gap-2 text-xs">
                   {Object.entries(result.regionScores).map(([region, score]) => {
                     const scoreNum = score as number;
                     const regionLabel = region === 'spine' ? 'Spine' : 
                                        region === 'surface' ? 'Cover' :
                                        region.replace('corner_', '').toUpperCase();
+                    const regionImage = result.regionCrops?.[region];
+                    
                     return (
                       <div 
                         key={region} 
-                        className={`px-2 py-1 rounded text-center ${
-                          scoreNum < 20 ? 'bg-green-900/30 text-green-400' :
-                          scoreNum < 40 ? 'bg-yellow-900/30 text-yellow-400' :
-                          scoreNum < 65 ? 'bg-orange-900/30 text-orange-400' :
-                          'bg-red-900/30 text-red-400'
+                        className={`rounded border overflow-hidden ${
+                          scoreNum < 20 ? 'border-green-700/50 bg-green-900/20' :
+                          scoreNum < 40 ? 'border-yellow-700/50 bg-yellow-900/20' :
+                          scoreNum < 65 ? 'border-orange-700/50 bg-orange-900/20' :
+                          'border-red-700/50 bg-red-900/20'
                         }`}
                       >
-                        <div className="font-mono font-bold">{scoreNum.toFixed(0)}%</div>
-                        <div className="text-[10px] opacity-75">{regionLabel}</div>
+                        {/* Image */}
+                        {regionImage && (
+                          <button
+                            onClick={() => openImageViewer(
+                              regionImage,
+                              `${regionLabel} Region`,
+                              `Detailed view of ${regionLabel.toLowerCase()} region. Damage score: ${scoreNum.toFixed(0)}%`
+                            )}
+                            className="w-full aspect-square relative group"
+                          >
+                            <img 
+                              src={regionImage} 
+                              alt={regionLabel} 
+                              className="w-full h-full object-cover"
+                            />
+                            <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-center justify-center">
+                              <Maximize2 className="w-4 h-4 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-lg" />
+                            </div>
+                          </button>
+                        )}
+                        
+                        {/* Score badge */}
+                        <div className={`px-2 py-1.5 text-center ${
+                          scoreNum < 20 ? 'text-green-400' :
+                          scoreNum < 40 ? 'text-yellow-400' :
+                          scoreNum < 65 ? 'text-orange-400' :
+                          'text-red-400'
+                        }`}>
+                          <div className="font-mono font-bold text-sm">{scoreNum.toFixed(0)}%</div>
+                          <div className="text-[10px] opacity-75">{regionLabel}</div>
+                        </div>
                       </div>
                     );
                   })}

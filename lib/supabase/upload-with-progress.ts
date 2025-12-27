@@ -23,7 +23,9 @@ function readFileAsArrayBuffer(file: File): Promise<ArrayBuffer> {
 
 export async function uploadToSupabaseWithProgress(
   originalFile: File,
-  onProgress: (progress: number) => void
+  onProgress: (progress: number) => void,
+  customFileName?: string,
+  customContentType?: string
 ): Promise<string> {
   const supabase = createClient();
   
@@ -40,20 +42,24 @@ export async function uploadToSupabaseWithProgress(
     console.log(`[Supabase Upload] File read into memory: ${arrayBuffer.byteLength} bytes`);
   } catch (error) {
     console.error(`[Supabase Upload] Failed to read file:`, error);
-    throw new Error(`Failed to read video file. This may be an iOS issue. Error: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(`Failed to read file. This may be an iOS issue. Error: ${error instanceof Error ? error.message : String(error)}`);
   }
   
-  const blob = new Blob([arrayBuffer], { type: 'video/mp4' });
-  const fixedFile = new File([blob], 'comic_scan.mp4', { type: 'video/mp4' });
+  // Determine content type - use custom if provided, otherwise original, otherwise default to video/mp4 for legacy compatibility
+  const contentType = customContentType || originalFile.type || 'video/mp4';
   
-  if (fixedFile.size === 0 || arrayBuffer.byteLength === 0) {
-    throw new Error("iOS returned an empty file. Try saving the video to 'Files' first, then upload.");
-  }
-  
-  // Generate unique filename
+  const blob = new Blob([arrayBuffer], { type: contentType });
+  // Use provided filename or generate one
   const timestamp = Date.now();
   const randomString = Math.random().toString(36).substring(2, 15);
-  const fileName = `${timestamp}-${randomString}.mp4`;
+  const extension = contentType.includes('image') ? (contentType.includes('png') ? 'png' : 'jpg') : 'mp4';
+  
+  const finalFileName = customFileName || `${timestamp}-${randomString}.${extension}`;
+  const fixedFile = new File([blob], finalFileName, { type: contentType });
+  
+  if (fixedFile.size === 0 || arrayBuffer.byteLength === 0) {
+    throw new Error("iOS returned an empty file. Try saving the file to 'Files' first, then upload.");
+  }
   
   // Use Supabase client's built-in upload method which handles the new key format automatically
   // Unfortunately, Supabase JS client doesn't support progress callbacks natively
@@ -68,8 +74,8 @@ export async function uploadToSupabaseWithProgress(
   // Start upload using Supabase client (handles new key format automatically)
   const uploadPromise = supabase.storage
     .from('comic-videos')
-    .upload(fileName, fixedFile, {
-      contentType: 'video/mp4',
+    .upload(finalFileName, fixedFile, {
+      contentType: contentType,
       upsert: false,
     });
   

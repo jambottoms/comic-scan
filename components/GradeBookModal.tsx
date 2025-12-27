@@ -45,10 +45,22 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
   const [uploadMessage, setUploadMessage] = useState('Uploading and processing...');
   const uploadXhrRef = useRef<XMLHttpRequest | null>(null);
 
+  // Capture State
+  const [captureStep, setCaptureStep] = useState<'front' | 'back' | 'video'>('front');
+  const [capturedFiles, setCapturedFiles] = useState<{
+    front: Blob | File | null;
+    back: Blob | File | null;
+    video: Blob | File | null;
+  }>({ front: null, back: null, video: null });
+
   // Reset/Sync tab when opening
   useEffect(() => {
     if (isOpen) {
       setActiveTab(initialTab);
+      setCaptureStep('front');
+      setCapturedFiles({ front: null, back: null, video: null });
+      setError(null);
+      setLoading(false);
     }
   }, [isOpen, initialTab]);
 
@@ -188,74 +200,223 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
     }
   };
 
-  const normalizeMimeTypeForGemini = (mimeType: string): string => {
-    return (mimeType === 'video/quicktime' || mimeType === 'video/x-quicktime') ? 'video/mp4' : mimeType;
+  const capturePhoto = () => {
+    if (!videoRef.current) return;
+    
+    const canvas = document.createElement('canvas');
+    canvas.width = videoRef.current.videoWidth;
+    canvas.height = videoRef.current.videoHeight;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    
+    // Draw current frame
+    ctx.drawImage(videoRef.current, 0, 0);
+    
+    // Convert to blob
+    canvas.toBlob((blob) => {
+      if (!blob) return;
+      
+      if (captureStep === 'front') {
+        setCapturedFiles(prev => ({ ...prev, front: blob }));
+        setCaptureStep('back');
+      } else if (captureStep === 'back') {
+        setCapturedFiles(prev => ({ ...prev, back: blob }));
+        setCaptureStep('video');
+      }
+    }, 'image/jpeg', 0.95);
   };
 
-  const handleVideoProcessing = async (blob: Blob, fileName: string, mimeType: string) => {
+  const handleMultiModalProcessing = async () => {
+    if (!capturedFiles.video) {
+      setError("No video recorded/uploaded.");
+      return;
+    }
+
     setLoading(true);
     setError(null);
-    
-    // Stop camera while processing
     stopCamera();
 
-    const videoUrl = URL.createObjectURL(blob);
-    const file = new File([blob], fileName, { type: mimeType });
-
+    const videoBlob = capturedFiles.video;
+    // Create a temporary URL for the video to generate thumbnail
+    const videoUrl = URL.createObjectURL(videoBlob);
+    
     try {
-      // Generate thumbnail immediately
+      // Generate thumbnail
       const thumbnail = await generateThumbnail(videoUrl);
       
-      // Create pending result and redirect IMMEDIATELY
+      // Create pending result
       const historyId = createPendingResult(thumbnail);
       
-      // Close modal and navigate to result page right away
+      // Close modal immediately
       setShowUploadModal(false);
       setLoading(false);
       onSuccess(historyId);
       
-      // Continue processing in background - update the entry as we go
+      // Background processing
       (async () => {
         try {
-          // Upload to Supabase
-          const supabaseUrl = await uploadToSupabaseWithProgress(
-            file,
-            () => {} // No progress tracking needed - we've already navigated
+          // Upload all files in parallel
+          const uploadPromises = [];
+          
+          // Video (Required)
+          const videoFile = new File([videoBlob], 'comic-video.mp4', { type: videoBlob.type || 'video/mp4' });
+          uploadPromises.push(
+            uploadToSupabaseWithProgress(videoFile, () => {}, undefined, 'video/mp4')
+              .then(url => ({ type: 'video', url }))
           );
           
+          // Front Photo (Optional but expected)
+          if (capturedFiles.front) {
+            const frontFile = new File([capturedFiles.front], 'front-cover.jpg', { type: 'image/jpeg' });
+            uploadPromises.push(
+              uploadToSupabaseWithProgress(frontFile, () => {}, undefined, 'image/jpeg')
+                .then(url => ({ type: 'front', url }))
+            );
+          }
+          
+          // Back Photo (Optional but expected)
+          if (capturedFiles.back) {
+            const backFile = new File([capturedFiles.back], 'back-cover.jpg', { type: 'image/jpeg' });
+            uploadPromises.push(
+              uploadToSupabaseWithProgress(backFile, () => {}, undefined, 'image/jpeg')
+                .then(url => ({ type: 'back', url }))
+            );
+          }
+          
+          const results = await Promise.all(uploadPromises);
+          
+          const videoUpload = results.find(r => r.type === 'video');
+          const frontUpload = results.find(r => r.type === 'front');
+          const backUpload = results.find(r => r.type === 'back');
+          
+          if (!videoUpload) throw new Error("Video upload failed");
+          
           // Update entry with video URL
-          updateWithVideoUrl(historyId, supabaseUrl);
-
-          // Analyze with AI
-          const result = await analyzeComicFromUrl(supabaseUrl, normalizeMimeTypeForGemini(file.type));
+          updateWithVideoUrl(historyId, videoUpload.url);
+          
+          // Analyze with AI (passing all URLs)
+          const result = await analyzeComicFromUrl({
+            videoUrl: videoUpload.url,
+            frontPhotoUrl: frontUpload?.url,
+            backPhotoUrl: backUpload?.url,
+          });
 
           if (result.success) {
-            // Update with AI results
             updateWithAIResult(historyId, result.data);
-            
-            // Note: CV analysis (Deep Scan) is now triggered manually by user
-            // via the "Run Deep Scan" button in StreamingResultCard
           } else {
             updateWithError(historyId, result.error || "Analysis failed");
           }
         } catch (err: any) {
           console.error("Background processing error:", err);
-          updateWithError(historyId, err.message || "Failed to process video.");
+          updateWithError(historyId, err.message || "Failed to process.");
         }
       })();
       
     } catch (err: any) {
       console.error("Processing error:", err);
-      let msg = err.message || "Failed to process video.";
-      if (msg.includes("timeout")) msg += " Try a shorter video.";
-      setError(msg);
+      setError(err.message || "Failed to process.");
       setShowUploadModal(false);
-      setTimeout(() => {
-        setLoading(false);
-      }, 5000);
+      setLoading(false);
     } finally {
       URL.revokeObjectURL(videoUrl);
-      uploadXhrRef.current = null;
+    }
+  };
+
+  const handleVideoProcessing = async (blob: Blob, fileName: string, mimeType: string) => {
+    // Legacy handler or final step handler
+    setCapturedFiles(prev => ({ ...prev, video: blob }));
+    // If we're recording, this is the final step, so process immediately
+    // Note: We need to use state setter callback or setTimeout because state update is async
+    // But since handleMultiModalProcessing reads from state, we might have a race condition.
+    // Better to pass the blob directly or wait.
+    // Actually, let's update state then call a processing function that accepts the final blob directly to avoid race condition.
+    
+    // Hack: update state but also call processing with explicit video blob
+    setCapturedFiles(prev => {
+      const newState = { ...prev, video: blob };
+      // Trigger processing with this new state
+      setTimeout(() => processWithState(newState), 0);
+      return newState;
+    });
+  };
+  
+  const processWithState = async (files: typeof capturedFiles) => {
+    // Copied logic from handleMultiModalProcessing but using passed files
+    if (!files.video) return;
+    
+    setLoading(true);
+    setError(null);
+    stopCamera();
+
+    const videoUrl = URL.createObjectURL(files.video);
+    const videoBlob = files.video;
+    
+    try {
+      const thumbnail = await generateThumbnail(videoUrl);
+      const historyId = createPendingResult(thumbnail);
+      
+      setShowUploadModal(false);
+      setLoading(false);
+      onSuccess(historyId);
+      
+      (async () => {
+        try {
+          const uploadPromises = [];
+          
+          const videoFile = new File([videoBlob], 'comic-video.mp4', { type: videoBlob.type || 'video/mp4' });
+          uploadPromises.push(
+            uploadToSupabaseWithProgress(videoFile, () => {}, undefined, 'video/mp4')
+              .then(url => ({ type: 'video', url }))
+          );
+          
+          if (files.front) {
+            const frontFile = new File([files.front], 'front-cover.jpg', { type: 'image/jpeg' });
+            uploadPromises.push(
+              uploadToSupabaseWithProgress(frontFile, () => {}, undefined, 'image/jpeg')
+                .then(url => ({ type: 'front', url }))
+            );
+          }
+          
+          if (files.back) {
+            const backFile = new File([files.back], 'back-cover.jpg', { type: 'image/jpeg' });
+            uploadPromises.push(
+              uploadToSupabaseWithProgress(backFile, () => {}, undefined, 'image/jpeg')
+                .then(url => ({ type: 'back', url }))
+            );
+          }
+          
+          const results = await Promise.all(uploadPromises);
+          
+          const videoUpload = results.find(r => r.type === 'video');
+          const frontUpload = results.find(r => r.type === 'front');
+          const backUpload = results.find(r => r.type === 'back');
+          
+          if (!videoUpload) throw new Error("Video upload failed");
+          
+          updateWithVideoUrl(historyId, videoUpload.url);
+          
+          const result = await analyzeComicFromUrl({
+            videoUrl: videoUpload.url,
+            frontPhotoUrl: frontUpload?.url,
+            backPhotoUrl: backUpload?.url,
+          });
+
+          if (result.success) {
+            updateWithAIResult(historyId, result.data);
+          } else {
+            updateWithError(historyId, result.error || "Analysis failed");
+          }
+        } catch (err: any) {
+          console.error("Background processing error:", err);
+          updateWithError(historyId, err.message || "Failed to process.");
+        }
+      })();
+    } catch (err: any) {
+      console.error("Processing error:", err);
+      setError(err.message);
+      setLoading(false);
+    } finally {
+      URL.revokeObjectURL(videoUrl);
     }
   };
 
@@ -268,7 +429,20 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
       return;
     }
 
-    await handleVideoProcessing(file, file.name, file.type || 'video/mp4');
+    if (captureStep === 'front') {
+        setCapturedFiles(prev => ({ ...prev, front: file }));
+        setCaptureStep('back');
+    } else if (captureStep === 'back') {
+        setCapturedFiles(prev => ({ ...prev, back: file }));
+        setCaptureStep('video');
+    } else {
+        // Video step
+        setCapturedFiles(prev => {
+            const newState = { ...prev, video: file };
+            setTimeout(() => processWithState(newState), 0);
+            return newState;
+        });
+    }
   };
 
   // Handle close animation
@@ -289,6 +463,18 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
   // Always render but control visibility - this makes animations instant
   const isVisible = isOpen && !isClosing;
   const shouldShow = isOpen || isClosing; // Keep visible during close animation
+
+  const getStepTitle = () => {
+    if (captureStep === 'front') return "Step 1: Capture Front Cover";
+    if (captureStep === 'back') return "Step 2: Capture Back Cover";
+    return "Step 3: Record Video";
+  };
+
+  const getUploadTitle = () => {
+    if (captureStep === 'front') return "Step 1: Upload Front Cover";
+    if (captureStep === 'back') return "Step 2: Upload Back Cover";
+    return "Step 3: Upload Video";
+  };
 
   return (
     <div 
@@ -354,6 +540,15 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
                             />
                         )}
                         
+                        {/* Step Indicator Overlay */}
+                        {activeTab === 'record' && !isRecording && (
+                            <div className="absolute top-6 left-0 right-0 flex justify-center z-10 pointer-events-none">
+                                <div className="bg-black/60 backdrop-blur-md text-white px-6 py-2 rounded-full font-medium text-sm border border-white/10 shadow-lg">
+                                    {getStepTitle()}
+                                </div>
+                            </div>
+                        )}
+                        
                         {/* Recording Timer Overlay */}
                         {isRecording && activeTab === 'record' && (
                              <div className="absolute top-6 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-red-600/90 text-white px-4 py-1.5 rounded-full font-mono text-sm shadow-lg z-10">
@@ -362,37 +557,50 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
                             </div>
                         )}
 
-                                        {/* Identify Overlay Grid (Optional visual aid) */}
-                                        {activeTab === 'identify' && !loading && (
-                                            <div className="absolute inset-0 pointer-events-none">
-                                                <div className="absolute top-[15%] left-0 right-0 flex flex-col items-center justify-center gap-4">
-                                                    <div className="w-64 h-80 border-2 border-purple-400 rounded-lg shadow-[0_0_15px_rgba(168,85,247,0.5)] bg-transparent" />
-                                                    <div className="text-center text-white/90 text-sm font-medium shadow-black drop-shadow-md bg-black/40 px-4 py-2 rounded-full backdrop-blur-sm">
-                                                        Position item in frame
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        )}
+                        {/* Identify Overlay Grid (Optional visual aid) */}
+                        {activeTab === 'identify' && !loading && (
+                            <div className="absolute inset-0 pointer-events-none">
+                                <div className="absolute top-[15%] left-0 right-0 flex flex-col items-center justify-center gap-4">
+                                    <div className="w-64 h-80 border-2 border-purple-400 rounded-lg shadow-[0_0_15px_rgba(168,85,247,0.5)] bg-transparent" />
+                                    <div className="text-center text-white/90 text-sm font-medium shadow-black drop-shadow-md bg-black/40 px-4 py-2 rounded-full backdrop-blur-sm">
+                                        Position item in frame
+                                    </div>
+                                </div>
+                            </div>
+                        )}
                     </div>
 
                     {/* Controls Bar - Floating at bottom */}
                     <div className="absolute bottom-0 left-0 right-0 p-6 sm:p-8 bg-gradient-to-t from-black/90 via-black/60 to-transparent pt-12">
                         {activeTab === 'record' && (
                              <div className="flex justify-center items-center w-full">
-                                {!isRecording ? (
+                                {captureStep === 'video' ? (
+                                    // Video Recording Controls
+                                    !isRecording ? (
+                                        <button
+                                            onClick={startRecording}
+                                            disabled={loading}
+                                            className="w-20 h-20 bg-white rounded-full flex items-center justify-center border-4 border-gray-300 shadow-lg active:scale-95 transition-transform"
+                                        >
+                                            <div className="w-16 h-16 bg-red-600 rounded-full" />
+                                        </button>
+                                    ) : (
+                                        <button
+                                            onClick={stopRecording}
+                                            className="w-20 h-20 bg-white rounded-full flex items-center justify-center border-4 border-gray-300 shadow-lg active:scale-95 transition-transform"
+                                        >
+                                            <div className="w-8 h-8 bg-red-600 rounded-sm" />
+                                        </button>
+                                    )
+                                ) : (
+                                    // Photo Capture Controls
                                     <button
-                                        onClick={startRecording}
+                                        onClick={() => capturePhoto()}
                                         disabled={loading}
                                         className="w-20 h-20 bg-white rounded-full flex items-center justify-center border-4 border-gray-300 shadow-lg active:scale-95 transition-transform"
                                     >
-                                        <div className="w-16 h-16 bg-red-600 rounded-full" />
-                                    </button>
-                                ) : (
-                                    <button
-                                        onClick={stopRecording}
-                                        className="w-20 h-20 bg-white rounded-full flex items-center justify-center border-4 border-gray-300 shadow-lg active:scale-95 transition-transform"
-                                    >
-                                        <div className="w-8 h-8 bg-red-600 rounded-sm" />
+                                        <div className="w-16 h-16 bg-white rounded-full border-2 border-gray-400" />
+                                        <Camera className="absolute text-black w-8 h-8" />
                                     </button>
                                 )}
                             </div>
@@ -417,29 +625,41 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
             {/* Upload View */}
             {activeTab === 'upload' && (
                 <div className="w-full h-full flex flex-col items-center justify-center gap-6 p-8 bg-gray-900">
-                    <div className="w-32 h-32 bg-gray-800 rounded-full flex items-center justify-center text-gray-600 mb-4">
-                        <Upload size={56} />
+                    <div className="w-32 h-32 bg-gray-800 rounded-full flex items-center justify-center text-gray-600 mb-4 relative">
+                        {captureStep === 'video' ? <Video size={56} /> : <Camera size={56} />}
+                        <div className="absolute -top-2 -right-2 w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center text-white font-bold text-sm">
+                            {captureStep === 'front' ? '1' : captureStep === 'back' ? '2' : '3'}
+                        </div>
                     </div>
                     <div className="text-center space-y-3">
-                        <h3 className="text-2xl font-bold text-white">Upload Video</h3>
+                        <h3 className="text-2xl font-bold text-white">{getUploadTitle()}</h3>
                         <p className="text-gray-400 max-w-xs mx-auto text-base leading-relaxed">
-                            Select a video file from your device to analyze.
+                            {captureStep === 'video' 
+                                ? "Select a video file showing all angles of the item." 
+                                : `Select a clear photo of the ${captureStep} cover.`}
                         </p>
                     </div>
                     
                     <label className="w-full max-w-sm mt-4">
                         <input 
                             type="file" 
-                            accept="video/*" 
+                            accept={captureStep === 'video' ? "video/*" : "image/*"}
                             className="hidden" 
                             onChange={handleFileUpload}
                             disabled={loading} 
                         />
                         <div className="w-full py-4 bg-blue-600 hover:bg-blue-500 text-white text-lg font-bold rounded-2xl flex items-center justify-center gap-3 cursor-pointer transition-all active:scale-[0.98] shadow-lg shadow-blue-900/20">
                             <Upload size={24} />
-                            Select Video File
+                            Select {captureStep === 'video' ? 'Video' : 'Photo'}
                         </div>
                     </label>
+                    
+                    {/* Progress Dots */}
+                    <div className="flex gap-2 mt-4">
+                        <div className={`w-2 h-2 rounded-full ${captureStep === 'front' ? 'bg-white' : 'bg-gray-700'}`} />
+                        <div className={`w-2 h-2 rounded-full ${captureStep === 'back' ? 'bg-white' : 'bg-gray-700'}`} />
+                        <div className={`w-2 h-2 rounded-full ${captureStep === 'video' ? 'bg-white' : 'bg-gray-700'}`} />
+                    </div>
                 </div>
             )}
 

@@ -37,14 +37,19 @@ export type AnalyzeResult =
  * Final version with exact specifications
  * 
  * Process:
- * 1. Download video to /tmp/input.mov
+ * 1. Download video to /tmp/input.mov (and photos if provided)
  * 2. Use spawnSync to convert to /tmp/output.mp4
  * 3. Upload to Google File API
  * 4. Poll until ACTIVE state
  * 5. Call gemini-2.5-flash with file data
  * 6. Cleanup both temp files
  */
-export async function analyzeComicFromUrl(videoUrl: string, mimeType?: string): Promise<AnalyzeResult> {
+export async function analyzeComicFromUrl(input: string | { videoUrl: string, frontPhotoUrl?: string, backPhotoUrl?: string, spinePhotoUrl?: string }, mimeType?: string): Promise<AnalyzeResult> {
+  const videoUrl = typeof input === 'string' ? input : input.videoUrl;
+  const frontPhotoUrl = typeof input === 'object' ? input.frontPhotoUrl : undefined;
+  const backPhotoUrl = typeof input === 'object' ? input.backPhotoUrl : undefined;
+  const spinePhotoUrl = typeof input === 'object' ? input.spinePhotoUrl : undefined;
+
   const apiKey = process.env.GOOGLE_API_KEY;
   if (!apiKey) {
     const errorMsg = "GOOGLE_API_KEY is not set in environment variables. Please add it to Vercel environment variables.";
@@ -60,6 +65,9 @@ export async function analyzeComicFromUrl(videoUrl: string, mimeType?: string): 
 
   try {
     console.log(`[Server Action] Starting video analysis pipeline for: ${videoUrl}`);
+    if (frontPhotoUrl) console.log(`[Server Action] Including front photo: ${frontPhotoUrl}`);
+    if (backPhotoUrl) console.log(`[Server Action] Including back photo: ${backPhotoUrl}`);
+    if (spinePhotoUrl) console.log(`[Server Action] Including spine photo: ${spinePhotoUrl}`);
     
     // Step 1: Download the Supabase video to /tmp/input.mov
     console.log(`[Server Action] Downloading video from Supabase...`);
@@ -214,17 +222,69 @@ Include timestamps (MM:SS) for each defect observation. Be objective and clinica
       setTimeout(() => reject(new Error("Video analysis timed out after 280 seconds. The video transcoding or API call took too long. Please try a shorter video.")), 280000);
     });
 
-    // Step 6: The Final Call - Pass the file to model.generateContent using:
-    // [{ fileData: { mimeType: 'video/mp4', fileUri: file.uri } }, { text: "Analyze this collectible video." }]
-    const payload = [
-      { 
-        fileData: { 
-          mimeType: 'video/mp4', 
-          fileUri: file.uri 
-        } 
-      }, 
-      { 
-        text: `Analyze this collectible. RESPOND ONLY WITH VALID JSON.
+    // Step 6: The Final Call - Pass the file to model.generateContent
+    const payload: any[] = [];
+    
+    // Add photos if provided (download and convert to base64)
+    if (frontPhotoUrl) {
+      try {
+        const frontRes = await fetch(frontPhotoUrl);
+        const frontBuffer = await frontRes.arrayBuffer();
+        payload.push({ text: "High-resolution Front Cover Photo:" });
+        payload.push({ 
+          inlineData: { 
+            mimeType: "image/jpeg", 
+            data: Buffer.from(frontBuffer).toString('base64') 
+          } 
+        });
+      } catch (e) {
+        console.error("Failed to download front photo:", e);
+      }
+    }
+    
+    if (backPhotoUrl) {
+      try {
+        const backRes = await fetch(backPhotoUrl);
+        const backBuffer = await backRes.arrayBuffer();
+        payload.push({ text: "High-resolution Back Cover Photo:" });
+        payload.push({ 
+          inlineData: { 
+            mimeType: "image/jpeg", 
+            data: Buffer.from(backBuffer).toString('base64') 
+          } 
+        });
+      } catch (e) {
+        console.error("Failed to download back photo:", e);
+      }
+    }
+
+    if (spinePhotoUrl) {
+      try {
+        const spineRes = await fetch(spinePhotoUrl);
+        const spineBuffer = await spineRes.arrayBuffer();
+        payload.push({ text: "High-resolution Spine Photo:" });
+        payload.push({ 
+          inlineData: { 
+            mimeType: "image/jpeg", 
+            data: Buffer.from(spineBuffer).toString('base64') 
+          } 
+        });
+      } catch (e) {
+        console.error("Failed to download spine photo:", e);
+      }
+    }
+
+    // Add video
+    payload.push({ text: "Full 360° video showing all angles:" });
+    payload.push({ 
+      fileData: { 
+        mimeType: 'video/mp4', 
+        fileUri: file.uri 
+      } 
+    });
+    
+    payload.push({ 
+      text: `Analyze this collectible. RESPOND ONLY WITH VALID JSON.
 
 Identify the item type (comic, card, toy, other) and grade it appropriately.
 
@@ -241,12 +301,12 @@ JSON format:
 }
 
 Use appropriate grading scale: CGC for comics, PSA/BGS for cards. Be concise and objective.` 
-      }
-    ];
+    });
     
     console.log(`[Server Action] Sending to Gemini API...`);
     console.log(`[Server Action] File URI: ${file.uri}`);
     console.log(`[Server Action] MIME Type: video/mp4`);
+    console.log(`[Server Action] Payload parts: ${payload.length}`);
     
     // Generate content with the model
     let result: any;
