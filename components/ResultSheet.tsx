@@ -4,27 +4,32 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { ChevronDown, Video, Upload, ScanLine } from 'lucide-react';
 import ResultCard from '@/components/ResultCard';
+import StreamingResultCard from '@/components/StreamingResultCard';
 
 interface ResultSheetProps {
   isOpen: boolean;
   onClose: () => void;
+  historyId?: string;
   result?: any;
   videoUrl: string | null;
   thumbnail?: string;
   savedScanId?: string;
   onDelete?: () => void;
   isLoading?: boolean;
+  isStreaming?: boolean;
 }
 
 export default function ResultSheet({ 
   isOpen, 
   onClose, 
+  historyId,
   result, 
   videoUrl, 
   thumbnail, 
   savedScanId, 
   onDelete,
-  isLoading = false
+  isLoading = false,
+  isStreaming = false
 }: ResultSheetProps) {
   const [isVisible, setIsVisible] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
@@ -80,6 +85,12 @@ export default function ResultSheet({
                       <div className="h-4 bg-gray-800 rounded w-5/6"></div>
                     </div>
                   </div>
+                ) : (isStreaming || result?._pending) && historyId ? (
+                  // Use streaming card for pending/streaming results
+                  <StreamingResultCard 
+                      historyId={historyId}
+                      embedded={true}
+                  />
                 ) : result ? (
                   <ResultCard 
                       result={result} 
@@ -90,7 +101,13 @@ export default function ResultSheet({
                           if (onDelete) onDelete();
                           handleClose();
                       }}
-                      embedded={true} // Add embedded prop to adjust internal layout if needed
+                      embedded={true}
+                  />
+                ) : historyId ? (
+                  // Fallback: use streaming card if we have historyId but no result yet
+                  <StreamingResultCard 
+                      historyId={historyId}
+                      embedded={true}
                   />
                 ) : (
                    <div className="text-gray-500 py-10">No result data available</div>

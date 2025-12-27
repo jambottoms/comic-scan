@@ -7,7 +7,7 @@ export interface VideoHistoryItem {
   title: string;
   issue: string;
   grade: string;
-  videoUrl: string;
+  videoUrl: string | null;
   result: any;
   timestamp: number;
   thumbnail?: string; // Base64 thumbnail or URL
@@ -69,6 +69,25 @@ export function addToHistory(item: Omit<VideoHistoryItem, 'id' | 'timestamp'>): 
 export function getVideoById(id: string): VideoHistoryItem | null {
   const history = getVideoHistory();
   return history.find(item => item.id === id) || null;
+}
+
+/**
+ * Update an existing history entry
+ */
+export function updateHistoryEntry(id: string, updates: Partial<VideoHistoryItem>): void {
+  if (typeof window === 'undefined') return;
+  
+  try {
+    const history = getVideoHistory();
+    const index = history.findIndex(item => item.id === id);
+    
+    if (index !== -1) {
+      history[index] = { ...history[index], ...updates };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
+    }
+  } catch (error) {
+    console.error('Failed to update video history:', error);
+  }
 }
 
 /**

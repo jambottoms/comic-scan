@@ -5,8 +5,15 @@ import { useRouter } from 'next/navigation';
 import { X, Upload, Video, Camera, Search, ScanLine, ChevronDown } from 'lucide-react';
 import { uploadToSupabaseWithProgress } from '@/lib/supabase/upload-with-progress';
 import { analyzeComicFromUrl } from '@/app/actions/analyze-from-url';
-import { addToHistory, generateThumbnail } from '@/lib/history';
+import { addToHistory, generateThumbnail, updateHistoryEntry, getVideoById } from '@/lib/history';
+import { startBackgroundCVAnalysis } from '@/lib/cv-analysis';
 import UploadProgressModal from '@/components/UploadProgressModal';
+import { 
+  createPendingResult, 
+  updateWithVideoUrl, 
+  updateWithAIResult, 
+  updateWithError 
+} from '@/lib/streaming-analysis';
 
 interface GradeBookModalProps {
   isOpen: boolean;
@@ -187,9 +194,6 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
   const handleVideoProcessing = async (blob: Blob, fileName: string, mimeType: string) => {
     setLoading(true);
     setError(null);
-    setUploadProgress(0);
-    setShowUploadModal(true);
-    setUploadMessage('Uploading video...');
     
     // Stop camera while processing
     stopCamera();
@@ -198,48 +202,54 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
     const file = new File([blob], fileName, { type: mimeType });
 
     try {
-      // Upload to Supabase
-      const supabaseUrl = await uploadToSupabaseWithProgress(
-        file,
-        (progress) => setUploadProgress(Math.max(0, progress * 0.8))
-      );
+      // Generate thumbnail immediately
+      const thumbnail = await generateThumbnail(videoUrl);
+      
+      // Create pending result and redirect IMMEDIATELY
+      const historyId = createPendingResult(thumbnail);
+      
+      // Close modal and navigate to result page right away
+      setShowUploadModal(false);
+      setLoading(false);
+      onSuccess(historyId);
+      
+      // Continue processing in background - update the entry as we go
+      (async () => {
+        try {
+          // Upload to Supabase
+          const supabaseUrl = await uploadToSupabaseWithProgress(
+            file,
+            () => {} // No progress tracking needed - we've already navigated
+          );
+          
+          // Update entry with video URL
+          updateWithVideoUrl(historyId, supabaseUrl);
 
-      setUploadMessage('Processing video...');
-      setUploadProgress(85);
+          // Analyze with AI
+          const result = await analyzeComicFromUrl(supabaseUrl, normalizeMimeTypeForGemini(file.type));
 
-      // Analyze
-      const result = await analyzeComicFromUrl(supabaseUrl, normalizeMimeTypeForGemini(file.type));
-      setUploadProgress(95);
-
-      if (result.success) {
-        setUploadMessage('Generating thumbnail...');
-        const thumbnail = await generateThumbnail(videoUrl);
-        
-        const historyId = addToHistory({
-          title: result.data.title || "Unknown Comic",
-          issue: result.data.issue || "Unknown",
-          grade: result.data.estimatedGrade || "N/A",
-          videoUrl: supabaseUrl,
-          result: result.data,
-          thumbnail: thumbnail || undefined,
-        });
-
-        setUploadProgress(100);
-        
-        setTimeout(() => {
-          setShowUploadModal(false);
-          onSuccess(historyId);
-        }, 500);
-      } else {
-        throw new Error(result.error || "Analysis failed");
-      }
+          if (result.success) {
+            // Update with AI results
+            updateWithAIResult(historyId, result.data);
+            
+            // Trigger CV analysis in background
+            const itemType = result.data.itemType || 'card';
+            startBackgroundCVAnalysis(supabaseUrl, historyId, itemType);
+          } else {
+            updateWithError(historyId, result.error || "Analysis failed");
+          }
+        } catch (err: any) {
+          console.error("Background processing error:", err);
+          updateWithError(historyId, err.message || "Failed to process video.");
+        }
+      })();
+      
     } catch (err: any) {
       console.error("Processing error:", err);
       let msg = err.message || "Failed to process video.";
       if (msg.includes("timeout")) msg += " Try a shorter video.";
       setError(msg);
       setShowUploadModal(false);
-      // Keep loading true for 3 seconds so error stays visible (camera won't restart)
       setTimeout(() => {
         setLoading(false);
       }, 5000);

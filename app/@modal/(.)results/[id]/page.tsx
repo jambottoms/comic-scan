@@ -10,13 +10,10 @@ export default function ResultPage() {
   const router = useRouter();
   const id = params.id as string;
   const [videoItem, setVideoItem] = useState<any>(null);
+  const [mounted, setMounted] = useState(false);
   
-  // Try to load immediately during render if possible, 
-  // but be careful of hydration mismatches.
-  // Since getVideoById uses localStorage, we must wait for mount.
-  // However, we can render the sheet immediately in a loading state.
-
   useEffect(() => {
+    setMounted(true);
     if (id) {
       const item = getVideoById(id);
       if (item) {
@@ -29,16 +26,18 @@ export default function ResultPage() {
     router.back();
   };
 
-  // Render immediately with isOpen=true
-  // If videoItem is null, ResultSheet will handle the loading state or show skeleton
+  // Render immediately with streaming support
+  // Pass historyId for streaming updates
   return (
     <ResultSheet 
         isOpen={true} 
         onClose={handleClose}
+        historyId={id}
         result={videoItem?.result} 
         videoUrl={videoItem?.videoUrl} 
         thumbnail={videoItem?.thumbnail}
-        isLoading={!videoItem} // Pass loading state
+        isLoading={!mounted}
+        isStreaming={videoItem?.result?._pending === true}
     />
   );
 }
