@@ -516,8 +516,8 @@ export default function ResultCard({ result, videoUrl, thumbnail, savedScanId, o
               <p className="text-gray-400 text-xs mb-2">Golden Frames (Tap to Enlarge)</p>
               <div className="grid grid-cols-3 gap-2">
                 {result.goldenFrames.slice(0, 3).map((frame: string, idx: number) => {
-                  const timestamp = result.frameTimestamps ? result.frameTimestamps[idx] : 0;
-                  const { title, desc } = getFrameDescription(timestamp);
+                  const timestamp = result.frameTimestamps?.[idx] ?? 0;
+                  const { title, desc } = getFrameDescription(idx);
                   return (
                     <button 
                       key={idx} 
@@ -545,8 +545,8 @@ export default function ResultCard({ result, videoUrl, thumbnail, savedScanId, o
               {result.goldenFrames.length > 3 && (
                 <div className="grid grid-cols-2 gap-2 mt-2">
                   {result.goldenFrames.slice(3).map((frame: string, idx: number) => {
-                    const timestamp = result.frameTimestamps ? result.frameTimestamps[idx + 3] : 0;
-                    const { title, desc } = getFrameDescription(timestamp);
+                    const timestamp = result.frameTimestamps?.[idx + 3] ?? 0;
+                    const { title, desc } = getFrameDescription(idx + 3);
                     return (
                       <button 
                         key={idx + 3} 
