@@ -126,6 +126,12 @@ def analyze_frame_chunk(
         return candidates
 
 
+@app.function(
+    image=cv_image,
+    timeout=300,  # 5 minute timeout
+    secrets=[modal.Secret.from_name("supabase-secrets")],
+)
+def analyze_video(video_url: str, scan_id: str, item_type: str = "card") -> dict:
     """
     PARALLEL VERSION: Main entry point with parallel frame processing.
     
@@ -143,6 +149,8 @@ def analyze_frame_chunk(
     import cv2
     import numpy as np
     import requests
+    import tempfile
+    from pathlib import Path
     
     # Get Supabase credentials from Modal secrets
     supabase_url = os.environ["SUPABASE_URL"]
