@@ -88,7 +88,7 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
   const [trainingCrop, setTrainingCrop] = useState({ x: 0, y: 0 });
   const [trainingZoom, setTrainingZoom] = useState(1);
   const [trainingCroppedAreaPixels, setTrainingCroppedAreaPixels] = useState<Area | null>(null);
-  const [selectedLabels, setSelectedLabels] = useState<string[]>([]);
+  const [selectedLabel, setSelectedLabel] = useState<string>('');
   const [isSubmittingTraining, setIsSubmittingTraining] = useState(false);
 
   // Reset/Sync tab when opening
@@ -107,7 +107,7 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
     if (activeTab !== 'train') {
       setTrainingStep('capture');
       setTrainingImageSrc(null);
-      setSelectedLabels([]);
+      setSelectedLabel('');
       setTrainingCroppedAreaPixels(null);
       setTrainingZoom(1);
       setTrainingCrop({ x: 0, y: 0 });
@@ -252,20 +252,14 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
     });
   }, [trainingImageSrc, trainingCroppedAreaPixels]);
 
-  // Toggle Training Label
-  const toggleTrainingLabel = (label: string) => {
-    setSelectedLabels(prev => {
-      if (prev.includes(label)) {
-        return prev.filter(l => l !== label);
-      } else {
-        return [...prev, label];
-      }
-    });
+  // Select Training Label (single-select)
+  const selectTrainingLabel = (label: string) => {
+    setSelectedLabel(label);
   };
 
   // Submit Training
   const handleTrainingSubmit = async () => {
-    if (selectedLabels.length === 0) return;
+    if (!selectedLabel) return;
     setIsSubmittingTraining(true);
 
     try {
@@ -276,10 +270,9 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
       const supabase = createClient();
       if (!supabase) throw new Error("Failed to create Supabase client");
       
-      // Determine prefix based on selected labels
-      const hasDefect = selectedLabels.some(l => DEFECT_TYPES.includes(l));
-      const hasRegion = selectedLabels.some(l => REGION_TYPES.includes(l));
-      const prefix = hasDefect && hasRegion ? 'mixed' : hasDefect ? 'defect' : 'region';
+      // Determine prefix based on selected label
+      const isDefect = DEFECT_TYPES.includes(selectedLabel);
+      const prefix = isDefect ? 'defect' : 'region';
       
       const filename = `${prefix}-${Date.now()}.jpg`;
       const { error: uploadError } = await supabase.storage
@@ -292,51 +285,21 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
         .from('training-data')
         .getPublicUrl(filename);
 
-      // Smart Routing: Send to appropriate Nyckel functions in parallel
-      const promises: Promise<{ success: boolean; error?: string }>[] = [];
-
-      // 1. Process Defect Labels
-      const defectLabels = selectedLabels.filter(l => DEFECT_TYPES.includes(l));
-      if (defectLabels.length > 0) {
-        defectLabels.forEach(label => {
-          promises.push(trainDefect(publicUrl, label));
-        });
-      }
-
-      // 2. Process Region Labels
-      const regionLabels = selectedLabels.filter(l => REGION_TYPES.includes(l));
-      if (regionLabels.length > 0) {
-        regionLabels.forEach(label => {
-          promises.push(trainRegion(publicUrl, label));
-        });
-      }
-
-      const results = await Promise.all(promises);
+      // Send to appropriate Nyckel function
+      const result = isDefect 
+        ? await trainDefect(publicUrl, selectedLabel)
+        : await trainRegion(publicUrl, selectedLabel);
       
-      // Check for failures and count skipped samples
-      const failures = results.filter(r => !r.success);
-      const skipped = results.filter(r => r.success && (r as any).skipped).length;
-      const successful = results.filter(r => r.success && !(r as any).skipped).length;
-      
-      if (failures.length > 0) {
-        throw new Error(`Failed to train ${failures.length} labels: ${failures[0].error}`);
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to train model');
       }
       
       // Reset training state and close modal
       setTrainingStep('capture');
       setTrainingImageSrc(null);
-      setSelectedLabels([]);
+      setSelectedLabel('');
       setTrainingCroppedAreaPixels(null);
-      
-      // Provide appropriate feedback
-      if (skipped > 0 && successful === 0) {
-        alert('This image already exists in the training data. Try capturing a different sample.');
-      } else if (skipped > 0) {
-        alert(`Successfully added ${successful} new sample(s)! (${skipped} already existed)`);
-      } else {
-        alert(`Successfully added ${selectedLabels.length} training sample(s)!`);
-      }
-      
+      alert(`Successfully added training sample: ${selectedLabel}`);
       handleClose();
     } catch (e) {
       console.error(e);
@@ -733,9 +696,9 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
                                             {DEFECT_TYPES.map(label => (
                                                 <button
                                                     key={label}
-                                                    onClick={() => toggleTrainingLabel(label)}
+                                                    onClick={() => selectTrainingLabel(label)}
                                                     className={`p-3 rounded-xl text-left font-medium text-sm transition-all ${
-                                                        selectedLabels.includes(label)
+                                                        selectedLabel === label
                                                             ? 'bg-purple-600 text-white shadow-lg ring-2 ring-purple-400' 
                                                             : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
                                                     }`}
@@ -753,9 +716,9 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
                                             {REGION_TYPES.map(label => (
                                                 <button
                                                     key={label}
-                                                    onClick={() => toggleTrainingLabel(label)}
+                                                    onClick={() => selectTrainingLabel(label)}
                                                     className={`p-3 rounded-xl text-left font-medium text-sm transition-all ${
-                                                        selectedLabels.includes(label)
+                                                        selectedLabel === label
                                                             ? 'bg-emerald-600 text-white shadow-lg ring-2 ring-emerald-400' 
                                                             : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
                                                     }`}
@@ -863,19 +826,19 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
                                 {trainingStep === 'tag' && (
                                     <button
                                         onClick={handleTrainingSubmit}
-                                        disabled={selectedLabels.length === 0 || isSubmittingTraining}
+                                        disabled={!selectedLabel || isSubmittingTraining}
                                         className={`w-full disabled:bg-gray-700 disabled:opacity-50 text-white font-bold py-4 rounded-full flex items-center justify-center gap-2 transition-colors ${
-                                            selectedLabels.some(l => DEFECT_TYPES.includes(l)) && selectedLabels.some(l => REGION_TYPES.includes(l))
-                                                ? 'bg-gradient-to-r from-purple-600 to-emerald-600'
-                                                : selectedLabels.some(l => REGION_TYPES.includes(l))
+                                            DEFECT_TYPES.includes(selectedLabel)
+                                                ? 'bg-purple-600'
+                                                : REGION_TYPES.includes(selectedLabel)
                                                     ? 'bg-emerald-600'
-                                                    : 'bg-purple-600'
+                                                    : 'bg-gray-700'
                                         }`}
                                     >
                                         {isSubmittingTraining ? (
                                             <Loader2 className="animate-spin" />
                                         ) : (
-                                            `Submit ${selectedLabels.length > 0 ? `(${selectedLabels.length})` : ''}`
+                                            `Submit: ${selectedLabel || 'Select a tag'}`
                                         )}
                                     </button>
                                 )}
