@@ -64,6 +64,19 @@ export function useCamera(): UseCameraReturn {
         return;
       }
       
+      // Check permission state first to avoid unnecessary prompts
+      if ('permissions' in navigator) {
+        try {
+          const permissionStatus = await navigator.permissions.query({ name: 'camera' as PermissionName });
+          if (permissionStatus.state === 'denied') {
+            throw new Error('NotAllowedError');
+          }
+        } catch (permErr) {
+          // Permission API might not be supported, continue anyway
+          console.log('Permission query not supported, proceeding with camera request');
+        }
+      }
+      
       // Request camera access
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {

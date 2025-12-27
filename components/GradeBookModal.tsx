@@ -139,7 +139,7 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, activeTab, loading, showUploadModal]);
+  }, [isOpen, activeTab, loading, showUploadModal, trainingStep]);
 
   const startRecording = () => {
     // Get stream from the hook's videoRef
