@@ -435,8 +435,6 @@ def run_glint_analysis(golden_frames: list, output_dir: str) -> dict:
     
     print(f"   🔍 Analyzing {len(frames_to_analyze)} frames at {w}x{h}...")
     
-    print(f"   🔍 Analyzing {len(frames_to_analyze)} {'warped' if warp_success_count > 0 else 'original'} frames for defects...")
-    
     # =========================================
     # ANALYZE ALL FRAMES (not just first!)
     # =========================================
