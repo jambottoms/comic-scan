@@ -98,19 +98,6 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
   // Determine if current tab uses camera
   const isCameraTab = activeTab === 'record' || activeTab === 'train';
 
-  // Debug logging
-  useEffect(() => {
-    console.log('🐛 Modal Debug:', { 
-      isOpen, 
-      isVisible, 
-      shouldShow, 
-      activeTab, 
-      isCameraTab, 
-      viewportHeight,
-      transform: isVisible || isCameraTab ? 'translate-y-0' : 'translate-y-full'
-    });
-  }, [isOpen, isVisible, shouldShow, activeTab, isCameraTab, viewportHeight]);
-
   // Reset/Sync tab when opening
   useEffect(() => {
     if (isOpen) {
