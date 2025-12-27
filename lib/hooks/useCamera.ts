@@ -59,11 +59,28 @@ export function useCamera(): UseCameraReturn {
       setError(null);
       shouldBeStreamingRef.current = true;
       
-      // Check if we already have an active stream
-      if (streamRef.current && streamRef.current.active) {
-        console.log('🎥 Stream already active, skipping');
+      // iOS Safari fix: Check if stream exists AND has active tracks
+      // iOS can have a stream that's "active" but all tracks are ended
+      const hasActiveStream = streamRef.current && 
+        streamRef.current.active && 
+        streamRef.current.getVideoTracks().some(track => track.readyState === 'live');
+      
+      if (hasActiveStream) {
+        console.log('🎥 Stream already active with live tracks, re-attaching to video');
+        // iOS Safari fix: Always re-attach to video element
+        if (videoRef.current) {
+          videoRef.current.srcObject = streamRef.current;
+          await videoRef.current.play();
+        }
         setIsStreaming(true);
         return;
+      }
+      
+      // If we have a dead stream, clean it up first
+      if (streamRef.current) {
+        console.log('🎥 Cleaning up dead stream');
+        streamRef.current.getTracks().forEach(track => track.stop());
+        streamRef.current = null;
       }
       
       console.log('🎥 Requesting camera access...');
@@ -77,8 +94,16 @@ export function useCamera(): UseCameraReturn {
         }
       });
 
-      console.log('🎥 Camera access granted, stream active');
+      console.log('🎥 Camera access granted, attaching to video');
       streamRef.current = stream;
+      
+      // iOS Safari fix: Immediately attach to video element
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+        console.log('🎥 Video playing');
+      }
+      
       setIsStreaming(true);
       setHasPermission(true);
     } catch (err) {
