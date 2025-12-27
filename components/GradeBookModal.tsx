@@ -294,13 +294,12 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
         throw new Error(result.error || 'Failed to train model');
       }
       
-      // Reset training state and close modal
+      // Reset training state
       setTrainingStep('capture');
       setTrainingImageSrc(null);
       setSelectedLabel('');
       setTrainingCroppedAreaPixels(null);
       alert(`Successfully added training sample: ${selectedLabel}`);
-      handleClose();
     } catch (e) {
       console.error(e);
       alert(`Failed to save sample: ${(e as Error).message}`);
