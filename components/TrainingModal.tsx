@@ -86,6 +86,8 @@ export default function TrainingModal({ onClose }: { onClose: () => void }) {
 
       // Upload to Supabase 'training-data' bucket
       const supabase = createClient();
+      if (!supabase) throw new Error("Failed to create Supabase client");
+      
       const filename = `train-${Date.now()}.jpg`;
       const { error: uploadError } = await supabase.storage
         .from('training-data')
