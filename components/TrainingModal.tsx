@@ -22,8 +22,9 @@ const DEFECT_TYPES = [
 
 const REGION_TYPES = [
   "Spine",
-  "Front Staple",
-  "Back Staple",
+  "Top Staple",
+  "Middle Staple",
+  "Bottom Staple",
   "Top Left Corner",
   "Top Right Corner",
   "Bottom Left Corner",
