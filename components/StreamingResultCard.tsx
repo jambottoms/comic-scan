@@ -1,12 +1,12 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Loader2, ScanLine, Sparkles, Camera, Microscope } from 'lucide-react';
+import { Loader2, ScanLine, Sparkles, Camera, Microscope, Bookmark, Trash2 } from 'lucide-react';
 import { getVideoById, updateHistoryEntry } from '@/lib/history';
 import { subscribeToUpdates } from '@/lib/streaming-analysis';
-import ResultCard from '@/components/ResultCard';
 import { extractFramesFromVideo, ExtractedFrame } from '@/lib/frame-extractor';
 import { triggerCVAnalysis } from '@/lib/cv-analysis';
+import { saveScan, deleteSavedScan, isScanSaved } from '@/lib/saved-scans';
 
 interface StreamingResultCardProps {
   historyId: string;
@@ -76,6 +76,72 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
   
   // Check if deep scan has already been run
   const hasDeepScanResults = !!(entry?.result?.defectMask || entry?.result?.varianceHeatmap);
+  
+  // Save state
+  const [isSaved, setIsSaved] = useState(false);
+  const [currentSavedId, setCurrentSavedId] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  
+  // Check if already saved
+  useEffect(() => {
+    const checkSaved = async () => {
+      const title = entry?.result?.title;
+      const issue = entry?.result?.issue;
+      const grade = entry?.result?.estimatedGrade;
+      
+      if (title && grade) {
+        const existingId = await isScanSaved(title, issue || '', grade);
+        if (existingId) {
+          setIsSaved(true);
+          setCurrentSavedId(existingId);
+        }
+      }
+    };
+    checkSaved();
+  }, [entry?.result?.title, entry?.result?.issue, entry?.result?.estimatedGrade]);
+  
+  const handleSave = async () => {
+    if (isSaving || !entry) return;
+    setIsSaving(true);
+    
+    try {
+      const saved = await saveScan({
+        title: entry.result?.title || 'Unknown Item',
+        issue: entry.result?.issue || '',
+        grade: entry.result?.estimatedGrade || 'N/A',
+        videoUrl: entry.videoUrl || undefined,
+        thumbnail: entry.thumbnail,
+        result: entry.result,
+      });
+      
+      if (saved) {
+        setIsSaved(true);
+        setCurrentSavedId(saved.id);
+      }
+    } catch (error) {
+      console.error('Failed to save scan:', error);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+  
+  const handleUnsave = async () => {
+    if (isDeleting || !currentSavedId) return;
+    setIsDeleting(true);
+    
+    try {
+      const success = await deleteSavedScan(currentSavedId);
+      if (success) {
+        setIsSaved(false);
+        setCurrentSavedId(null);
+      }
+    } catch (error) {
+      console.error('Failed to delete saved scan:', error);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
   
   const triggerDeepScan = async () => {
     if (!entry?.videoUrl || deepScanLoading) return;
@@ -182,17 +248,8 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
   const isComplete = status === 'complete';
   const isError = status === 'error';
   
-  // Once complete, switch to the full ResultCard for save/delete functionality
-  if (isComplete && entry && !isPending) {
-    return (
-      <ResultCard 
-        result={entry.result}
-        videoUrl={entry.videoUrl}
-        thumbnail={entry.thumbnail}
-        embedded={embedded}
-      />
-    );
-  }
+  // Note: We no longer switch to ResultCard on complete - StreamingResultCard
+  // handles everything including frames and deep scan button
   
   const grade = result.estimatedGrade || '...';
   const title = result.title || (isAnalyzing ? 'Analyzing...' : 'Unknown Item');
@@ -266,22 +323,57 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
             </div>
           </div>
           
-          {/* Status indicator */}
-          <div className="flex items-center justify-center gap-2 px-3 py-2 bg-gray-900/50 border-t border-gray-700">
-            {isAnalyzing && (
-              <div className="flex items-center gap-2 text-purple-400 text-xs font-medium">
-                <Sparkles className="w-4 h-4 animate-pulse" />
-                <span>AI analyzing video...</span>
-              </div>
+          {/* Status indicator + Save button */}
+          <div className="flex items-center justify-between gap-2 px-3 py-2 bg-gray-900/50 border-t border-gray-700">
+            <div className="flex items-center gap-2">
+              {isAnalyzing && (
+                <div className="flex items-center gap-2 text-purple-400 text-xs font-medium">
+                  <Sparkles className="w-4 h-4 animate-pulse" />
+                  <span>AI analyzing video...</span>
+                </div>
+              )}
+              {(isComplete || isCVProcessing) && !isError && (
+                <div className="flex items-center gap-2 text-green-400 text-xs font-medium">
+                  <span>✓ Analysis complete</span>
+                </div>
+              )}
+              {isError && (
+                <div className="flex items-center gap-2 text-red-400 text-xs font-medium">
+                  <span>✕ Analysis failed: {result._error || 'Unknown error'}</span>
+                </div>
+              )}
+            </div>
+            
+            {/* Save/Unsave Button */}
+            {!isAnalyzing && !isError && (
+              isSaved ? (
+                <button
+                  onClick={handleUnsave}
+                  disabled={isDeleting}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-red-900/20 hover:bg-red-900/40 text-red-400 hover:text-red-300 rounded text-xs font-semibold uppercase tracking-wide transition-all"
+                >
+                  {isDeleting ? (
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                  ) : (
+                    <Trash2 className="w-3 h-3" />
+                  )}
+                  <span>Remove</span>
+                </button>
+              ) : (
+                <button
+                  onClick={handleSave}
+                  disabled={isSaving}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-600 hover:bg-purple-500 text-white rounded text-xs font-semibold uppercase tracking-wide transition-all"
+                >
+                  {isSaving ? (
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                  ) : (
+                    <Bookmark className="w-3 h-3" />
+                  )}
+                  <span>Save</span>
+                </button>
+              )
             )}
-            {(isComplete || isCVProcessing) && !isError && (
-              <div className="flex items-center gap-2 text-green-400 text-xs font-medium">
-                <span>✓ Analysis complete</span>
-              </div>
-            )}
-            {isError && (
-              <div className="flex items-center gap-2 text-red-400 text-xs font-medium">
-                <span>✕ Analysis failed: {result._error || 'Unknown error'}</span>
               </div>
             )}
           </div>
