@@ -765,11 +765,19 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
               <div>
                 <p className="text-[10px] text-gray-500 mb-2">Region Damage (lower = better condition):</p>
                 <div className="grid grid-cols-2 gap-2 text-xs">
-                  {Object.entries(result.regionScores).map(([region, score]) => {
+                  {Object.entries(result.regionScores)
+                    .filter(([region]) => region !== 'full_frame') // Don't show full frame in grid
+                    .map(([region, score]) => {
                     const scoreNum = score as number;
+                    // Handle both old corner-based and new quadrant-based region names
                     const regionLabel = region === 'spine' ? 'Spine' : 
                                        region === 'surface' ? 'Cover' :
-                                       region.replace('corner_', '').toUpperCase();
+                                       region === 'center' ? 'Center' :
+                                       region === 'top_left' ? 'Top Left' :
+                                       region === 'top_right' ? 'Top Right' :
+                                       region === 'bottom_left' ? 'Bottom Left' :
+                                       region === 'bottom_right' ? 'Bottom Right' :
+                                       region.replace('corner_', '').replace('_', ' ').toUpperCase();
                     const regionImage = result.regionCrops?.[region];
                     
                     return (
@@ -892,15 +900,19 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
         {/* Show region crops if available from CV pipeline */}
         {result.regionCrops && Object.keys(result.regionCrops).length > 0 && (
           <div>
-            <p className="text-gray-400 text-xs mb-2">Region Analysis</p>
-            <div className="grid grid-cols-5 gap-1">
-              {['corner_tl', 'corner_tr', 'spine', 'corner_bl', 'corner_br'].map((region) => {
-                const regionName = region.replace('corner_', '').replace('_', '');
-                const regionTitle = region === 'spine' ? 'Spine' : 
-                                   region === 'corner_tl' ? 'Top Left Corner' :
-                                   region === 'corner_tr' ? 'Top Right Corner' :
-                                   region === 'corner_bl' ? 'Bottom Left Corner' :
-                                   'Bottom Right Corner';
+            <p className="text-gray-400 text-xs mb-2">Frame Regions</p>
+            <div className="grid grid-cols-2 gap-2">
+              {Object.keys(result.regionCrops)
+                .filter(region => region !== 'full_frame') // Don't show full frame
+                .slice(0, 4) // Show max 4 regions
+                .map((region) => {
+                const regionName = region.replace('_', ' ');
+                const regionTitle = region === 'center' ? 'Center Area' :
+                                   region === 'top_left' ? 'Top Left' :
+                                   region === 'top_right' ? 'Top Right' :
+                                   region === 'bottom_left' ? 'Bottom Left' :
+                                   region === 'bottom_right' ? 'Bottom Right' :
+                                   region.replace('_', ' ').replace('corner ', '');
                 return result.regionCrops[region] && (
                   <button 
                     key={region} 

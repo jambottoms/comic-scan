@@ -391,16 +391,20 @@ def detect_and_warp_comic(image) -> tuple:
 
 def run_glint_analysis(golden_frames: list, output_dir: str) -> dict:
     """
-    Enhanced multi-frame defect analysis with perspective correction.
+    Simplified defect analysis - analyzes frames directly without warping.
     
-    Key improvements:
-    1. Detects comic corners and warps to flat perspective FIRST
-    2. Analyzes warped frames for accurate defect detection
-    3. Region crops are based on actual comic geometry (not random percentages)
-    4. Multi-scale edge detection with lower thresholds
-    5. Combines frames using MAX pooling
+    The warping approach was unreliable because:
+    - Video frames often have hands, backgrounds, angles
+    - Corner detection fails frequently
+    - Falling back to originals with fixed regions gives wrong crops
     
-    Returns meaningful defect scores that correlate with actual damage.
+    New approach:
+    1. Use the best golden frame directly (already sharp and stable)
+    2. Analyze the FULL frame for defects (no region assumptions)
+    3. Create a defect heatmap showing problem areas
+    4. Skip region crops since we can't reliably locate corners
+    
+    Returns meaningful defect scores based on actual image analysis.
     """
     import cv2
     import numpy as np
@@ -409,39 +413,27 @@ def run_glint_analysis(golden_frames: list, output_dir: str) -> dict:
     if len(golden_frames) < 1:
         return {"error": "Need at least 1 frame for analysis"}
     
-    # Load and warp all frames
+    # Load all frames - NO warping (it's unreliable)
     frames = []
-    warped_frames = []
-    warp_success_count = 0
+    print(f"   📷 Loading {len(golden_frames)} golden frames (no warping - using originals)...")
     
-    print(f"   📐 Detecting corners and warping frames...")
     for gf in golden_frames:
         img = cv2.imread(gf['path'])
         if img is not None:
             frames.append(img)
-            
-            # Try to detect and warp
-            warped, success = detect_and_warp_comic(img)
-            if success and warped is not None:
-                warped_frames.append(warped)
-                warp_success_count += 1
-                print(f"      ✅ Warped frame {len(warped_frames)}")
-            else:
-                print(f"      ⚠️  Could not warp frame, using original")
-                warped_frames.append(img)  # Fallback to original
+            print(f"      ✅ Loaded frame: {img.shape[1]}x{img.shape[0]}")
     
-    if len(warped_frames) < 1:
-        return {"error": "Could not process frames"}
+    if len(frames) < 1:
+        return {"error": "Could not load any frames"}
     
-    # Use warped frames for analysis (or originals if warp failed)
-    frames_to_analyze = warped_frames if warp_success_count > 0 else frames
-    
-    # Ensure all frames are same size
-    reference_shape = frames_to_analyze[0].shape
-    frames_to_analyze = [f for f in frames_to_analyze if f.shape == reference_shape]
+    # Use frames directly - ensure same size
+    reference_shape = frames[0].shape
+    frames_to_analyze = [f for f in frames if f.shape == reference_shape]
     
     h, w = frames_to_analyze[0].shape[:2]
     output_path = Path(output_dir)
+    
+    print(f"   🔍 Analyzing {len(frames_to_analyze)} frames at {w}x{h}...")
     
     print(f"   🔍 Analyzing {len(frames_to_analyze)} {'warped' if warp_success_count > 0 else 'original'} frames for defects...")
     
@@ -555,20 +547,26 @@ def run_glint_analysis(golden_frames: list, output_dir: str) -> dict:
     reference = frames_to_analyze[0]
     
     # =========================================
-    # REGION-BASED ANALYSIS (Proper Comic Geometry)
+    # QUADRANT-BASED ANALYSIS (Works on any frame)
     # =========================================
-    # Now that we have a FLAT, WARPED comic, these regions are accurate!
-    # LARGER regions for better visibility in UI
-    print(f"   📍 Extracting regions from warped comic...")
+    # Since we can't reliably detect comic corners, we analyze quadrants
+    # This gives meaningful data about different areas of the frame
+    print(f"   📍 Analyzing frame quadrants...")
     
-    # INCREASED region sizes for better visibility
+    # Simple quadrant division - works regardless of comic position
+    # These are frame regions, not comic corners
+    mid_w = w // 2
+    mid_h = h // 2
+    quarter_w = w // 4
+    quarter_h = h // 4
+    
     regions = {
-        "corner_tl": (0, 0, int(w * 0.18), int(h * 0.18)),           # Was 0.12 - now 18% for better visibility
-        "corner_tr": (int(w * 0.82), 0, w, int(h * 0.18)),           # Was 0.88/0.12
-        "corner_bl": (0, int(h * 0.82), int(w * 0.18), h),           # Was 0.88/0.12
-        "corner_br": (int(w * 0.82), int(h * 0.82), w, h),           # Was 0.88
-        "spine": (0, int(h * 0.15), int(w * 0.12), int(h * 0.85)),   # Was 0.08 - now 12% wider, taller for visibility
-        "surface": (int(w * 0.15), int(h * 0.15), int(w * 0.85), int(h * 0.85)),  # Was 0.12/0.88
+        "top_left": (0, 0, mid_w, mid_h),
+        "top_right": (mid_w, 0, w, mid_h),
+        "bottom_left": (0, mid_h, mid_w, h),
+        "bottom_right": (mid_w, mid_h, w, h),
+        "center": (quarter_w, quarter_h, w - quarter_w, h - quarter_h),
+        "full_frame": (0, 0, w, h),
     }
     
     gray = cv2.cvtColor(reference, cv2.COLOR_BGR2GRAY)
@@ -632,25 +630,30 @@ def run_glint_analysis(golden_frames: list, output_dir: str) -> dict:
         
         # Create overlay visualization for this region
         overlay = crop.copy()
-        red_overlay = np.zeros_like(crop)
         
-        # Resize defect mask if we upscaled the crop
-        if crop_defect.shape != crop.shape[:2]:
-            crop_defect_display = cv2.resize(crop_defect, (crop.shape[1], crop.shape[0]), interpolation=cv2.INTER_NEAREST)
-        else:
-            crop_defect_display = crop_defect
+        # Only create overlay if we have defect data for this region
+        if crop_defect.size > 0:
+            red_overlay = np.zeros_like(crop)
+            
+            # Resize defect mask if we upscaled the crop
+            if crop_defect.shape != crop.shape[:2]:
+                crop_defect_display = cv2.resize(crop_defect, (crop.shape[1], crop.shape[0]), interpolation=cv2.INTER_NEAREST)
+            else:
+                crop_defect_display = crop_defect
+            
+            red_overlay[:, :, 2] = crop_defect_display  # Red channel
+            overlay = cv2.addWeighted(overlay, 0.7, red_overlay, 0.3, 0)
         
-        red_overlay[:, :, 2] = crop_defect_display  # Red channel
-        overlay = cv2.addWeighted(overlay, 0.7, red_overlay, 0.3, 0)
+        # Add label showing region name and score
+        label = name.replace('_', ' ').title()
+        score_text = f"{quality_score:.0f}%"
         
-        # Add border and label to overlay for easy identification
-        border_color = (0, 255, 255) if 'spine' in name else (255, 255, 0)
-        cv2.rectangle(overlay, (5, 5), (overlay.shape[1]-5, overlay.shape[0]-5), border_color, 3)
-        
-        # Add text label
-        label = name.replace('_', ' ').upper()
-        cv2.putText(overlay, label, (10, 30), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, border_color, 2)
+        # Draw semi-transparent label bar at bottom
+        label_height = 30
+        cv2.rectangle(overlay, (0, overlay.shape[0] - label_height), 
+                      (overlay.shape[1], overlay.shape[0]), (0, 0, 0), -1)
+        cv2.putText(overlay, f"{label}: {score_text}", (5, overlay.shape[0] - 8), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
         
         overlay_path = output_path / f"overlay_{name}.png"
         cv2.imwrite(str(overlay_path), overlay, [cv2.IMWRITE_PNG_COMPRESSION, 6])
