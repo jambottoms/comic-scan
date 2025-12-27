@@ -690,7 +690,7 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
 
                         {/* Train AI Overlay Grid (Only during capture step) */}
                         {activeTab === 'train' && trainingStep === 'capture' && !loading && (
-                            <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
+                            <div className="absolute inset-0 pointer-events-none flex justify-center" style={{ paddingTop: '15%' }}>
                                 <div className="flex flex-col items-center gap-4">
                                     <div className="w-64 h-80 border-2 border-purple-400 rounded-lg shadow-[0_0_15px_rgba(168,85,247,0.5)] bg-transparent" />
                                     <div className="text-center text-white/90 text-sm font-medium shadow-black drop-shadow-md bg-black/40 px-4 py-2 rounded-full backdrop-blur-sm">
@@ -703,7 +703,7 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
                         {/* Train AI - Crop Step */}
                         {activeTab === 'train' && trainingStep === 'crop' && trainingImageSrc && (
                             <div className="absolute inset-0 bg-black">
-                                <div className="relative w-full h-full">
+                                <div className="relative w-full h-full" style={{ transform: 'translateY(-10%)' }}>
                                     <Cropper
                                         image={trainingImageSrc}
                                         crop={trainingCrop}
@@ -849,7 +849,23 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
                                                 step={0.1}
                                                 value={trainingZoom}
                                                 onChange={(e) => setTrainingZoom(Number(e.target.value))}
-                                                className="flex-1"
+                                                className="flex-1 h-2 bg-gray-700 rounded-full appearance-none cursor-pointer
+                                                    [&::-webkit-slider-thumb]:appearance-none
+                                                    [&::-webkit-slider-thumb]:w-7
+                                                    [&::-webkit-slider-thumb]:h-7
+                                                    [&::-webkit-slider-thumb]:rounded-full
+                                                    [&::-webkit-slider-thumb]:bg-white
+                                                    [&::-webkit-slider-thumb]:shadow-lg
+                                                    [&::-webkit-slider-thumb]:shadow-purple-500/50
+                                                    [&::-webkit-slider-thumb]:border-2
+                                                    [&::-webkit-slider-thumb]:border-purple-400
+                                                    [&::-moz-range-thumb]:w-7
+                                                    [&::-moz-range-thumb]:h-7
+                                                    [&::-moz-range-thumb]:rounded-full
+                                                    [&::-moz-range-thumb]:bg-white
+                                                    [&::-moz-range-thumb]:shadow-lg
+                                                    [&::-moz-range-thumb]:border-2
+                                                    [&::-moz-range-thumb]:border-purple-400"
                                             />
                                         </div>
                                         {/* Next Button */}
