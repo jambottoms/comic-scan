@@ -50,17 +50,15 @@ export default function TrainingModal({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     if (step === 'capture') {
       startCamera();
-    } else {
-      stopCamera();
     }
-  }, [step, startCamera, stopCamera]);
-
-  // Cleanup on unmount
-  useEffect(() => {
+    
     return () => {
-      stopCamera();
+      if (step === 'capture') {
+        stopCamera();
+      }
     };
-  }, [stopCamera]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step]);
 
   // Handle camera capture
   const handleCameraCapture = async () => {
