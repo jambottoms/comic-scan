@@ -21,6 +21,10 @@ from pathlib import Path
 # Create Modal app
 app = modal.App("gradevault-cv-worker")
 
+# Shared volume for video files - allows parallel workers to access same video
+# without re-downloading. Ephemeral storage, cleaned up after each scan.
+video_volume = modal.Volume.from_name("gradevault-video-temp", create_if_missing=True)
+
 # Define the container image with all dependencies
 # Using REST API for Supabase Storage (full support for new sb_secret_ keys)
 cv_image = (
@@ -35,6 +39,89 @@ cv_image = (
         "fastapi>=0.109.0",  # Required for web endpoints
     )
 )
+
+
+@app.function(
+    image=cv_image,
+    timeout=120,
+    volumes={"/video": video_volume},
+)
+def analyze_frame_chunk(
+    scan_id: str,
+    start_frame: int,
+    end_frame: int,
+    fps: float,
+    chunk_id: int
+) -> list:
+    """
+    Analyze a chunk of frames in parallel.
+    
+    Reads video from shared Volume (no re-download needed).
+    Returns list of candidate frames with quality metrics.
+    
+    Args:
+        scan_id: Scan ID used as folder name in Volume
+        start_frame: Starting frame number
+        end_frame: Ending frame number
+        fps: Video FPS for timestamp calculation
+        chunk_id: Chunk identifier for logging
+    
+    Returns:
+        List of candidate frames with quality metrics
+    """
+    import cv2
+    import numpy as np
+    
+    video_path = f"/video/{scan_id}/input.mp4"
+    print(f"[Chunk {chunk_id}] Processing frames {start_frame}-{end_frame} from {video_path}")
+    
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        print(f"[Chunk {chunk_id}] ERROR: Could not open video at {video_path}")
+        return []
+    
+    cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+    
+    candidates = []
+    prev_gray = None
+    
+    for frame_number in range(start_frame, end_frame):
+        ret, frame = cap.read()
+        if not ret:
+            break
+        
+        curr_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        
+        # Calculate sharpness (Laplacian Variance)
+        laplacian = cv2.Laplacian(curr_gray, cv2.CV_64F)
+        sharpness = laplacian.var()
+        
+        # Calculate motion (Optical Flow) - skip first frame in chunk
+        motion = 0.0
+        if prev_gray is not None:
+            flow = cv2.calcOpticalFlowFarneback(
+                prev_gray, curr_gray, None,
+                pyr_scale=0.5, levels=3, winsize=15,
+                iterations=3, poly_n=5, poly_sigma=1.2, flags=0
+            )
+            magnitude, _ = cv2.cartToPolar(flow[..., 0], flow[..., 1])
+            motion = np.mean(magnitude)
+        
+        # Only keep frames with low motion (stable)
+        if motion <= 1.0:
+            candidates.append({
+                'frame_number': frame_number,
+                'sharpness': float(sharpness),
+                'motion': float(motion),
+                'timestamp': frame_number / fps
+            })
+        
+        prev_gray = curr_gray
+    
+    cap.release()
+    
+    print(f"[Chunk {chunk_id}] Found {len(candidates)} stable frames")
+    return candidates
 
 
 def find_golden_frame_candidates(video_path: str, total_frames: int, fps: float) -> list:
@@ -108,13 +195,14 @@ def find_golden_frame_candidates(video_path: str, total_frames: int, fps: float)
     image=cv_image,
     timeout=300,  # 5 minute timeout
     secrets=[modal.Secret.from_name("supabase-secrets")],
+    volumes={"/video": video_volume},
 )
 def analyze_video(video_url: str, scan_id: str, item_type: str = "card") -> dict:
     """
-    Main entry point for video analysis.
+    Main entry point for video analysis with PARALLEL frame processing.
     
-    Downloads video once and processes all frames sequentially.
-    For typical 5-10 second videos, this is efficient and reliable.
+    Downloads video once to shared Volume, then spawns parallel workers
+    to analyze frame chunks. Each worker reads from the Volume (no re-download).
     
     Args:
         video_url: Public URL of the video in Supabase
@@ -128,6 +216,7 @@ def analyze_video(video_url: str, scan_id: str, item_type: str = "card") -> dict
     import numpy as np
     import requests
     import tempfile
+    import shutil
     from pathlib import Path
     
     # Get Supabase credentials from Modal secrets
@@ -143,39 +232,80 @@ def analyze_video(video_url: str, scan_id: str, item_type: str = "card") -> dict
     # Note: We use REST API for storage uploads (full support for new sb_secret_ keys)
     supabase = None
     
-    print(f"🎬 Processing scan: {scan_id}")
+    print(f"🎬 Processing scan: {scan_id} (PARALLEL MODE)")
     print(f"📹 Video URL: {video_url}")
     print(f"🏷️ Item type: {item_type}")
     
-    # Create temp directory for processing
+    # Create directories
+    volume_dir = Path(f"/video/{scan_id}")
+    volume_dir.mkdir(parents=True, exist_ok=True)
+    volume_video_path = volume_dir / "input.mp4"
+    
+    # Create temp directory for local processing
     with tempfile.TemporaryDirectory() as tmpdir:
         tmpdir = Path(tmpdir)
-        video_path = tmpdir / "input.mp4"
         output_dir = tmpdir / "analysis"
         output_dir.mkdir()
         
-        # Download video ONCE
-        print("📥 Downloading video...")
+        # Download video ONCE and save to shared Volume
+        print("📥 Downloading video to shared Volume...")
         response = requests.get(video_url, stream=True)
         response.raise_for_status()
-        with open(video_path, 'wb') as f:
+        with open(volume_video_path, 'wb') as f:
             for chunk in response.iter_content(chunk_size=8192):
                 f.write(chunk)
         
-        file_size_mb = video_path.stat().st_size / 1024 / 1024
-        print(f"   Downloaded: {file_size_mb:.1f} MB")
+        # Commit the volume so workers can see the file
+        video_volume.commit()
+        
+        file_size_mb = volume_video_path.stat().st_size / 1024 / 1024
+        print(f"   Downloaded: {file_size_mb:.1f} MB to {volume_video_path}")
         
         # Get video metadata
-        cap = cv2.VideoCapture(str(video_path))
+        cap = cv2.VideoCapture(str(volume_video_path))
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         fps = cap.get(cv2.CAP_PROP_FPS)
         cap.release()
         
         print(f"   Video: {total_frames} frames, {fps:.1f} fps, {total_frames/fps:.1f}s")
         
-        # Find golden frame candidates (single-pass, no re-download)
-        print("🔍 Finding best frames...")
-        all_candidates = find_golden_frame_candidates(str(video_path), total_frames, fps)
+        # Determine optimal number of parallel workers
+        min_frames_per_chunk = 30  # Need enough for accurate optical flow
+        max_workers = 8
+        num_workers = min(max_workers, max(2, total_frames // min_frames_per_chunk))
+        chunk_size = total_frames // num_workers
+        
+        print(f"🔀 Splitting into {num_workers} parallel workers...")
+        print(f"   Each worker analyzes ~{chunk_size} frames")
+        
+        # Prepare chunk parameters
+        chunk_params = []
+        for i in range(num_workers):
+            start = i * chunk_size
+            end = min((i + 1) * chunk_size, total_frames) if i < num_workers - 1 else total_frames
+            chunk_params.append({
+                'scan_id': scan_id,
+                'start_frame': start,
+                'end_frame': end,
+                'fps': fps,
+                'chunk_id': i
+            })
+        
+        # Process chunks in parallel using Modal's .map()
+        print(f"⚡ Processing {num_workers} chunks in parallel...")
+        all_candidates = []
+        
+        for candidates in analyze_frame_chunk.map(
+            [p['scan_id'] for p in chunk_params],
+            [p['start_frame'] for p in chunk_params],
+            [p['end_frame'] for p in chunk_params],
+            [p['fps'] for p in chunk_params],
+            [p['chunk_id'] for p in chunk_params],
+        ):
+            all_candidates.extend(candidates)
+        
+        print(f"✅ Analyzed ALL {total_frames} frames in parallel")
+        print(f"   Found {len(all_candidates)} stable frames (motion <= 1.0)")
         
         # Sort by sharpness (highest first) - SAME SELECTION LOGIC
         all_candidates.sort(key=lambda x: x['sharpness'], reverse=True)
@@ -199,7 +329,7 @@ def analyze_video(video_url: str, scan_id: str, item_type: str = "card") -> dict
         
         # Now extract the actual golden frames (only 5 frames - fast!)
         print(f"\n🖼️  Extracting {len(selected)} golden frames...")
-        cap = cv2.VideoCapture(str(video_path))
+        cap = cv2.VideoCapture(str(volume_video_path))
         
         golden_frames = []
         for i, frame_data in enumerate(selected, 1):
@@ -228,6 +358,15 @@ def analyze_video(video_url: str, scan_id: str, item_type: str = "card") -> dict
         # Upload results to Supabase
         print("\n📤 Uploading to Supabase...")
         result = upload_results(supabase, scan_id, output_dir, golden_frames, analysis_results)
+        
+        # Clean up the shared Volume to free space
+        print("\n🧹 Cleaning up shared Volume...")
+        try:
+            shutil.rmtree(str(volume_dir))
+            video_volume.commit()
+            print(f"   Removed {volume_dir}")
+        except Exception as e:
+            print(f"   Warning: Could not clean up volume: {e}")
         
         print("\n✅ Analysis complete!")
         return result
