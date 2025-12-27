@@ -127,7 +127,13 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
     const shouldUseCamera = (activeTab === 'record' || activeTab === 'train');
     const isInCaptureMode = activeTab === 'record' || (activeTab === 'train' && trainingStep === 'capture');
     
-    console.log('📷 Camera effect:', { isOpen, activeTab, shouldUseCamera, isInCaptureMode, loading, showUploadModal, trainingStep });
+    console.log('📷 Camera effect:', { isOpen, isClosing, activeTab, shouldUseCamera, isInCaptureMode, loading, showUploadModal, trainingStep });
+    
+    // Don't start camera if modal is closing
+    if (isClosing) {
+      stopCamera();
+      return;
+    }
     
     if (isOpen && isInCaptureMode && !loading && !showUploadModal) {
       startCamera();
@@ -138,17 +144,17 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
     } else if (!shouldUseCamera) {
       // Stop when switching away from camera tabs entirely
       stopCamera();
+    } else if (!isOpen) {
+      // Modal is closed
+      stopCamera();
     }
     
     return () => {
-      // Only cleanup when modal closes, not on every effect run
-      if (!isOpen) {
-        console.log('📷 Modal closing, stopping camera');
-        stopCamera();
-      }
+      // Always stop camera on cleanup
+      stopCamera();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, activeTab, loading, showUploadModal, trainingStep]);
+  }, [isOpen, isClosing, activeTab, loading, showUploadModal, trainingStep]);
 
   const startRecording = () => {
     // Get stream from the hook's videoRef
