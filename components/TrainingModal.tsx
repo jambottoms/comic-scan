@@ -159,7 +159,7 @@ export default function TrainingModal({ onClose }: { onClose: () => void }) {
         .getPublicUrl(filename);
 
       // Smart Routing: Send to appropriate Nyckel functions in parallel
-      const promises = [];
+      const promises: Promise<{ success: boolean; error?: string }>[] = [];
 
       // 1. Process Defect Labels
       const defectLabels = selectedLabels.filter(l => DEFECT_TYPES.includes(l));
