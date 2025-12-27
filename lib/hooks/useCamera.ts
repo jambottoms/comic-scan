@@ -46,9 +46,9 @@ export function useCamera(): UseCameraReturn {
   useEffect(() => {
     if (isStreaming && streamRef.current && videoRef.current) {
       videoRef.current.srcObject = streamRef.current;
-      videoRef.current.play().catch(err => {
-        console.error('Error playing video:', err);
-        setError('Failed to start video playback');
+      // play() may fail on iOS Safari but video still works - don't show error
+      videoRef.current.play().catch(() => {
+        // Ignore - iOS Safari quirk, video usually plays anyway
       });
     }
   }, [isStreaming]);
