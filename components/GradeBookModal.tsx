@@ -575,30 +575,18 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
 
   return (
     <div 
-      className={`fixed inset-0 z-50 flex flex-col transition-all duration-150 ease-out overflow-hidden ${
+      className={`fixed inset-0 z-50 flex flex-col justify-end transition-all duration-150 ease-out ${
         shouldShow ? 'pointer-events-auto' : 'pointer-events-none'
       } ${isVisible ? 'bg-black/80' : 'bg-black/0'} backdrop-blur-sm`}
       style={{ visibility: shouldShow ? 'visible' : 'hidden', touchAction: 'none' }}
     >
-      {/* TEMP DEBUG: Show values on screen */}
-      {isOpen && (
-        <div className="fixed top-4 left-4 bg-red-600 text-white p-4 text-xs z-[9999] font-mono">
-          isOpen: {String(isOpen)}<br/>
-          isVisible: {String(isVisible)}<br/>
-          shouldShow: {String(shouldShow)}<br/>
-          isCameraTab: {String(isCameraTab)}<br/>
-          activeTab: {activeTab}<br/>
-          viewportHeight: {viewportHeight}px<br/>
-          transform: {isVisible || isCameraTab ? 'translate-y-0' : 'translate-y-full'}
-        </div>
-      )}
       <div 
-        className={`w-full bg-red-500 border-t border-gray-800 rounded-t-3xl shadow-2xl overflow-hidden overscroll-behavior-none flex flex-col ${
+        className={`w-full bg-gray-900 border-t border-gray-800 rounded-t-3xl shadow-2xl overflow-hidden overscroll-behavior-none flex flex-col ${
           !isCameraTab ? 'transition-transform duration-200 ease-out' : ''
         } ${
-          isVisible || isCameraTab ? 'translate-y-0' : 'translate-y-full'
+          isVisible ? 'translate-y-0' : 'translate-y-full'
         }`}
-        style={{ height: `${viewportHeight}px`, position: 'relative', zIndex: 100 }}
+        style={{ height: '100vh', height: '100dvh' }}
       >
         
         {/* Header */}
