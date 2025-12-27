@@ -1,11 +1,10 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Loader2, ScanLine, Sparkles, Camera, Microscope, Bookmark, Trash2, Maximize2 } from 'lucide-react';
+import { Loader2, ScanLine, Sparkles, Camera, Bookmark, Trash2, Maximize2 } from 'lucide-react';
 import { getVideoById, updateHistoryEntry } from '@/lib/history';
 import { subscribeToUpdates } from '@/lib/streaming-analysis';
 import { extractFramesFromVideo, ExtractedFrame } from '@/lib/frame-extractor';
-import { triggerCVAnalysis, CVAnalysisResult } from '@/lib/cv-analysis';
 import { saveScan, deleteSavedScan, isScanSaved } from '@/lib/saved-scans';
 import ImageViewerModal from './ImageViewerModal';
 
@@ -70,14 +69,6 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
   const [framesLoading, setFramesLoading] = useState(false);
   const [framesError, setFramesError] = useState<string | null>(null);
   
-  // Deep scan state (Modal.com CV analysis)
-  const [deepScanLoading, setDeepScanLoading] = useState(false);
-  const [deepScanError, setDeepScanError] = useState<string | null>(null);
-  const [deepScanComplete, setDeepScanComplete] = useState(false);
-  const [deepScanProgress, setDeepScanProgress] = useState(0);
-  
-  // Check if deep scan has already been run
-  const hasDeepScanResults = !!(entry?.result?.defectMask || entry?.result?.varianceHeatmap);
   
   // Save state
   const [isSaved, setIsSaved] = useState(false);
@@ -167,122 +158,6 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
       console.error('Failed to delete saved scan:', error);
     } finally {
       setIsDeleting(false);
-    }
-  };
-  
-  // Save deep scan results to localStorage
-  const saveDeepScanResults = (id: string, cvResult: CVAnalysisResult) => {
-    try {
-      const historyKey = 'comic-scan-history';
-      const historyStr = localStorage.getItem(historyKey);
-      
-      if (!historyStr) return;
-      
-      const history = JSON.parse(historyStr);
-      const entryIndex = history.findIndex((h: any) => h.id === id);
-      
-      if (entryIndex === -1) return;
-      
-      // Merge CV results into the result object
-      history[entryIndex].result = {
-        ...history[entryIndex].result,
-        goldenFrames: cvResult.goldenFrames,
-        frameTimestamps: cvResult.frameTimestamps,
-        defectMask: cvResult.defectMask,
-        varianceHeatmap: cvResult.varianceHeatmap,
-        defectOverlay: cvResult.defectOverlay,
-        regionCrops: cvResult.regionCrops,
-        defectPercentage: cvResult.defectPercentage,
-        damageScore: cvResult.damageScore,
-        regionScores: cvResult.regionScores,
-        regionDetails: cvResult.regionDetails,
-      };
-      
-      localStorage.setItem(historyKey, JSON.stringify(history));
-      console.log('[Deep Scan] Results saved to localStorage');
-    } catch (error) {
-      console.error('[Deep Scan] Failed to save results:', error);
-    }
-  };
-  
-  const triggerDeepScan = async () => {
-    if (!entry?.videoUrl || deepScanLoading) {
-      console.log('[Deep Scan] Skipped - no videoUrl or already loading', { 
-        hasVideoUrl: !!entry?.videoUrl, 
-        isLoading: deepScanLoading 
-      });
-      return;
-    }
-    
-    console.log('[Deep Scan] Starting deep scan for:', historyId);
-    console.log('[Deep Scan] Video URL:', entry.videoUrl);
-    
-    setDeepScanLoading(true);
-    setDeepScanError(null);
-    setDeepScanProgress(0);
-    
-    // Start progress animation (simulated since Modal doesn't stream progress)
-    // Typical deep scan takes 30-90 seconds
-    const progressInterval = setInterval(() => {
-      setDeepScanProgress(prev => {
-        if (prev >= 95) return prev; // Cap at 95% until complete
-        // Slow down as we get higher
-        const increment = prev < 30 ? 3 : prev < 60 ? 2 : prev < 80 ? 1 : 0.5;
-        return Math.min(95, prev + increment);
-      });
-    }, 1000);
-    
-    try {
-      const itemType = entry?.result?.itemType || 'card';
-      console.log('[Deep Scan] Calling triggerCVAnalysis with itemType:', itemType);
-      
-      const result = await triggerCVAnalysis(entry.videoUrl, historyId, itemType);
-      
-      console.log('[Deep Scan] Raw API result:', JSON.stringify(result, null, 2));
-      
-      clearInterval(progressInterval);
-      setDeepScanProgress(100);
-      
-      if (result.success && result.defectMask) {
-        console.log('[Deep Scan] SUCCESS - has defect data');
-        setDeepScanComplete(true);
-        
-        // Save CV results to localStorage first
-        saveDeepScanResults(historyId, result);
-        
-        // Force UI update by reloading entry AND triggering a state change
-        const updated = getVideoById(historyId);
-        if (updated) {
-          setEntry(updated);
-          console.log('[Deep Scan] Entry updated with CV results:', {
-            hasDefectMask: !!updated.result?.defectMask,
-            hasRegionCrops: !!updated.result?.regionCrops,
-            damageScore: updated.result?.damageScore,
-            regionScores: updated.result?.regionScores
-          });
-        }
-        
-        // Also dispatch event for any other listeners
-        window.dispatchEvent(new CustomEvent('cv-analysis-complete', {
-          detail: { historyId, cvResult: result }
-        }));
-      } else if (result.skipped) {
-        console.log('[Deep Scan] SKIPPED - server not configured');
-        setDeepScanError('Deep scan not configured. Set MODAL_CV_WEBHOOK_URL on server.');
-      } else if (result.success && !result.defectMask) {
-        console.log('[Deep Scan] SUCCESS but NO defect data - possible Modal issue');
-        setDeepScanError('Analysis completed but no defect data returned. Check Modal logs.');
-      } else {
-        console.log('[Deep Scan] FAILED:', result.error || result.message || 'Unknown error');
-        setDeepScanError(result.error || result.message || 'Deep scan failed');
-      }
-    } catch (err: any) {
-      console.error('[Deep Scan] EXCEPTION:', err);
-      clearInterval(progressInterval);
-      setDeepScanProgress(0);
-      setDeepScanError(err.message || 'Deep scan failed');
-    } finally {
-      setDeepScanLoading(false);
     }
   };
   
@@ -401,7 +276,7 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
       if (result.reasoning.includes(timeStr)) {
         // Find the sentence containing this timestamp
         const sentences = result.reasoning.split(/[.!?]+/);
-        const match = sentences.find(s => s.includes(timeStr));
+        const match = sentences.find((s: string) => s.includes(timeStr));
         if (match) {
           title = "Defect Note";
           desc = match.trim();
@@ -674,226 +549,92 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
               })}
             </div>
           )}
+          
+          {/* Show remaining server-side golden frames in a second row if we have more than 3 */}
+          {extractedFrames.length === 0 && result.goldenFrames && result.goldenFrames.length > 3 && (
+            <div className="grid grid-cols-2 gap-2 mt-2">
+              {result.goldenFrames.slice(3, 5).map((frame: string, idx: number) => {
+                const timestamp = result.frameTimestamps ? result.frameTimestamps[idx + 3] : 0;
+                const { title, desc } = getFrameDescription(timestamp);
+                return (
+                  <button 
+                    key={idx + 3} 
+                    className="relative aspect-[3/4] rounded-lg overflow-hidden border border-gray-600 bg-gray-900 group hover:border-purple-500 transition-colors"
+                    onClick={() => openImageViewer(frame, title, desc, timestamp)}
+                  >
+                    <img src={frame} alt={`Golden Frame ${idx + 4}`} className="w-full h-full object-cover" />
+                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
+                      <Maximize2 className="w-6 h-6 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-lg" />
+                    </div>
+                    <div className="absolute bottom-0 left-0 right-0 bg-black/70 text-[10px] text-center text-gray-300 py-0.5 font-mono">
+                      Frame {idx + 4}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
         
-        {/* Deep Scan Button - Advanced CV Analysis */}
-        {!hasDeepScanResults && !deepScanComplete && entry?.videoUrl && (
-          <div className="mb-4 pt-3 border-t border-gray-700">
-            <button
-              onClick={triggerDeepScan}
-              disabled={deepScanLoading}
-              className="w-full py-3 px-4 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 disabled:from-gray-600 disabled:to-gray-600 text-white font-medium rounded-xl flex items-center justify-center gap-2 transition-all relative overflow-hidden"
-            >
-              {/* Progress bar background */}
-              {deepScanLoading && (
-                <div 
-                  className="absolute inset-0 bg-green-500/30 transition-all duration-300"
-                  style={{ width: `${deepScanProgress}%` }}
-                />
-              )}
-              
-              {deepScanLoading ? (
-                <div className="relative z-10 flex items-center gap-2">
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>Deep Scanning... {Math.round(deepScanProgress)}%</span>
-                </div>
-              ) : (
-                <>
-                  <Microscope className="w-4 h-4" />
-                  <span>Run Deep Scan</span>
-                </>
-              )}
-            </button>
-            <p className="text-gray-500 text-[10px] text-center mt-2">
-              Advanced AI analysis: sharpest frames, defect detection, region analysis
-            </p>
-            {deepScanError && (
-              <p className="text-red-400 text-xs text-center mt-2">{deepScanError}</p>
-            )}
-          </div>
-        )}
-        
-        {/* Deep scan success message */}
-        {(hasDeepScanResults || deepScanComplete) && (
-          <div className="mb-4 pt-3 border-t border-gray-700 flex items-center justify-center gap-2 text-green-400 text-xs">
-            <ScanLine className="w-4 h-4" />
-            <span>Deep scan complete</span>
-          </div>
-        )}
-        
-        {/* Deep Scan Results Summary */}
-        {(result.defectMask || result.damageScore !== undefined || result.defectPercentage !== undefined) && (
+        {/* Multi-Frame Analysis Results (from Gemini) */}
+        {result.detailedAnalysis && (
           <div className="mb-4 p-3 bg-gray-900/50 rounded-lg border border-gray-700">
             <div className="flex items-center justify-between mb-3">
               <span className="text-gray-400 text-xs uppercase tracking-wide flex items-center gap-2">
-                <span>🔬 Physical Condition Analysis</span>
-                <span className="text-[10px] text-gray-500 normal-case">(CV defect detection)</span>
+                <span>🔬 Multi-Frame Analysis</span>
+                <span className="text-[10px] text-gray-500 normal-case">(AI verified)</span>
               </span>
-              {result.damageScore !== undefined ? (
-                <div className="flex flex-col items-end">
-                  <span className={`text-sm font-bold ${
-                    result.damageScore < 20 ? 'text-green-400' : 
-                    result.damageScore < 40 ? 'text-yellow-400' : 
-                    result.damageScore < 65 ? 'text-orange-400' : 'text-red-400'
-                  }`}>
-                    {result.damageScore < 20 ? '✓ Excellent' : 
-                     result.damageScore < 40 ? '⚡ Minor Wear' : 
-                     result.damageScore < 65 ? '⚠ Moderate Damage' : '✕ Heavy Damage'}
-                  </span>
-                  <span className="text-xs text-gray-500">
-                    {result.damageScore.toFixed(0)}% damage detected
-                  </span>
-                </div>
-              ) : result.defectPercentage !== undefined && (
-                <span className="text-gray-400 text-xs">
-                  Defect coverage: {result.defectPercentage.toFixed(1)}%
+              {result.detailedAnalysis.confidence && (
+                <span className={`text-xs font-medium px-2 py-0.5 rounded ${
+                  result.detailedAnalysis.confidence === 'high' ? 'bg-green-900/50 text-green-400' :
+                  result.detailedAnalysis.confidence === 'medium' ? 'bg-yellow-900/50 text-yellow-400' :
+                  'bg-red-900/50 text-red-400'
+                }`}>
+                  {result.detailedAnalysis.confidence} confidence
                 </span>
               )}
             </div>
             
-            {/* Grade Adjustment Message */}
-            {result.gradeAdjustment && (
-              <div className="mb-3 p-2 bg-blue-900/20 rounded border border-blue-700/30">
+            {/* Confirmed Defects */}
+            {result.detailedAnalysis.confirmedDefects?.length > 0 && (
+              <div className="mb-3">
+                <p className="text-[10px] text-gray-500 mb-1">Confirmed Defects:</p>
+                <div className="space-y-1">
+                  {result.detailedAnalysis.confirmedDefects.map((defect: any, i: number) => (
+                    <div key={i} className={`text-xs px-2 py-1 rounded ${
+                      defect.severity === 'severe' ? 'bg-red-900/30 text-red-300' :
+                      defect.severity === 'moderate' ? 'bg-orange-900/30 text-orange-300' :
+                      'bg-yellow-900/30 text-yellow-300'
+                    }`}>
+                      <span className="font-medium">{defect.type}</span>
+                      <span className="text-gray-400"> · </span>
+                      <span>{defect.location}</span>
+                      <span className="text-gray-400"> · </span>
+                      <span className="opacity-75">{defect.severity}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            
+            {/* Possible Artifacts (glare, not damage) */}
+            {result.detailedAnalysis.possibleArtifacts?.length > 0 && (
+              <div className="mb-3">
+                <p className="text-[10px] text-gray-500 mb-1">Possible Glare/Artifacts (not damage):</p>
+                <div className="text-xs text-gray-400 italic">
+                  {result.detailedAnalysis.possibleArtifacts.join(', ')}
+                </div>
+              </div>
+            )}
+            
+            {/* Grade Adjustment from multi-frame analysis */}
+            {result.detailedAnalysis.adjustmentReason && (
+              <div className="p-2 bg-blue-900/20 rounded border border-blue-700/30">
                 <p className="text-xs text-blue-300">
-                  📊 <span className="font-medium">Grade Adjustment:</span> {result.gradeAdjustment}
+                  📊 <span className="font-medium">Analysis:</span> {result.detailedAnalysis.adjustmentReason}
                 </p>
               </div>
             )}
-            
-            {/* Per-region scores with images */}
-            {result.regionScores && Object.keys(result.regionScores).length > 0 && (
-              <div>
-                <p className="text-[10px] text-gray-500 mb-2">Region Damage (lower = better condition):</p>
-                <div className="grid grid-cols-2 gap-2 text-xs">
-                  {Object.entries(result.regionScores)
-                    .filter(([region]) => region !== 'full_frame') // Don't show full frame in grid
-                    .map(([region, score]) => {
-                    const scoreNum = score as number;
-                    // Handle both old corner-based and new quadrant-based region names
-                    const regionLabel = region === 'spine' ? 'Spine' : 
-                                       region === 'surface' ? 'Cover' :
-                                       region === 'center' ? 'Center' :
-                                       region === 'top_left' ? 'Top Left' :
-                                       region === 'top_right' ? 'Top Right' :
-                                       region === 'bottom_left' ? 'Bottom Left' :
-                                       region === 'bottom_right' ? 'Bottom Right' :
-                                       region.replace('corner_', '').replace('_', ' ').toUpperCase();
-                    const regionImage = result.regionCrops?.[region];
-                    
-                    return (
-                      <div 
-                        key={region} 
-                        className={`rounded border overflow-hidden ${
-                          scoreNum < 20 ? 'border-green-700/50 bg-green-900/20' :
-                          scoreNum < 40 ? 'border-yellow-700/50 bg-yellow-900/20' :
-                          scoreNum < 65 ? 'border-orange-700/50 bg-orange-900/20' :
-                          'border-red-700/50 bg-red-900/20'
-                        }`}
-                      >
-                        {/* Image */}
-                        {regionImage && (
-                          <button
-                            onClick={() => openImageViewer(
-                              regionImage,
-                              `${regionLabel} Region`,
-                              `Detailed view of ${regionLabel.toLowerCase()} region. Damage score: ${scoreNum.toFixed(0)}%`
-                            )}
-                            className="w-full aspect-square relative group"
-                          >
-                            <img 
-                              src={regionImage} 
-                              alt={regionLabel} 
-                              className="w-full h-full object-cover"
-                            />
-                            <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-center justify-center">
-                              <Maximize2 className="w-4 h-4 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-lg" />
-                            </div>
-                          </button>
-                        )}
-                        
-                        {/* Score badge */}
-                        <div className={`px-2 py-1.5 text-center ${
-                          scoreNum < 20 ? 'text-green-400' :
-                          scoreNum < 40 ? 'text-yellow-400' :
-                          scoreNum < 65 ? 'text-orange-400' :
-                          'text-red-400'
-                        }`}>
-                          <div className="font-mono font-bold text-sm">{scoreNum.toFixed(0)}%</div>
-                          <div className="text-[10px] opacity-75">{regionLabel}</div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-        
-        {/* Show defect overlay and heatmap if available */}
-        {(result.defectOverlay || result.defectMask || result.varianceHeatmap) && (
-          <div className="mb-4">
-            <p className="text-gray-400 text-xs mb-2">Defect Visualization</p>
-            
-            {/* Primary: Defect Overlay (shows damage on actual image) */}
-            {result.defectOverlay && (
-              <button 
-                className="w-full mb-2 rounded-lg overflow-hidden border border-gray-600 bg-gray-900 relative group hover:border-purple-500 transition-colors"
-                onClick={() => openImageViewer(
-                  result.defectOverlay,
-                  "Defect Analysis",
-                  "AI-detected defects highlighted in red. Shows creases, tears, scratches, and surface wear identified by multi-layer analysis."
-                )}
-              >
-                <img src={result.defectOverlay} alt="Defect Analysis" className="w-full h-auto" />
-                <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
-                  <Maximize2 className="w-8 h-8 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-lg" />
-                </div>
-                <div className="absolute bottom-0 left-0 right-0 bg-black/70 text-xs text-center text-gray-300 py-1.5 font-medium">
-                  🔍 Detected Defects Overlay (Tap to Enlarge)
-                </div>
-              </button>
-            )}
-            
-            {/* Secondary: Heatmaps in grid */}
-            <div className="grid grid-cols-2 gap-2">
-              {result.varianceHeatmap && (
-                <button 
-                  className="rounded-lg overflow-hidden border border-gray-600 bg-gray-900 relative group hover:border-purple-500 transition-colors"
-                  onClick={() => openImageViewer(
-                    result.varianceHeatmap,
-                    "Damage Intensity Heatmap",
-                    "Color-coded damage intensity map. Red/hot areas indicate higher defect concentration from edges, texture anomalies, and surface wear."
-                  )}
-                >
-                  <img src={result.varianceHeatmap} alt="Damage Heatmap" className="w-full h-auto" />
-                  <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
-                    <Maximize2 className="w-6 h-6 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-lg" />
-                  </div>
-                  <div className="absolute bottom-0 left-0 right-0 bg-black/70 text-[10px] text-center text-gray-300 py-1">
-                    Intensity Heatmap
-                  </div>
-                </button>
-              )}
-              {result.defectMask && (
-                <button 
-                  className="rounded-lg overflow-hidden border border-gray-600 bg-gray-900 relative group hover:border-purple-500 transition-colors"
-                  onClick={() => openImageViewer(
-                    result.defectMask,
-                    "Defect Mask",
-                    "Binary mask showing all detected surface anomalies, creases, tears, and damage areas."
-                  )}
-                >
-                  <img src={result.defectMask} alt="Defect Mask" className="w-full h-auto" />
-                  <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
-                    <Maximize2 className="w-6 h-6 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-lg" />
-                  </div>
-                  <div className="absolute bottom-0 left-0 right-0 bg-black/70 text-[10px] text-center text-gray-300 py-1">
-                    Defect Mask
-                  </div>
-                </button>
-              )}
-            </div>
           </div>
         )}
         

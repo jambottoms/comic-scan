@@ -368,7 +368,127 @@ Use appropriate grading scale: CGC for comics, PSA/BGS for cards. Be concise and
         };
       }
       
-      return { success: true, data: parsedResult };
+      // Step 7: Get golden frames from Modal worker and do detailed analysis
+      let detailedAnalysis = null;
+      let goldenFrames: string[] = [];
+      
+      try {
+        const modalWebhookUrl = process.env.MODAL_CV_WEBHOOK_URL;
+        if (modalWebhookUrl) {
+          console.log("[Server Action] Calling Modal for golden frame extraction...");
+          
+          // Generate a scan ID for this analysis
+          const scanId = `scan-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+          
+          const modalResponse = await fetch(modalWebhookUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              videoUrl,
+              scanId,
+              itemType: parsedResult.itemType || 'comic',
+            }),
+          });
+          
+          if (modalResponse.ok) {
+            const modalResult = await modalResponse.json();
+            goldenFrames = modalResult.goldenFrames || [];
+            console.log(`[Server Action] Got ${goldenFrames.length} golden frames from Modal`);
+            
+            // Step 8: Do multi-frame Gemini analysis if we have frames
+            if (goldenFrames.length >= 2) {
+              console.log("[Server Action] Running multi-frame Gemini analysis...");
+              
+              const framePayload: any[] = [];
+              
+              // Download and add each golden frame
+              for (let i = 0; i < Math.min(goldenFrames.length, 5); i++) {
+                try {
+                  const frameRes = await fetch(goldenFrames[i]);
+                  const frameBuffer = await frameRes.arrayBuffer();
+                  framePayload.push({ text: `Frame ${i + 1} of ${goldenFrames.length}:` });
+                  framePayload.push({
+                    inlineData: {
+                      mimeType: "image/png",
+                      data: Buffer.from(frameBuffer).toString('base64')
+                    }
+                  });
+                } catch (e) {
+                  console.warn(`[Server Action] Failed to download golden frame ${i}:`, e);
+                }
+              }
+              
+              if (framePayload.length >= 2) {
+                framePayload.push({
+                  text: `You are analyzing ${goldenFrames.length} still frames from different angles of the same collectible.
+                  
+TASK: Compare all frames and identify defects with high confidence.
+
+1. CONSISTENT DEFECTS: List defects that appear in multiple frames (these are real damage):
+   - For each: Type, Location, Severity (minor/moderate/severe)
+   
+2. GLARE/ARTIFACTS: Note anything that appears in only 1-2 frames (likely reflection, not damage)
+
+3. DETAILED CONDITION NOTES: Provide frame-by-frame observations
+
+4. CONFIDENCE ADJUSTMENT: Based on multi-frame analysis, should the grade be adjusted?
+
+RESPOND IN JSON:
+{
+  "confirmedDefects": [{"type": "string", "location": "string", "severity": "minor|moderate|severe", "framesVisible": number}],
+  "possibleArtifacts": ["description of things that might be glare, not damage"],
+  "frameNotes": ["note for each frame"],
+  "gradeAdjustment": "none|up|down",
+  "adjustmentReason": "why adjust or not",
+  "finalGrade": "X.X",
+  "confidence": "low|medium|high"
+}`
+                });
+                
+                try {
+                  const detailedResult = await model.generateContent(framePayload);
+                  const detailedText = await detailedResult.response.text();
+                  
+                  // Parse the detailed analysis
+                  let cleanDetailedText = detailedText.trim();
+                  cleanDetailedText = cleanDetailedText.replace(/^```json\s*/i, '').replace(/\s*```$/i, '').trim();
+                  if (cleanDetailedText.startsWith("```")) {
+                    const lines = cleanDetailedText.split("\n");
+                    cleanDetailedText = lines.slice(1, -1).join("\n");
+                  }
+                  
+                  detailedAnalysis = JSON.parse(cleanDetailedText);
+                  console.log("[Server Action] Multi-frame analysis complete:", detailedAnalysis);
+                  
+                  // If detailed analysis suggests grade adjustment, update the grade
+                  if (detailedAnalysis.finalGrade && detailedAnalysis.gradeAdjustment !== 'none') {
+                    parsedResult.estimatedGrade = detailedAnalysis.finalGrade;
+                    parsedResult.reasoning += `\n\n[Multi-Frame Analysis]: ${detailedAnalysis.adjustmentReason}`;
+                  }
+                } catch (detailError) {
+                  console.warn("[Server Action] Multi-frame analysis failed:", detailError);
+                }
+              }
+            }
+          } else {
+            console.warn("[Server Action] Modal webhook failed:", await modalResponse.text());
+          }
+        } else {
+          console.log("[Server Action] Modal webhook not configured, skipping golden frame extraction");
+        }
+      } catch (modalError) {
+        console.warn("[Server Action] Modal/golden frame extraction failed:", modalError);
+        // Don't fail the whole analysis if Modal fails
+      }
+      
+      // Add golden frames and detailed analysis to result
+      const enrichedResult = {
+        ...parsedResult,
+        goldenFrames,
+        detailedAnalysis,
+      };
+      
+      return { success: true, data: enrichedResult };
     } catch (parseError) {
       console.error("Failed to parse JSON:", cleanText);
       

@@ -6,11 +6,10 @@
  */
 
 import { addToHistory, updateHistoryEntry, getVideoById } from './history';
-import { adjustGradeWithCVAnalysis } from './grade-adjustment';
 
 export interface PendingResult {
   id: string;
-  status: 'uploading' | 'analyzing' | 'cv_processing' | 'complete' | 'error';
+  status: 'uploading' | 'analyzing' | 'complete' | 'error';
   videoUrl: string | null;
   thumbnail: string | null;
   title: string | null;
@@ -19,8 +18,7 @@ export interface PendingResult {
   itemType: string | null;
   reasoning: string | null;
   goldenFrames: string[] | null;
-  defectMask: string | null;
-  regionCrops: Record<string, string> | null;
+  detailedAnalysis: any | null;
   error: string | null;
   createdAt: number;
 }
@@ -100,77 +98,34 @@ export function updateWithAIResult(historyId: string, aiResult: any): void {
 }
 
 /**
- * Update the pending result with CV analysis results.
- * Includes grade adjustment based on defect detection.
+ * Update the result with golden frames and detailed analysis from server.
+ * Grade adjustment is now handled by Gemini directly.
  */
-export function updateWithCVResult(historyId: string, cvResult: any): void {
+export function updateWithDetailedResult(historyId: string, detailedResult: any): void {
   const entry = getVideoById(historyId);
   if (!entry) return;
   
-  // Adjust grade based on CV damage detection
-  let adjustedGrade = entry.grade || '';
-  let gradeAdjustment = null;
-  let gradeConfidence = null;
-  
-  if (cvResult.damageScore !== undefined && cvResult.damageScore !== null && entry.grade) {
-    const adjustment = adjustGradeWithCVAnalysis(
-      entry.grade,
-      cvResult.damageScore,
-      cvResult.regionScores || {}
-    );
-    
-    adjustedGrade = adjustment.adjustedGrade;
-    gradeAdjustment = adjustment.adjustment;
-    gradeConfidence = adjustment.confidence;
-    
-    // Log adjustment for debugging
-    if (adjustment.adjustment) {
-      console.log(`[CV Grade Adjustment] ${entry.grade} → ${adjustedGrade}: ${adjustment.adjustment}`);
-    }
-  }
-  
   updateHistoryEntry(historyId, {
-    grade: adjustedGrade,  // Update with adjusted grade
+    grade: detailedResult.estimatedGrade || entry.grade,
     result: {
       ...entry.result,
-      // Frame data
-      goldenFrames: cvResult.goldenFrames,
-      frameTimestamps: cvResult.frameTimestamps,
+      // Golden frames from Modal
+      goldenFrames: detailedResult.goldenFrames,
+      frameTimestamps: detailedResult.frameTimestamps,
       
-      // Defect visualizations
-      defectMask: cvResult.defectMask,
-      varianceHeatmap: cvResult.varianceHeatmap,
-      defectOverlay: cvResult.defectOverlay,
-      
-      // Region data
-      regionCrops: cvResult.regionCrops,
-      
-      // Defect metrics
-      defectPercentage: cvResult.defectPercentage,
-      damageScore: cvResult.damageScore,
-      regionScores: cvResult.regionScores,
-      regionDetails: cvResult.regionDetails,
-      
-      // Grade adjustment info
-      originalGrade: entry.grade,  // Preserve original AI grade
-      gradeAdjustment,
-      gradeConfidence,
+      // Detailed analysis from Gemini multi-frame
+      detailedAnalysis: detailedResult.detailedAnalysis,
       
       _status: 'complete',
     },
   });
   
-  // Dispatch event for UI update with ALL CV data
+  // Dispatch event for UI update
   dispatchUpdate(historyId, { 
     status: 'complete',
-    grade: adjustedGrade,
-    goldenFrames: cvResult.goldenFrames,
-    defectMask: cvResult.defectMask,
-    defectOverlay: cvResult.defectOverlay,
-    damageScore: cvResult.damageScore,
-    regionScores: cvResult.regionScores,
-    regionCrops: cvResult.regionCrops,
-    gradeAdjustment,
+    grade: detailedResult.estimatedGrade || entry.grade,
+    goldenFrames: detailedResult.goldenFrames,
+    detailedAnalysis: detailedResult.detailedAnalysis,
   });
 }
 

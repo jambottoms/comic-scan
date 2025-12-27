@@ -352,13 +352,9 @@ def analyze_video(video_url: str, scan_id: str, item_type: str = "card") -> dict
         
         cap.release()
         
-        # Run defect analysis
-        print("\n🔍 Running defect analysis...")
-        analysis_results = run_defect_analysis(golden_frames, str(output_dir))
-        
-        # Upload results to Supabase
-        print("\n📤 Uploading to Supabase...")
-        result = upload_results(supabase, scan_id, output_dir, golden_frames, analysis_results)
+        # Upload golden frames to Supabase (no CV defect analysis - Gemini handles that)
+        print("\n📤 Uploading golden frames to Supabase...")
+        result = upload_golden_frames(scan_id, golden_frames)
         
         # Clean up the shared Volume to free space
         print("\n🧹 Cleaning up shared Volume...")
@@ -371,320 +367,6 @@ def analyze_video(video_url: str, scan_id: str, item_type: str = "card") -> dict
         
         print("\n✅ Analysis complete!")
         return result
-
-
-def run_defect_analysis(golden_frames: list, output_dir: str) -> dict:
-    """
-    Simplified defect analysis - analyzes frames directly without warping.
-    
-    The warping approach was unreliable because:
-    - Video frames often have hands, backgrounds, angles
-    - Corner detection fails frequently
-    - Falling back to originals with fixed regions gives wrong crops
-    
-    New approach:
-    1. Use the best golden frame directly (already sharp and stable)
-    2. Analyze the FULL frame for defects (no region assumptions)
-    3. Create a defect heatmap showing problem areas
-    4. Skip region crops since we can't reliably locate corners
-    
-    Returns meaningful defect scores based on actual image analysis.
-    """
-    import cv2
-    import numpy as np
-    from scipy import ndimage
-    
-    if len(golden_frames) < 1:
-        return {"error": "Need at least 1 frame for analysis"}
-    
-    # Load all frames - NO warping (it's unreliable)
-    frames = []
-    print(f"   📷 Loading {len(golden_frames)} golden frames (no warping - using originals)...")
-    
-    for gf in golden_frames:
-        img = cv2.imread(gf['path'])
-        if img is not None:
-            frames.append(img)
-            print(f"      ✅ Loaded frame: {img.shape[1]}x{img.shape[0]}")
-    
-    if len(frames) < 1:
-        return {"error": "Could not load any frames"}
-    
-    # Use frames directly - ensure same size
-    reference_shape = frames[0].shape
-    frames_to_analyze = [f for f in frames if f.shape == reference_shape]
-    
-    h, w = frames_to_analyze[0].shape[:2]
-    output_path = Path(output_dir)
-    
-    print(f"   🔍 Analyzing {len(frames_to_analyze)} frames at {w}x{h}...")
-    
-    # Helper function to normalize arrays to 0-1 range
-    def safe_normalize(arr):
-        arr_max = arr.max()
-        return arr / arr_max if arr_max > 0 else arr
-    
-    # =========================================
-    # ANALYZE ALL FRAMES
-    # =========================================
-    frame_defect_maps = []
-    
-    for idx, frame in enumerate(frames_to_analyze):
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        gray_float = gray.astype(np.float32)
-        
-        # ULTRA-sensitive edge detection for comic grading
-        # Lower thresholds catch subtle creases, edge wear, spine damage
-        edges_fine = cv2.Canny(gray, 15, 60)       # Ultra-fine (was 20,80)
-        edges_medium = cv2.Canny(gray, 30, 100)    # Fine (was 40,120)
-        edges_strong = cv2.Canny(gray, 50, 150)    # Medium (was 70,180)
-        
-        # Emphasize fine details even more
-        edge_combined = (edges_fine * 0.5 + edges_medium * 0.35 + edges_strong * 0.15).astype(np.float32)
-        
-        # Texture analysis
-        laplacian = cv2.Laplacian(gray, cv2.CV_64F)
-        laplacian_abs = np.abs(laplacian)
-        
-        sobel_x = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
-        sobel_y = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
-        sobel_magnitude = np.sqrt(sobel_x**2 + sobel_y**2)
-        
-        # Local texture variation (surface roughness)
-        kernel_size = 5
-        local_mean = ndimage.uniform_filter(gray_float, size=kernel_size)
-        local_sqr_mean = ndimage.uniform_filter(gray_float**2, size=kernel_size)
-        local_std = np.sqrt(np.maximum(local_sqr_mean - local_mean**2, 0))
-        
-        # Normalize each component to 0-1 range
-        edge_norm = safe_normalize(edge_combined)
-        laplacian_norm = safe_normalize(laplacian_abs)
-        sobel_norm = safe_normalize(sobel_magnitude)
-        texture_norm = safe_normalize(local_std)
-        
-        # Per-frame defect score - BOOST edge detection weight
-        # Edges are most visible indicators of damage for grading
-        frame_defect_score = (
-            edge_norm * 0.45 +       # INCREASED from 0.35 - edges are primary
-            laplacian_norm * 0.25 +  # High-frequency texture
-            sobel_norm * 0.20 +      # Directional defects
-            texture_norm * 0.10      # Surface roughness
-        )
-        
-        frame_defect_maps.append(frame_defect_score)
-    
-    # =========================================
-    # COMBINE ALL FRAMES - MAX POOLING
-    # =========================================
-    # If a defect appears in ANY frame, it's likely real
-    # (defects catch light differently in different frames)
-    combined_defect_map = np.maximum.reduce(frame_defect_maps)
-    
-    # Also compute variance across frames for light-catching defects
-    variance_map = np.zeros_like(gray_float)
-    if len(frames_to_analyze) >= 2:
-        gray_frames = [cv2.cvtColor(f, cv2.COLOR_BGR2GRAY).astype(np.float32) for f in frames_to_analyze]
-        stack = np.stack(gray_frames, axis=0)
-        variance_map = np.var(stack, axis=0)
-        variance_norm = safe_normalize(variance_map)
-        
-        # BOOST variance contribution - creases catch light differently
-        # This is critical for detecting stress marks and creases
-        combined_defect_map = combined_defect_map * 0.75 + variance_norm * 0.25  # Was 0.85/0.15
-    
-    # =========================================
-    # AGGRESSIVE THRESHOLDING (very sensitive for grading accuracy)
-    # =========================================
-    # For comic grading, we need to catch ALL defects, even subtle ones
-    mean_score = np.mean(combined_defect_map)
-    std_score = np.std(combined_defect_map)
-    
-    print(f"   📊 Defect score - Mean: {mean_score:.3f}, Std: {std_score:.3f}")
-    
-    # MUCH lower thresholds - catch subtle defects
-    # For a book in 4.0-4.5 condition, we should detect 60-80% damage
-    threshold_minor = mean_score + (0.3 * std_score)    # Extremely sensitive
-    threshold_moderate = mean_score + (0.8 * std_score)  # Very sensitive (was 1.5)
-    threshold_severe = mean_score + (1.5 * std_score)   # Moderate sensitivity (was 2.5)
-    
-    print(f"   🎯 Thresholds - Minor: {threshold_minor:.3f}, Moderate: {threshold_moderate:.3f}, Severe: {threshold_severe:.3f}")
-    
-    # Use MINOR threshold as primary to catch everything
-    # This will detect way more defects (which is correct for grading)
-    defect_mask = (combined_defect_map > threshold_minor).astype(np.uint8) * 255
-    
-    # Minimal morphological cleanup - preserve detected defects
-    # For grading, better to overdetect than miss real damage
-    kernel = np.ones((2, 2), np.uint8)  # Smaller kernel (was 3x3)
-    defect_mask = cv2.morphologyEx(defect_mask, cv2.MORPH_CLOSE, kernel, iterations=1)  # Was iterations=2
-    
-    # Store combined_defect_map for heatmap visualization
-    defect_score_map = combined_defect_map
-    
-    # Use first frame as reference for visualization
-    reference = frames_to_analyze[0]
-    
-    # =========================================
-    # QUADRANT-BASED ANALYSIS (Works on any frame)
-    # =========================================
-    # Since we can't reliably detect comic corners, we analyze quadrants
-    # This gives meaningful data about different areas of the frame
-    print(f"   📍 Analyzing frame quadrants...")
-    
-    # Simple quadrant division - works regardless of comic position
-    # These are frame regions, not comic corners
-    mid_w = w // 2
-    mid_h = h // 2
-    quarter_w = w // 4
-    quarter_h = h // 4
-    
-    regions = {
-        "top_left": (0, 0, mid_w, mid_h),
-        "top_right": (mid_w, 0, w, mid_h),
-        "bottom_left": (0, mid_h, mid_w, h),
-        "bottom_right": (mid_w, mid_h, w, h),
-        "center": (quarter_w, quarter_h, w - quarter_w, h - quarter_h),
-        "full_frame": (0, 0, w, h),
-    }
-    
-    gray = cv2.cvtColor(reference, cv2.COLOR_BGR2GRAY)
-    edges_medium = cv2.Canny(gray, 40, 120)  # For edge density calculation
-    
-    region_paths = {}
-    region_scores = {}
-    region_details = {}
-    
-    for name, (x1, y1, x2, y2) in regions.items():
-        # Extract region crops
-        crop = reference[y1:y2, x1:x2]
-        crop_defect = defect_mask[y1:y2, x1:x2]
-        crop_score_map = defect_score_map[y1:y2, x1:x2]
-        
-        # ENHANCEMENT: Upscale small crops for better visibility
-        # If crop is very small, resize to minimum 300px on shortest side
-        min_dimension = min(crop.shape[0], crop.shape[1])
-        if min_dimension < 250:  # Upscale tiny regions
-            scale_factor = 300 / min_dimension
-            new_width = int(crop.shape[1] * scale_factor)
-            new_height = int(crop.shape[0] * scale_factor)
-            crop = cv2.resize(crop, (new_width, new_height), interpolation=cv2.INTER_LANCZOS4)
-            crop_defect = cv2.resize(crop_defect, (new_width, new_height), interpolation=cv2.INTER_NEAREST)
-        
-        # Save crop
-        crop_path = output_path / f"crop_{name}.png"
-        cv2.imwrite(str(crop_path), crop, [cv2.IMWRITE_PNG_COMPRESSION, 6])  # Lower compression for quality
-        region_paths[name] = str(crop_path)
-        
-        # Calculate region-specific metrics
-        region_pixels = crop_defect.size
-        defect_pixels = np.sum(crop_defect > 0)
-        defect_coverage = (defect_pixels / region_pixels) * 100 if region_pixels > 0 else 0
-        
-        # Mean defect intensity in region
-        mean_defect_score = np.mean(crop_score_map) * 100
-        max_defect_score = np.max(crop_score_map) * 100
-        
-        # Edge density (creases/tears indicator)
-        crop_edges = edges_medium[y1:y2, x1:x2]
-        edge_density = (np.sum(crop_edges > 0) / region_pixels) * 100 if region_pixels > 0 else 0
-        
-        # Quality score (0-100, higher is WORSE)
-        # Weighted combination of metrics
-        quality_score = min(100, (
-            defect_coverage * 0.4 +
-            mean_defect_score * 0.3 +
-            edge_density * 0.3
-        ))
-        
-        region_scores[name] = round(quality_score, 1)
-        region_details[name] = {
-            "defect_coverage": round(defect_coverage, 2),
-            "mean_intensity": round(mean_defect_score, 2),
-            "max_intensity": round(max_defect_score, 2),
-            "edge_density": round(edge_density, 2),
-            "quality_score": round(quality_score, 1)
-        }
-        
-        # Create overlay visualization for this region
-        overlay = crop.copy()
-        
-        # Only create overlay if we have defect data for this region
-        if crop_defect.size > 0:
-            red_overlay = np.zeros_like(crop)
-            
-            # Resize defect mask if we upscaled the crop
-            if crop_defect.shape != crop.shape[:2]:
-                crop_defect_display = cv2.resize(crop_defect, (crop.shape[1], crop.shape[0]), interpolation=cv2.INTER_NEAREST)
-            else:
-                crop_defect_display = crop_defect
-            
-            red_overlay[:, :, 2] = crop_defect_display  # Red channel
-            overlay = cv2.addWeighted(overlay, 0.7, red_overlay, 0.3, 0)
-        
-        # Add label showing region name and score
-        label = name.replace('_', ' ').title()
-        score_text = f"{quality_score:.0f}%"
-        
-        # Draw semi-transparent label bar at bottom
-        label_height = 30
-        cv2.rectangle(overlay, (0, overlay.shape[0] - label_height), 
-                      (overlay.shape[1], overlay.shape[0]), (0, 0, 0), -1)
-        cv2.putText(overlay, f"{label}: {score_text}", (5, overlay.shape[0] - 8), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-        
-        overlay_path = output_path / f"overlay_{name}.png"
-        cv2.imwrite(str(overlay_path), overlay, [cv2.IMWRITE_PNG_COMPRESSION, 6])
-    
-    # =========================================
-    # 6. OVERALL DAMAGE SCORE
-    # =========================================
-    # Calculate weighted overall damage score
-    # Quadrant corners and center are weighted for overall condition
-    region_weights = {
-        "top_left": 0.15, "top_right": 0.15,
-        "bottom_left": 0.15, "bottom_right": 0.15,
-        "center": 0.30, "full_frame": 0.10
-    }
-    
-    overall_damage_score = sum(
-        region_scores.get(name, 0) * weight 
-        for name, weight in region_weights.items()
-    )
-    
-    # Overall defect percentage
-    total_defect_pct = (np.sum(defect_mask > 0) / defect_mask.size) * 100
-    
-    # =========================================
-    # 7. SAVE VISUALIZATIONS
-    # =========================================
-    # Defect mask
-    cv2.imwrite(str(output_path / "defect_mask.png"), defect_mask)
-    
-    # Create enhanced heatmap showing defect intensity
-    heatmap_normalized = (defect_score_map * 255).astype(np.uint8)
-    heatmap_color = cv2.applyColorMap(heatmap_normalized, cv2.COLORMAP_JET)
-    cv2.imwrite(str(output_path / "variance_heatmap.png"), heatmap_color)
-    
-    # Create defect overlay on original image
-    defect_overlay = reference.copy()
-    red_channel = np.zeros_like(reference)
-    red_channel[:, :, 2] = defect_mask
-    defect_overlay = cv2.addWeighted(defect_overlay, 0.7, red_channel, 0.3, 0)
-    cv2.imwrite(str(output_path / "defect_overlay.png"), defect_overlay)
-    
-    print(f"   📊 Overall Damage Score: {overall_damage_score:.1f}/100")
-    print(f"   📍 Region Scores: {region_scores}")
-    
-    return {
-        "defect_percentage": round(total_defect_pct, 2),
-        "damage_score": round(overall_damage_score, 1),  # 0-100, higher = more damage
-        "region_scores": region_scores,
-        "region_details": region_details,
-        "defect_mask_path": str(output_path / "defect_mask.png"),
-        "variance_heatmap_path": str(output_path / "variance_heatmap.png"),
-        "defect_overlay_path": str(output_path / "defect_overlay.png"),
-        "region_paths": region_paths
-    }
 
 
 def upload_to_supabase_storage(supabase_url: str, supabase_key: str, bucket: str, 
@@ -725,12 +407,12 @@ def upload_to_supabase_storage(supabase_url: str, supabase_key: str, bucket: str
     return public_url
 
 
-def upload_results(supabase, scan_id: str, output_dir: Path, golden_frames: list, analysis: dict) -> dict:
+def upload_golden_frames(scan_id: str, golden_frames: list) -> dict:
     """
-    Upload all generated images to Supabase Storage using REST API.
+    Upload golden frames to Supabase Storage.
     
-    Uses the official Supabase Storage REST API which fully supports
-    the new sb_secret_ key format (recommended for forward compatibility).
+    Simplified version that only uploads frames - no CV defect analysis.
+    Gemini will handle defect detection on the frontend.
     """
     import os
     
@@ -738,17 +420,10 @@ def upload_results(supabase, scan_id: str, output_dir: Path, golden_frames: list
     supabase_key = os.environ["SUPABASE_KEY"]
     
     result = {
+        "success": True,
         "scanId": scan_id,
         "goldenFrames": [],
         "frameTimestamps": [],
-        "defectMask": None,
-        "varianceHeatmap": None,
-        "defectOverlay": None,
-        "regionCrops": {},
-        "defectPercentage": analysis.get("defect_percentage", 0),
-        "damageScore": analysis.get("damage_score", 0),  # 0-100, higher = more damage
-        "regionScores": analysis.get("region_scores", {}),  # Per-region damage scores
-        "regionDetails": analysis.get("region_details", {}),  # Detailed per-region metrics
     }
     
     bucket = "analysis-images"
@@ -766,46 +441,6 @@ def upload_results(supabase, scan_id: str, output_dir: Path, golden_frames: list
         result["goldenFrames"].append(url)
         result["frameTimestamps"].append(gf['timestamp'])
         print(f"   ✅ Uploaded frame {i+1}: {filename}")
-    
-    # Upload defect mask
-    if analysis.get("defect_mask_path"):
-        remote_path = f"{scan_id}/defect_mask.png"
-        with open(analysis["defect_mask_path"], 'rb') as f:
-            file_data = f.read()
-        result["defectMask"] = upload_to_supabase_storage(
-            supabase_url, supabase_key, bucket, remote_path, file_data
-        )
-        print(f"   ✅ Uploaded defect mask")
-    
-    # Upload variance heatmap
-    if analysis.get("variance_heatmap_path"):
-        remote_path = f"{scan_id}/variance_heatmap.png"
-        with open(analysis["variance_heatmap_path"], 'rb') as f:
-            file_data = f.read()
-        result["varianceHeatmap"] = upload_to_supabase_storage(
-            supabase_url, supabase_key, bucket, remote_path, file_data
-        )
-        print(f"   ✅ Uploaded variance heatmap")
-    
-    # Upload defect overlay (new enhanced visualization)
-    if analysis.get("defect_overlay_path"):
-        remote_path = f"{scan_id}/defect_overlay.png"
-        with open(analysis["defect_overlay_path"], 'rb') as f:
-            file_data = f.read()
-        result["defectOverlay"] = upload_to_supabase_storage(
-            supabase_url, supabase_key, bucket, remote_path, file_data
-        )
-        print(f"   ✅ Uploaded defect overlay")
-    
-    # Upload region crops
-    for name, path in analysis.get("region_paths", {}).items():
-        remote_path = f"{scan_id}/crops/{name}.png"
-        with open(path, 'rb') as f:
-            file_data = f.read()
-        result["regionCrops"][name] = upload_to_supabase_storage(
-            supabase_url, supabase_key, bucket, remote_path, file_data
-        )
-        print(f"   ✅ Uploaded crop: {name}")
     
     return result
 

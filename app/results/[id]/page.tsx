@@ -26,18 +26,18 @@ export default function ResultPage() {
 
       loadItem();
 
-      // Listen for CV analysis updates
-      const handleCVUpdate = (e: CustomEvent) => {
+      // Listen for analysis updates (including multi-frame Gemini analysis)
+      const handleAnalysisUpdate = (e: CustomEvent) => {
         if (e.detail?.historyId === id) {
-          console.log('[ResultPage] CV analysis update received, reloading item');
+          console.log('[ResultPage] Analysis update received, reloading item');
           loadItem();
         }
       };
 
-      window.addEventListener('cv-analysis-complete' as any, handleCVUpdate);
+      window.addEventListener('analysis-update' as any, handleAnalysisUpdate);
       
       return () => {
-        window.removeEventListener('cv-analysis-complete' as any, handleCVUpdate);
+        window.removeEventListener('analysis-update' as any, handleAnalysisUpdate);
       };
     }
   }, [id]);
