@@ -1,12 +1,13 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Loader2, ScanLine, Sparkles, Camera, Microscope, Bookmark, Trash2 } from 'lucide-react';
+import { Loader2, ScanLine, Sparkles, Camera, Microscope, Bookmark, Trash2, Maximize2 } from 'lucide-react';
 import { getVideoById, updateHistoryEntry } from '@/lib/history';
 import { subscribeToUpdates } from '@/lib/streaming-analysis';
 import { extractFramesFromVideo, ExtractedFrame } from '@/lib/frame-extractor';
 import { triggerCVAnalysis } from '@/lib/cv-analysis';
 import { saveScan, deleteSavedScan, isScanSaved } from '@/lib/saved-scans';
+import ImageViewerModal from './ImageViewerModal';
 
 interface StreamingResultCardProps {
   historyId: string;
@@ -73,6 +74,7 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
   const [deepScanLoading, setDeepScanLoading] = useState(false);
   const [deepScanError, setDeepScanError] = useState<string | null>(null);
   const [deepScanComplete, setDeepScanComplete] = useState(false);
+  const [deepScanProgress, setDeepScanProgress] = useState(0);
   
   // Check if deep scan has already been run
   const hasDeepScanResults = !!(entry?.result?.defectMask || entry?.result?.varianceHeatmap);
@@ -82,6 +84,31 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
   const [currentSavedId, setCurrentSavedId] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  
+  // Image Viewer State
+  const [imageViewerOpen, setImageViewerOpen] = useState(false);
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const [selectedImageTitle, setSelectedImageTitle] = useState<string>("");
+  const [selectedImageDesc, setSelectedImageDesc] = useState<string>("");
+  const [selectedImageTimestamp, setSelectedImageTimestamp] = useState<string>("");
+
+  const openImageViewer = (url: string, title: string, desc: string, timestamp?: number | string) => {
+    setSelectedImage(url);
+    setSelectedImageTitle(title);
+    setSelectedImageDesc(desc);
+    
+    if (typeof timestamp === 'number') {
+      const mins = Math.floor(timestamp / 60);
+      const secs = Math.floor(timestamp % 60);
+      setSelectedImageTimestamp(`${mins}:${secs.toString().padStart(2, '0')}`);
+    } else if (typeof timestamp === 'string') {
+      setSelectedImageTimestamp(timestamp);
+    } else {
+      setSelectedImageTimestamp("");
+    }
+    
+    setImageViewerOpen(true);
+  };
   
   // Check if already saved
   useEffect(() => {
@@ -148,10 +175,25 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
     
     setDeepScanLoading(true);
     setDeepScanError(null);
+    setDeepScanProgress(0);
+    
+    // Start progress animation (simulated since Modal doesn't stream progress)
+    // Typical deep scan takes 30-90 seconds
+    const progressInterval = setInterval(() => {
+      setDeepScanProgress(prev => {
+        if (prev >= 95) return prev; // Cap at 95% until complete
+        // Slow down as we get higher
+        const increment = prev < 30 ? 3 : prev < 60 ? 2 : prev < 80 ? 1 : 0.5;
+        return Math.min(95, prev + increment);
+      });
+    }, 1000);
     
     try {
       const itemType = entry?.result?.itemType || 'card';
       const result = await triggerCVAnalysis(entry.videoUrl, historyId, itemType);
+      
+      clearInterval(progressInterval);
+      setDeepScanProgress(100);
       
       if (result.success) {
         setDeepScanComplete(true);
@@ -166,6 +208,8 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
         setDeepScanError(result.error || 'Deep scan failed');
       }
     } catch (err: any) {
+      clearInterval(progressInterval);
+      setDeepScanProgress(0);
       setDeepScanError(err.message || 'Deep scan failed');
     } finally {
       setDeepScanLoading(false);
@@ -258,6 +302,45 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
 
   // Skeleton pulse animation class
   const skeleton = "animate-pulse bg-gray-700 rounded";
+
+  // Helper to find defect description for a golden frame/extracted frame
+  const getFrameDescription = (timestampVal: number): { title: string, desc: string } => {
+    let title = "Frame Capture";
+    let desc = "High-resolution capture from video analysis.";
+    
+    // Try to find matching defect in reasoning
+    // Note: We need to parse reasoning similar to ResultCard if it's a string
+    // For now, we'll check if it's an array of objects which is the new format
+    if (result.reasoning && Array.isArray(result.reasoning)) {
+       const match = result.reasoning.find((item: any) => {
+         const itemTime = item.timestamp; // Assuming backend provides timestamp in object
+         if (typeof itemTime === 'number') {
+           return Math.abs(itemTime - timestampVal) < 3.0;
+         }
+         return false;
+       });
+       
+       if (match) {
+         title = "Defect Detected";
+         desc = match.defect || match.text || match.description || "Anomaly detected at this timestamp.";
+       }
+    } else if (typeof result.reasoning === 'string') {
+      // Basic string matching for timestamps like (0:15)
+      // This is a simplified version of ResultCard's logic
+      const timeStr = `${Math.floor(timestampVal / 60)}:${Math.floor(timestampVal % 60).toString().padStart(2, '0')}`;
+      if (result.reasoning.includes(timeStr)) {
+        // Find the sentence containing this timestamp
+        const sentences = result.reasoning.split(/[.!?]+/);
+        const match = sentences.find(s => s.includes(timeStr));
+        if (match) {
+          title = "Defect Note";
+          desc = match.trim();
+        }
+      }
+    }
+    
+    return { title, desc };
+  };
 
   return (
     <div className={`w-full max-w-2xl flex flex-col items-center ${embedded ? '' : 'min-h-screen bg-gray-900 text-white p-4 overflow-y-auto'}`}>
@@ -438,25 +521,46 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
         {/* Golden Frames Grid - Fast client-side extraction */}
         <div className="mb-4">
           <p className="text-gray-400 text-xs mb-2">
-            {framesLoading ? 'Extracting frames...' : 'Video Captures'}
+            {framesLoading ? 'Extracting frames...' : 'Video Captures (Tap to Enlarge)'}
           </p>
           <div className="grid grid-cols-3 gap-2">
             {/* Show extracted frames (client-side), or stored goldenFrames, or loading state */}
             {extractedFrames.length > 0 ? (
-              extractedFrames.slice(0, 3).map((frame, idx) => (
-                <div key={idx} className="relative aspect-[3/4] rounded-lg overflow-hidden border border-gray-600 bg-gray-900">
-                  <img src={frame.dataUrl} alt={`Frame at ${frame.timestampFormatted}`} className="w-full h-full object-cover" />
-                  <div className="absolute bottom-0 left-0 right-0 bg-black/70 text-[10px] text-center text-gray-300 py-0.5 font-mono">
-                    {frame.timestampFormatted}
-                  </div>
-                </div>
-              ))
+              extractedFrames.slice(0, 3).map((frame, idx) => {
+                const { title, desc } = getFrameDescription(frame.timestamp);
+                return (
+                  <button 
+                    key={idx} 
+                    className="relative aspect-[3/4] rounded-lg overflow-hidden border border-gray-600 bg-gray-900 group hover:border-purple-500 transition-colors"
+                    onClick={() => openImageViewer(frame.dataUrl, title, desc, frame.timestampFormatted)}
+                  >
+                    <img src={frame.dataUrl} alt={`Frame at ${frame.timestampFormatted}`} className="w-full h-full object-cover" />
+                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
+                      <Maximize2 className="w-6 h-6 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-lg" />
+                    </div>
+                    <div className="absolute bottom-0 left-0 right-0 bg-black/70 text-[10px] text-center text-gray-300 py-0.5 font-mono">
+                      {frame.timestampFormatted}
+                    </div>
+                  </button>
+                );
+              })
             ) : result.goldenFrames && result.goldenFrames.length > 0 ? (
-              result.goldenFrames.slice(0, 3).map((frame: string, idx: number) => (
-                <div key={idx} className="aspect-[3/4] rounded-lg overflow-hidden border border-gray-600 bg-gray-900">
-                  <img src={frame} alt={`Golden Frame ${idx + 1}`} className="w-full h-full object-cover" />
-                </div>
-              ))
+              result.goldenFrames.slice(0, 3).map((frame: string, idx: number) => {
+                const timestamp = result.frameTimestamps ? result.frameTimestamps[idx] : 0;
+                const { title, desc } = getFrameDescription(timestamp);
+                return (
+                  <button 
+                    key={idx} 
+                    className="aspect-[3/4] rounded-lg overflow-hidden border border-gray-600 bg-gray-900 relative group hover:border-purple-500 transition-colors"
+                    onClick={() => openImageViewer(frame, title, desc, timestamp)}
+                  >
+                    <img src={frame} alt={`Golden Frame ${idx + 1}`} className="w-full h-full object-cover" />
+                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
+                      <Maximize2 className="w-6 h-6 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-lg" />
+                    </div>
+                  </button>
+                );
+              })
             ) : framesLoading ? (
               [1, 2, 3].map((i) => (
                 <div key={i} className={`aspect-[3/4] rounded-lg border border-gray-600 ${skeleton}`}>
@@ -480,14 +584,24 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
           {/* Show remaining frames in a second row if we have 5 */}
           {extractedFrames.length > 3 && (
             <div className="grid grid-cols-2 gap-2 mt-2">
-              {extractedFrames.slice(3, 5).map((frame, idx) => (
-                <div key={idx + 3} className="relative aspect-[3/4] rounded-lg overflow-hidden border border-gray-600 bg-gray-900">
-                  <img src={frame.dataUrl} alt={`Frame at ${frame.timestampFormatted}`} className="w-full h-full object-cover" />
-                  <div className="absolute bottom-0 left-0 right-0 bg-black/70 text-[10px] text-center text-gray-300 py-0.5 font-mono">
-                    {frame.timestampFormatted}
-                  </div>
-                </div>
-              ))}
+              {extractedFrames.slice(3, 5).map((frame, idx) => {
+                const { title, desc } = getFrameDescription(frame.timestamp);
+                return (
+                  <button 
+                    key={idx + 3} 
+                    className="relative aspect-[3/4] rounded-lg overflow-hidden border border-gray-600 bg-gray-900 group hover:border-purple-500 transition-colors"
+                    onClick={() => openImageViewer(frame.dataUrl, title, desc, frame.timestampFormatted)}
+                  >
+                    <img src={frame.dataUrl} alt={`Frame at ${frame.timestampFormatted}`} className="w-full h-full object-cover" />
+                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
+                      <Maximize2 className="w-6 h-6 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-lg" />
+                    </div>
+                    <div className="absolute bottom-0 left-0 right-0 bg-black/70 text-[10px] text-center text-gray-300 py-0.5 font-mono">
+                      {frame.timestampFormatted}
+                    </div>
+                  </button>
+                );
+              })}
             </div>
           )}
         </div>
@@ -498,13 +612,21 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
             <button
               onClick={triggerDeepScan}
               disabled={deepScanLoading}
-              className="w-full py-3 px-4 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 disabled:from-gray-600 disabled:to-gray-600 text-white font-medium rounded-xl flex items-center justify-center gap-2 transition-all"
+              className="w-full py-3 px-4 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 disabled:from-gray-600 disabled:to-gray-600 text-white font-medium rounded-xl flex items-center justify-center gap-2 transition-all relative overflow-hidden"
             >
+              {/* Progress bar background */}
+              {deepScanLoading && (
+                <div 
+                  className="absolute inset-0 bg-green-500/30 transition-all duration-300"
+                  style={{ width: `${deepScanProgress}%` }}
+                />
+              )}
+              
               {deepScanLoading ? (
-                <>
+                <div className="relative z-10 flex items-center gap-2">
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>Deep Scanning... (30-60s)</span>
-                </>
+                  <span>Deep Scanning... {Math.round(deepScanProgress)}%</span>
+                </div>
               ) : (
                 <>
                   <Microscope className="w-4 h-4" />
@@ -533,9 +655,19 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
         {result.defectMask && (
           <div className="mb-4">
             <p className="text-gray-400 text-xs mb-2">Defect Heatmap</p>
-            <div className="rounded-lg overflow-hidden border border-gray-600 bg-gray-900">
+            <button 
+              className="w-full rounded-lg overflow-hidden border border-gray-600 bg-gray-900 relative group hover:border-purple-500 transition-colors"
+              onClick={() => openImageViewer(
+                result.defectMask,
+                "Defect Heatmap",
+                "Visualizing detected anomalies."
+              )}
+            >
               <img src={result.defectMask} alt="Defect Analysis Heatmap" className="w-full h-auto" />
-            </div>
+              <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
+                <Maximize2 className="w-8 h-8 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-lg" />
+              </div>
+            </button>
           </div>
         )}
         
@@ -544,22 +676,39 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
           <div>
             <p className="text-gray-400 text-xs mb-2">Region Analysis</p>
             <div className="grid grid-cols-5 gap-1">
-              {['corner_tl', 'corner_tr', 'spine', 'corner_bl', 'corner_br'].map((region) => (
-                result.regionCrops[region] && (
-                  <div key={region} className="relative">
-                    <div className="aspect-square rounded overflow-hidden border border-gray-600 bg-gray-900">
+              {['corner_tl', 'corner_tr', 'spine', 'corner_bl', 'corner_br'].map((region) => {
+                const regionName = region.replace('corner_', '').replace('_', '');
+                const regionTitle = region === 'spine' ? 'Spine' : 
+                                   region === 'corner_tl' ? 'Top Left Corner' :
+                                   region === 'corner_tr' ? 'Top Right Corner' :
+                                   region === 'corner_bl' ? 'Bottom Left Corner' :
+                                   'Bottom Right Corner';
+                return result.regionCrops[region] && (
+                  <button 
+                    key={region} 
+                    className="relative group w-full"
+                    onClick={() => openImageViewer(
+                      result.regionCrops[region],
+                      regionTitle,
+                      `Detailed crop of ${regionTitle.toLowerCase()}.`
+                    )}
+                  >
+                    <div className="aspect-square rounded overflow-hidden border border-gray-600 bg-gray-900 group-hover:border-purple-500 transition-colors">
                       <img 
                         src={result.regionCrops[region]} 
-                        alt={region.replace('_', ' ')} 
+                        alt={regionTitle} 
                         className="w-full h-full object-cover" 
                       />
+                      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
+                        <Maximize2 className="w-4 h-4 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-lg" />
+                      </div>
                     </div>
                     <span className="absolute bottom-0 left-0 right-0 bg-black/70 text-[8px] text-center text-gray-300 py-0.5 uppercase">
-                      {region.replace('corner_', '').replace('_', '')}
+                      {regionName}
                     </span>
-                  </div>
-                )
-              ))}
+                  </button>
+                );
+              })}
             </div>
           </div>
         )}
@@ -577,11 +726,12 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
       {entry?.videoUrl && (
         <div className="mb-6 w-full max-w-2xl">
           <p className="text-gray-400 text-sm mb-2 text-center">Video Preview:</p>
-          <div className="relative w-full" style={{ aspectRatio: '16/9', maxHeight: '400px' }}>
+          <div className="relative w-full overflow-hidden rounded-xl border border-gray-700 bg-black">
             <video 
               src={entry.videoUrl} 
               controls 
-              className="w-full h-full rounded-xl border border-gray-700 object-contain"
+              playsInline
+              className="w-full h-auto max-h-[80vh]"
             >
               Your browser does not support the video tag.
             </video>
@@ -594,10 +744,25 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
         <div className="mb-6 w-full max-w-2xl">
           <p className="text-gray-400 text-sm mb-2 text-center">Captured Frame:</p>
           <div className="rounded-xl border border-gray-700 overflow-hidden">
-            <img src={entry.thumbnail} alt="Captured frame" className="w-full h-auto" />
+            <img 
+              src={entry.thumbnail} 
+              alt="Captured frame" 
+              className="w-full h-auto cursor-pointer" 
+              onClick={() => openImageViewer(entry.thumbnail || "", "Captured Frame", "Thumbnail of the video scan.")}
+            />
           </div>
         </div>
       )}
+      
+      {/* Image Viewer Modal */}
+      <ImageViewerModal
+        isOpen={imageViewerOpen}
+        onClose={() => setImageViewerOpen(false)}
+        imageUrl={selectedImage}
+        title={selectedImageTitle}
+        description={selectedImageDesc}
+        timestamp={selectedImageTimestamp}
+      />
     </div>
   );
 }

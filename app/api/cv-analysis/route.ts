@@ -43,35 +43,56 @@ export async function POST(request: NextRequest) {
     console.log(`[CV Analysis] Triggering analysis for scan: ${scanId}`);
     console.log(`[CV Analysis] Using webhook: ${modalWebhookUrl}`);
 
-    // Call Modal webhook
-    const modalResponse = await fetch(modalWebhookUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        videoUrl,
-        scanId,
-        itemType,
-      }),
-    });
+    // Create AbortController for timeout
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 120000); // 120 second timeout
 
-    if (!modalResponse.ok) {
-      const errorText = await modalResponse.text();
-      console.error('[CV Analysis] Modal webhook error:', errorText);
-      return NextResponse.json(
-        { error: 'CV analysis failed', details: errorText },
-        { status: 500 }
-      );
+    try {
+      // Call Modal webhook with timeout
+      const modalResponse = await fetch(modalWebhookUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          videoUrl,
+          scanId,
+          itemType,
+        }),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!modalResponse.ok) {
+        const errorText = await modalResponse.text();
+        console.error('[CV Analysis] Modal webhook error:', errorText);
+        return NextResponse.json(
+          { error: 'CV analysis failed', details: errorText },
+          { status: 500 }
+        );
+      }
+
+      const result = await modalResponse.json();
+      console.log('[CV Analysis] Analysis complete:', result);
+
+      return NextResponse.json({
+        success: true,
+        ...result
+      });
+    } catch (fetchError: any) {
+      clearTimeout(timeoutId);
+      
+      if (fetchError.name === 'AbortError') {
+        console.error('[CV Analysis] Request timed out after 120s');
+        return NextResponse.json(
+          { error: 'CV analysis timed out', details: 'Request took longer than 120 seconds' },
+          { status: 504 }
+        );
+      }
+      
+      throw fetchError;
     }
-
-    const result = await modalResponse.json();
-    console.log('[CV Analysis] Analysis complete:', result);
-
-    return NextResponse.json({
-      success: true,
-      ...result
-    });
 
   } catch (error) {
     console.error('[CV Analysis] Error:', error);

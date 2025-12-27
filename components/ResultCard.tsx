@@ -2,8 +2,9 @@
 
 import { useRef, useState, useEffect } from 'react';
 import Link from 'next/link';
-import { Bookmark, BookmarkCheck, Trash2, Loader2, ScanLine } from 'lucide-react';
+import { Bookmark, BookmarkCheck, Trash2, Loader2, ScanLine, Maximize2 } from 'lucide-react';
 import VideoInvestigatorModal from './VideoInvestigatorModal';
+import ImageViewerModal from './ImageViewerModal';
 import { saveScan, deleteSavedScan, isScanSaved } from '@/lib/saved-scans';
 
 interface ResultCardProps {
@@ -19,6 +20,29 @@ export default function ResultCard({ result, videoUrl, thumbnail, savedScanId, o
   const previewVideoRef = useRef<HTMLVideoElement>(null);
   const [investigatorOpen, setInvestigatorOpen] = useState(false);
   const [selectedTimestamp, setSelectedTimestamp] = useState<number>(0);
+  
+  // Image Viewer State
+  const [imageViewerOpen, setImageViewerOpen] = useState(false);
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const [selectedImageTitle, setSelectedImageTitle] = useState<string>("");
+  const [selectedImageDesc, setSelectedImageDesc] = useState<string>("");
+  const [selectedImageTimestamp, setSelectedImageTimestamp] = useState<string>("");
+  
+  const openImageViewer = (url: string, title: string, desc: string, timestamp?: number) => {
+    setSelectedImage(url);
+    setSelectedImageTitle(title);
+    setSelectedImageDesc(desc);
+    
+    if (timestamp !== undefined) {
+      const mins = Math.floor(timestamp / 60);
+      const secs = Math.floor(timestamp % 60);
+      setSelectedImageTimestamp(`${mins}:${secs.toString().padStart(2, '0')}`);
+    } else {
+      setSelectedImageTimestamp("");
+    }
+    
+    setImageViewerOpen(true);
+  };
   
   // Save state
   const [isSaved, setIsSaved] = useState(!!savedScanId);
@@ -267,6 +291,29 @@ export default function ResultCard({ result, videoUrl, thumbnail, savedScanId, o
   const { summary, bullets } = result.reasoning ? parseReasoning(result.reasoning) : { summary: '', bullets: [] };
   const issue = result.issue ? `#${result.issue}` : "Unknown Issue";
 
+  // Helper to find defect description for a golden frame based on timestamp
+  const getFrameDescription = (frameIdx: number): { title: string, desc: string } => {
+    // Default
+    let title = `Golden Frame #${frameIdx + 1}`;
+    let desc = "High-resolution capture selected by AI for clarity.";
+
+    const frameTimestamp = result.frameTimestamps ? result.frameTimestamps[frameIdx] : null;
+    
+    if (frameTimestamp !== null && bullets.length > 0) {
+      // Find bullet with closest timestamp (within 2 seconds)
+      const match = bullets.find((b: { timestamp: number | null, text: string }) => 
+        b.timestamp !== null && Math.abs(b.timestamp - frameTimestamp) < 3.0
+      );
+      
+      if (match) {
+        title = "Defect Detected";
+        desc = match.text;
+      }
+    }
+    
+    return { title, desc };
+  };
+
   return (
     <div className={`w-full max-w-2xl flex flex-col items-center ${embedded ? '' : 'min-h-screen bg-gray-900 text-white p-4 overflow-y-auto'}`}>
       {/* Back to Dashboard Button - Only if NOT embedded */}
@@ -432,13 +479,28 @@ export default function ResultCard({ result, videoUrl, thumbnail, savedScanId, o
           {/* Golden Frames Grid */}
           {result.goldenFrames && result.goldenFrames.length > 0 && (
             <div className="mb-4">
-              <p className="text-gray-400 text-xs mb-2">Golden Frames (Sharpest Captures)</p>
+              <p className="text-gray-400 text-xs mb-2">Golden Frames (Tap to Enlarge)</p>
               <div className="grid grid-cols-3 gap-2">
-                {result.goldenFrames.slice(0, 3).map((frame: string, idx: number) => (
-                  <div key={idx} className="aspect-[3/4] rounded-lg overflow-hidden border border-gray-600 bg-gray-900">
-                    <img src={frame} alt={`Golden Frame ${idx + 1}`} className="w-full h-full object-cover" />
-                  </div>
-                ))}
+                {result.goldenFrames.slice(0, 3).map((frame: string, idx: number) => {
+                  const { title, desc } = getFrameDescription(idx);
+                  return (
+                    <button 
+                      key={idx} 
+                      className="aspect-[3/4] rounded-lg overflow-hidden border border-gray-600 bg-gray-900 relative group hover:border-purple-500 transition-colors"
+                      onClick={() => openImageViewer(
+                        frame, 
+                        title,
+                        desc,
+                        result.frameTimestamps ? result.frameTimestamps[idx] : undefined
+                      )}
+                    >
+                      <img src={frame} alt={`Golden Frame ${idx + 1}`} className="w-full h-full object-cover" />
+                      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
+                        <Maximize2 className="w-6 h-6 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-lg" />
+                      </div>
+                    </button>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -447,9 +509,19 @@ export default function ResultCard({ result, videoUrl, thumbnail, savedScanId, o
           {result.defectMask && (
             <div className="mb-4">
               <p className="text-gray-400 text-xs mb-2">Defect Heatmap</p>
-              <div className="rounded-lg overflow-hidden border border-gray-600 bg-gray-900">
+              <button 
+                className="w-full rounded-lg overflow-hidden border border-gray-600 bg-gray-900 relative group hover:border-purple-500 transition-colors"
+                onClick={() => openImageViewer(
+                  result.defectMask,
+                  "Defect Heatmap",
+                  "Visualizing potential surface defects and anomalies detected by the CV model. Hotter colors (red/orange) indicate stronger anomalies."
+                )}
+              >
                 <img src={result.defectMask} alt="Defect Analysis Heatmap" className="w-full h-auto" />
-              </div>
+                <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
+                  <Maximize2 className="w-8 h-8 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-lg" />
+                </div>
+              </button>
             </div>
           )}
           
@@ -458,22 +530,40 @@ export default function ResultCard({ result, videoUrl, thumbnail, savedScanId, o
             <div>
               <p className="text-gray-400 text-xs mb-2">Region Analysis</p>
               <div className="grid grid-cols-5 gap-1">
-                {['corner_tl', 'corner_tr', 'spine', 'corner_bl', 'corner_br'].map((region) => (
-                  result.regionCrops[region] && (
-                    <div key={region} className="relative">
-                      <div className="aspect-square rounded overflow-hidden border border-gray-600 bg-gray-900">
+                {['corner_tl', 'corner_tr', 'spine', 'corner_bl', 'corner_br'].map((region) => {
+                  const regionName = region.replace('corner_', '').replace('_', '');
+                  const regionTitle = region === 'spine' ? 'Spine' : 
+                                     region === 'corner_tl' ? 'Top Left Corner' :
+                                     region === 'corner_tr' ? 'Top Right Corner' :
+                                     region === 'corner_bl' ? 'Bottom Left Corner' :
+                                     'Bottom Right Corner';
+                  
+                  return result.regionCrops[region] && (
+                    <button 
+                      key={region} 
+                      className="relative group w-full"
+                      onClick={() => openImageViewer(
+                        result.regionCrops[region],
+                        regionTitle,
+                        `High-resolution crop of the ${regionTitle.toLowerCase()} for detailed inspection.`
+                      )}
+                    >
+                      <div className="aspect-square rounded overflow-hidden border border-gray-600 bg-gray-900 group-hover:border-purple-500 transition-colors">
                         <img 
                           src={result.regionCrops[region]} 
-                          alt={region.replace('_', ' ')} 
+                          alt={regionTitle} 
                           className="w-full h-full object-cover" 
                         />
+                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
+                          <Maximize2 className="w-4 h-4 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-lg" />
+                        </div>
                       </div>
                       <span className="absolute bottom-0 left-0 right-0 bg-black/70 text-[8px] text-center text-gray-300 py-0.5 uppercase">
-                        {region.replace('corner_', '').replace('_', '')}
+                        {regionName}
                       </span>
-                    </div>
-                  )
-                ))}
+                    </button>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -492,29 +582,15 @@ export default function ResultCard({ result, videoUrl, thumbnail, savedScanId, o
       {videoUrl && (
         <div className="mb-6 w-full max-w-2xl">
           <p className="text-gray-400 text-sm mb-2 text-center">Video Preview:</p>
-          <div className="relative w-full" style={{ aspectRatio: '16/9', maxHeight: '400px' }}>
+          <div className="relative w-full overflow-hidden rounded-xl border border-gray-700 bg-black">
             <video 
               ref={previewVideoRef}
               src={videoUrl} 
               controls 
-              className="w-full h-full rounded-xl border border-gray-700 object-contain cursor-pointer"
+              playsInline
+              className="w-full h-auto max-h-[80vh]"
               onPlay={(e) => {
-                // Request fullscreen when video starts playing
-                const video = e.currentTarget;
-                // Small delay to ensure video is actually playing
-                setTimeout(() => {
-                  if (video.requestFullscreen) {
-                    video.requestFullscreen().catch(err => {
-                      console.log('Fullscreen request failed:', err);
-                    });
-                  } else if ((video as any).webkitRequestFullscreen) {
-                    (video as any).webkitRequestFullscreen();
-                  } else if ((video as any).mozRequestFullScreen) {
-                    (video as any).mozRequestFullScreen();
-                  } else if ((video as any).msRequestFullscreen) {
-                    (video as any).msRequestFullscreen();
-                  }
-                }, 100);
+                // Optional: Auto fullscreen logic if desired
               }}
             >
               Your browser does not support the video tag.
@@ -532,6 +608,16 @@ export default function ResultCard({ result, videoUrl, thumbnail, savedScanId, o
           timestamp={selectedTimestamp}
         />
       )}
+      
+      {/* Image Viewer Modal */}
+      <ImageViewerModal
+        isOpen={imageViewerOpen}
+        onClose={() => setImageViewerOpen(false)}
+        imageUrl={selectedImage}
+        title={selectedImageTitle}
+        description={selectedImageDesc}
+        timestamp={selectedImageTimestamp}
+      />
     </div>
   );
 }

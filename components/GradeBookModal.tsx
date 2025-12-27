@@ -6,7 +6,8 @@ import { X, Upload, Video, Camera, Search, ScanLine, ChevronDown } from 'lucide-
 import { uploadToSupabaseWithProgress } from '@/lib/supabase/upload-with-progress';
 import { analyzeComicFromUrl } from '@/app/actions/analyze-from-url';
 import { addToHistory, generateThumbnail, updateHistoryEntry, getVideoById } from '@/lib/history';
-import { startBackgroundCVAnalysis } from '@/lib/cv-analysis';
+// Note: CV analysis is now triggered manually via "Deep Scan" button in StreamingResultCard
+// import { startBackgroundCVAnalysis } from '@/lib/cv-analysis';
 import UploadProgressModal from '@/components/UploadProgressModal';
 import { 
   createPendingResult, 
@@ -232,9 +233,8 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
             // Update with AI results
             updateWithAIResult(historyId, result.data);
             
-            // Trigger CV analysis in background
-            const itemType = result.data.itemType || 'card';
-            startBackgroundCVAnalysis(supabaseUrl, historyId, itemType);
+            // Note: CV analysis (Deep Scan) is now triggered manually by user
+            // via the "Run Deep Scan" button in StreamingResultCard
           } else {
             updateWithError(historyId, result.error || "Analysis failed");
           }

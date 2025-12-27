@@ -22,6 +22,7 @@ from pathlib import Path
 app = modal.App("gradevault-cv-worker")
 
 # Define the container image with all dependencies
+# Using REST API for Supabase Storage (full support for new sb_secret_ keys)
 cv_image = (
     modal.Image.debian_slim(python_version="3.11")
     .apt_install("libgl1-mesa-glx", "libglib2.0-0", "ffmpeg")
@@ -30,8 +31,7 @@ cv_image = (
         "numpy==1.26.4",
         "scipy==1.13.1",
         "pillow==10.4.0",
-        "supabase>=2.0.0",
-        "requests>=2.31.0",
+        "requests>=2.31.0",  # For REST API calls to Supabase Storage
         "fastapi>=0.109.0",  # Required for web endpoints
     )
 )
@@ -57,12 +57,21 @@ def analyze_video(video_url: str, scan_id: str, item_type: str = "card") -> dict
     import cv2
     import numpy as np
     import requests
-    from supabase import create_client
+    # Note: Using REST API for storage uploads (full support for new sb_secret_ keys)
     
     # Get Supabase credentials from Modal secrets
     supabase_url = os.environ["SUPABASE_URL"]
     supabase_key = os.environ["SUPABASE_KEY"]
-    supabase = create_client(supabase_url, supabase_key)
+    
+    # Debug: Show key info (safely - only show first/last few chars)
+    key_preview = f"{supabase_key[:15]}...{supabase_key[-8:]}" if len(supabase_key) > 25 else "KEY_TOO_SHORT"
+    print(f"🔑 Supabase URL: {supabase_url}")
+    print(f"🔑 Key format: {'New (sb_)' if supabase_key.startswith('sb_') else 'Legacy (eyJ)'}")
+    print(f"🔑 Key preview: {key_preview}")
+    
+    # Note: We use REST API for storage uploads (full support for new sb_secret_ keys)
+    # The supabase client variable is kept for API compatibility but not used for storage
+    supabase = None
     
     print(f"🎬 Processing scan: {scan_id}")
     print(f"📹 Video URL: {video_url}")
@@ -288,10 +297,56 @@ def run_glint_analysis(golden_frames: list, output_dir: str) -> dict:
     }
 
 
+def upload_to_supabase_storage(supabase_url: str, supabase_key: str, bucket: str, 
+                                 remote_path: str, file_data: bytes, 
+                                 content_type: str = "image/png") -> str:
+    """
+    Upload a file to Supabase Storage using the official REST API.
+    
+    This approach works with both legacy JWT keys and new sb_secret_ keys.
+    It's the recommended method when supabase-py storage support is catching up
+    to the new key format.
+    
+    Supabase Storage REST API docs:
+    https://supabase.com/docs/reference/storage/upload
+    """
+    import requests
+    
+    # Supabase Storage REST API endpoint for upload
+    upload_url = f"{supabase_url}/storage/v1/object/{bucket}/{remote_path}"
+    
+    # Headers for the new sb_secret_ key format
+    # The apikey header is used for authentication with new keys
+    headers = {
+        "apikey": supabase_key,
+        "Authorization": f"Bearer {supabase_key}",
+        "Content-Type": content_type,
+        "x-upsert": "true",  # Overwrite if file exists
+    }
+    
+    response = requests.post(upload_url, headers=headers, data=file_data, timeout=60)
+    
+    if response.status_code not in [200, 201]:
+        error_detail = response.text[:500] if response.text else "No error details"
+        raise Exception(f"Storage upload failed ({response.status_code}): {error_detail}")
+    
+    # Return public URL for the uploaded file
+    public_url = f"{supabase_url}/storage/v1/object/public/{bucket}/{remote_path}"
+    return public_url
+
+
 def upload_results(supabase, scan_id: str, output_dir: Path, golden_frames: list, analysis: dict) -> dict:
     """
-    Upload all generated images to Supabase Storage.
+    Upload all generated images to Supabase Storage using REST API.
+    
+    Uses the official Supabase Storage REST API which fully supports
+    the new sb_secret_ key format (recommended for forward compatibility).
     """
+    import os
+    
+    supabase_url = os.environ["SUPABASE_URL"]
+    supabase_key = os.environ["SUPABASE_KEY"]
+    
     result = {
         "scanId": scan_id,
         "goldenFrames": [],
@@ -311,44 +366,42 @@ def upload_results(supabase, scan_id: str, output_dir: Path, golden_frames: list
         remote_path = f"{scan_id}/frames/{filename}"
         
         with open(filepath, 'rb') as f:
-            supabase.storage.from_(bucket).upload(
-                remote_path, f.read(),
-                file_options={"content-type": "image/png", "upsert": "true"}
-            )
+            file_data = f.read()
         
-        url = supabase.storage.from_(bucket).get_public_url(remote_path)
+        url = upload_to_supabase_storage(supabase_url, supabase_key, bucket, remote_path, file_data)
         result["goldenFrames"].append(url)
         result["frameTimestamps"].append(gf['timestamp'])
+        print(f"   ✅ Uploaded frame {i+1}: {filename}")
     
     # Upload defect mask
     if analysis.get("defect_mask_path"):
         remote_path = f"{scan_id}/defect_mask.png"
         with open(analysis["defect_mask_path"], 'rb') as f:
-            supabase.storage.from_(bucket).upload(
-                remote_path, f.read(),
-                file_options={"content-type": "image/png", "upsert": "true"}
-            )
-        result["defectMask"] = supabase.storage.from_(bucket).get_public_url(remote_path)
+            file_data = f.read()
+        result["defectMask"] = upload_to_supabase_storage(
+            supabase_url, supabase_key, bucket, remote_path, file_data
+        )
+        print(f"   ✅ Uploaded defect mask")
     
     # Upload variance heatmap
     if analysis.get("variance_heatmap_path"):
         remote_path = f"{scan_id}/variance_heatmap.png"
         with open(analysis["variance_heatmap_path"], 'rb') as f:
-            supabase.storage.from_(bucket).upload(
-                remote_path, f.read(),
-                file_options={"content-type": "image/png", "upsert": "true"}
-            )
-        result["varianceHeatmap"] = supabase.storage.from_(bucket).get_public_url(remote_path)
+            file_data = f.read()
+        result["varianceHeatmap"] = upload_to_supabase_storage(
+            supabase_url, supabase_key, bucket, remote_path, file_data
+        )
+        print(f"   ✅ Uploaded variance heatmap")
     
     # Upload region crops
     for name, path in analysis.get("region_paths", {}).items():
         remote_path = f"{scan_id}/crops/{name}.png"
         with open(path, 'rb') as f:
-            supabase.storage.from_(bucket).upload(
-                remote_path, f.read(),
-                file_options={"content-type": "image/png", "upsert": "true"}
-            )
-        result["regionCrops"][name] = supabase.storage.from_(bucket).get_public_url(remote_path)
+            file_data = f.read()
+        result["regionCrops"][name] = upload_to_supabase_storage(
+            supabase_url, supabase_key, bucket, remote_path, file_data
+        )
+        print(f"   ✅ Uploaded crop: {name}")
     
     return result
 

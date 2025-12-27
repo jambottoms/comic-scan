@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Plus, Upload, Video, ScanLine, Search } from 'lucide-react';
+import { Plus, Upload, Video, Search } from 'lucide-react';
 
 interface FabMenuProps {
   onRecord: () => void;

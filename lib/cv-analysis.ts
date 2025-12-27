@@ -48,10 +48,11 @@ export async function triggerCVAnalysis(
     const result = await response.json();
     
     if (!response.ok) {
-      console.error('[CV Analysis] API error:', result);
+      const errorMsg = result.error || result.details || result.message || `HTTP ${response.status}`;
+      console.error('[CV Analysis] API error:', response.status, errorMsg, result);
       return {
         success: false,
-        error: result.error || 'CV analysis failed',
+        error: typeof errorMsg === 'string' ? errorMsg : JSON.stringify(errorMsg),
       };
     }
 
@@ -102,7 +103,7 @@ export function startBackgroundCVAnalysis(
  */
 function updateHistoryWithCVResults(historyId: string, cvResult: CVAnalysisResult): void {
   try {
-    const historyKey = 'comic_scan_history';
+    const historyKey = 'comic-scan-history';
     const historyStr = localStorage.getItem(historyKey);
     
     if (!historyStr) return;
