@@ -1,10 +1,12 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Loader2, ScanLine, Sparkles } from 'lucide-react';
-import { getVideoById } from '@/lib/history';
+import { Loader2, ScanLine, Sparkles, Camera, Microscope } from 'lucide-react';
+import { getVideoById, updateHistoryEntry } from '@/lib/history';
 import { subscribeToUpdates } from '@/lib/streaming-analysis';
 import ResultCard from '@/components/ResultCard';
+import { extractFramesFromVideo, ExtractedFrame } from '@/lib/frame-extractor';
+import { triggerCVAnalysis } from '@/lib/cv-analysis';
 
 interface StreamingResultCardProps {
   historyId: string;
@@ -62,6 +64,117 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
     return () => clearInterval(interval);
   }, [historyId, status]);
   
+  // Client-side frame extraction (fast, no server needed)
+  const [extractedFrames, setExtractedFrames] = useState<ExtractedFrame[]>([]);
+  const [framesLoading, setFramesLoading] = useState(false);
+  const [framesError, setFramesError] = useState<string | null>(null);
+  
+  // Deep scan state (Modal.com CV analysis)
+  const [deepScanLoading, setDeepScanLoading] = useState(false);
+  const [deepScanError, setDeepScanError] = useState<string | null>(null);
+  const [deepScanComplete, setDeepScanComplete] = useState(false);
+  
+  // Check if deep scan has already been run
+  const hasDeepScanResults = !!(entry?.result?.defectMask || entry?.result?.varianceHeatmap);
+  
+  const triggerDeepScan = async () => {
+    if (!entry?.videoUrl || deepScanLoading) return;
+    
+    setDeepScanLoading(true);
+    setDeepScanError(null);
+    
+    try {
+      const itemType = entry?.result?.itemType || 'card';
+      const result = await triggerCVAnalysis(entry.videoUrl, historyId, itemType);
+      
+      if (result.success) {
+        setDeepScanComplete(true);
+        // Reload entry to get updated results
+        const updated = getVideoById(historyId);
+        if (updated) {
+          setEntry(updated);
+        }
+      } else if (result.skipped) {
+        setDeepScanError('Deep scan not configured on server');
+      } else {
+        setDeepScanError(result.error || 'Deep scan failed');
+      }
+    } catch (err: any) {
+      setDeepScanError(err.message || 'Deep scan failed');
+    } finally {
+      setDeepScanLoading(false);
+    }
+  };
+  
+  useEffect(() => {
+    const videoUrl = entry?.videoUrl;
+    
+    // Skip if no video URL, already have frames, or already loading
+    if (!videoUrl || extractedFrames.length > 0 || framesLoading) return;
+    // Skip if result already has golden frames
+    if (entry?.result?.goldenFrames?.length > 0) return;
+    
+    setFramesLoading(true);
+    setFramesError(null);
+    
+    extractFramesFromVideo(videoUrl, 5)
+      .then((frames) => {
+        setExtractedFrames(frames);
+        setFramesLoading(false);
+        
+        // Save to history so they persist
+        const goldenFrameUrls = frames.map(f => f.dataUrl);
+        const frameTimestamps = frames.map(f => f.timestamp);
+        
+        updateHistoryEntry(historyId, {
+          result: {
+            ...entry?.result,
+            goldenFrames: goldenFrameUrls,
+            frameTimestamps: frameTimestamps,
+          }
+        });
+      })
+      .catch((err) => {
+        console.error('Frame extraction failed:', err);
+        setFramesError(err.message);
+        setFramesLoading(false);
+      });
+  }, [entry?.videoUrl, extractedFrames.length, framesLoading, historyId, entry?.result]);
+  
+  // Simulated progress for loading states
+  const [progress, setProgress] = useState(0);
+
+  useEffect(() => {
+    let target = 0;
+    let speed = 50;
+
+    if (status === 'uploading') {
+      target = 45;
+      speed = 100;
+    } else if (status === 'analyzing') {
+      target = 90;
+      speed = 150;
+    } else if (status === 'cv_processing') {
+      target = 95;
+      speed = 200;
+    } else if (status === 'complete') {
+      target = 100;
+      speed = 20;
+    }
+
+    const timer = setInterval(() => {
+      setProgress(prev => {
+        if (prev >= target) return prev;
+        // Decelerate as we get closer
+        const remaining = target - prev;
+        const step = Math.max(0.5, remaining / 10); 
+        return Math.min(target, prev + (Math.random() * step));
+      });
+    }, speed);
+
+    return () => clearInterval(timer);
+  }, [status]);
+
   const result = entry?.result || {};
   const isPending = result._pending === true;
   const isAnalyzing = status === 'analyzing' || status === 'uploading';
@@ -115,7 +228,10 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
               </div>
               <div className="flex-1 flex items-center justify-center bg-white min-h-[60px]">
                 {isAnalyzing ? (
-                  <Loader2 className="w-6 h-6 text-gray-400 animate-spin" />
+                  <div className="flex flex-col items-center justify-center">
+                    <Loader2 className="w-5 h-5 text-gray-400 animate-spin mb-0.5" />
+                    <span className="text-[10px] font-bold text-gray-500 font-mono">{Math.round(progress)}%</span>
+                  </div>
                 ) : (
                   <span className="text-3xl font-black text-black">{grade}</span>
                 )}
@@ -158,13 +274,7 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
                 <span>AI analyzing video...</span>
               </div>
             )}
-            {isCVProcessing && (
-              <div className="flex items-center gap-2 text-blue-400 text-xs font-medium">
-                <ScanLine className="w-4 h-4 animate-pulse" />
-                <span>Deep scan in progress...</span>
-              </div>
-            )}
-            {isComplete && (
+            {(isComplete || isCVProcessing) && !isError && (
               <div className="flex items-center gap-2 text-green-400 text-xs font-medium">
                 <span>✓ Analysis complete</span>
               </div>
@@ -227,62 +337,124 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
         </div>
       </div>
 
-      {/* CV Analysis Section - Shows skeleton while processing */}
+      {/* CV Analysis Section - Fast client-side extraction */}
       <div className="bg-gray-800 p-4 rounded-xl border border-gray-700 max-w-2xl w-full mb-4">
         <h3 className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-3 flex items-center gap-2">
-          <ScanLine className="w-4 h-4" />
-          Condition Analysis
-          {isCVProcessing && <Loader2 className="w-3 h-3 animate-spin text-blue-400 ml-2" />}
+          <Camera className="w-4 h-4" />
+          Key Frames
+          {framesLoading && <Loader2 className="w-3 h-3 animate-spin text-blue-400 ml-2" />}
         </h3>
         
-        {/* Golden Frames Grid - Skeleton or Content */}
+        {/* Golden Frames Grid - Fast client-side extraction */}
         <div className="mb-4">
-          <p className="text-gray-400 text-xs mb-2">Golden Frames (Sharpest Captures)</p>
+          <p className="text-gray-400 text-xs mb-2">
+            {framesLoading ? 'Extracting frames...' : 'Video Captures'}
+          </p>
           <div className="grid grid-cols-3 gap-2">
-            {result.goldenFrames && result.goldenFrames.length > 0 ? (
+            {/* Show extracted frames (client-side), or stored goldenFrames, or loading state */}
+            {extractedFrames.length > 0 ? (
+              extractedFrames.slice(0, 3).map((frame, idx) => (
+                <div key={idx} className="relative aspect-[3/4] rounded-lg overflow-hidden border border-gray-600 bg-gray-900">
+                  <img src={frame.dataUrl} alt={`Frame at ${frame.timestampFormatted}`} className="w-full h-full object-cover" />
+                  <div className="absolute bottom-0 left-0 right-0 bg-black/70 text-[10px] text-center text-gray-300 py-0.5 font-mono">
+                    {frame.timestampFormatted}
+                  </div>
+                </div>
+              ))
+            ) : result.goldenFrames && result.goldenFrames.length > 0 ? (
               result.goldenFrames.slice(0, 3).map((frame: string, idx: number) => (
                 <div key={idx} className="aspect-[3/4] rounded-lg overflow-hidden border border-gray-600 bg-gray-900">
                   <img src={frame} alt={`Golden Frame ${idx + 1}`} className="w-full h-full object-cover" />
                 </div>
               ))
-            ) : (
+            ) : framesLoading ? (
               [1, 2, 3].map((i) => (
-                <div key={i} className={`aspect-[3/4] rounded-lg border border-gray-600 ${isCVProcessing ? skeleton : 'bg-gray-900'}`}>
-                  {!isCVProcessing && (
-                    <div className="w-full h-full flex items-center justify-center text-gray-600 text-xs">
-                      Frame {i}
-                    </div>
-                  )}
+                <div key={i} className={`aspect-[3/4] rounded-lg border border-gray-600 ${skeleton}`}>
                 </div>
               ))
-            )}
-          </div>
-        </div>
-        
-        {/* Defect Heatmap - Skeleton or Content */}
-        <div className="mb-4">
-          <p className="text-gray-400 text-xs mb-2">Defect Heatmap</p>
-          {result.defectMask ? (
-            <div className="rounded-lg overflow-hidden border border-gray-600 bg-gray-900">
-              <img src={result.defectMask} alt="Defect Analysis Heatmap" className="w-full h-auto" />
-            </div>
-          ) : (
-            <div className={`aspect-video rounded-lg border border-gray-600 ${isCVProcessing ? skeleton : 'bg-gray-900'}`}>
-              {!isCVProcessing && (
-                <div className="w-full h-full flex items-center justify-center text-gray-600 text-xs">
-                  Heatmap will appear here
+            ) : !entry?.videoUrl ? (
+              [1, 2, 3].map((i) => (
+                <div key={i} className="aspect-[3/4] rounded-lg border border-gray-600 bg-gray-900">
+                  <div className="w-full h-full flex items-center justify-center text-gray-600 text-xs">
+                    Waiting...
+                  </div>
                 </div>
-              )}
+              ))
+            ) : framesError ? (
+              <div className="col-span-3 text-red-400 text-xs text-center py-4">
+                {framesError}
+              </div>
+            ) : null}
+          </div>
+          
+          {/* Show remaining frames in a second row if we have 5 */}
+          {extractedFrames.length > 3 && (
+            <div className="grid grid-cols-2 gap-2 mt-2">
+              {extractedFrames.slice(3, 5).map((frame, idx) => (
+                <div key={idx + 3} className="relative aspect-[3/4] rounded-lg overflow-hidden border border-gray-600 bg-gray-900">
+                  <img src={frame.dataUrl} alt={`Frame at ${frame.timestampFormatted}`} className="w-full h-full object-cover" />
+                  <div className="absolute bottom-0 left-0 right-0 bg-black/70 text-[10px] text-center text-gray-300 py-0.5 font-mono">
+                    {frame.timestampFormatted}
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </div>
         
-        {/* Region Analysis - Skeleton or Content */}
-        <div>
-          <p className="text-gray-400 text-xs mb-2">Region Analysis</p>
-          <div className="grid grid-cols-5 gap-1">
-            {result.regionCrops && Object.keys(result.regionCrops).length > 0 ? (
-              ['corner_tl', 'corner_tr', 'spine', 'corner_bl', 'corner_br'].map((region) => (
+        {/* Deep Scan Button - Advanced CV Analysis */}
+        {!hasDeepScanResults && !deepScanComplete && entry?.videoUrl && (
+          <div className="mb-4 pt-3 border-t border-gray-700">
+            <button
+              onClick={triggerDeepScan}
+              disabled={deepScanLoading}
+              className="w-full py-3 px-4 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 disabled:from-gray-600 disabled:to-gray-600 text-white font-medium rounded-xl flex items-center justify-center gap-2 transition-all"
+            >
+              {deepScanLoading ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>Deep Scanning... (30-60s)</span>
+                </>
+              ) : (
+                <>
+                  <Microscope className="w-4 h-4" />
+                  <span>Run Deep Scan</span>
+                </>
+              )}
+            </button>
+            <p className="text-gray-500 text-[10px] text-center mt-2">
+              Advanced AI analysis: sharpest frames, defect detection, region analysis
+            </p>
+            {deepScanError && (
+              <p className="text-red-400 text-xs text-center mt-2">{deepScanError}</p>
+            )}
+          </div>
+        )}
+        
+        {/* Deep scan success message */}
+        {(hasDeepScanResults || deepScanComplete) && (
+          <div className="mb-4 pt-3 border-t border-gray-700 flex items-center justify-center gap-2 text-green-400 text-xs">
+            <ScanLine className="w-4 h-4" />
+            <span>Deep scan complete</span>
+          </div>
+        )}
+        
+        {/* Show defect heatmap if available from CV pipeline */}
+        {result.defectMask && (
+          <div className="mb-4">
+            <p className="text-gray-400 text-xs mb-2">Defect Heatmap</p>
+            <div className="rounded-lg overflow-hidden border border-gray-600 bg-gray-900">
+              <img src={result.defectMask} alt="Defect Analysis Heatmap" className="w-full h-auto" />
+            </div>
+          </div>
+        )}
+        
+        {/* Show region crops if available from CV pipeline */}
+        {result.regionCrops && Object.keys(result.regionCrops).length > 0 && (
+          <div>
+            <p className="text-gray-400 text-xs mb-2">Region Analysis</p>
+            <div className="grid grid-cols-5 gap-1">
+              {['corner_tl', 'corner_tr', 'spine', 'corner_bl', 'corner_br'].map((region) => (
                 result.regionCrops[region] && (
                   <div key={region} className="relative">
                     <div className="aspect-square rounded overflow-hidden border border-gray-600 bg-gray-900">
@@ -297,31 +469,12 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
                     </span>
                   </div>
                 )
-              ))
-            ) : (
-              ['TL', 'TR', 'Spine', 'BL', 'BR'].map((label, i) => (
-                <div key={i} className="relative">
-                  <div className={`aspect-square rounded border border-gray-600 ${isCVProcessing ? skeleton : 'bg-gray-900'}`}>
-                    {!isCVProcessing && (
-                      <div className="w-full h-full flex items-center justify-center text-gray-600 text-[8px]">
-                        {label}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-        
-        {/* Status message */}
-        {isCVProcessing && (
-          <div className="mt-3 pt-3 border-t border-gray-700 text-xs text-blue-400 text-center animate-pulse">
-            High-resolution analysis in progress...
+              ))}
+            </div>
           </div>
         )}
         
-        {/* Pixels per MM info */}
+        {/* Pixels per MM info if available */}
         {result.pixelsPerMm && (
           <div className="mt-3 pt-3 border-t border-gray-700 text-xs text-gray-500 flex justify-between">
             <span>Resolution: {result.pixelsPerMm.toFixed(1)} px/mm</span>

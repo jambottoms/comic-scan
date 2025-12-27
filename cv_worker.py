@@ -32,6 +32,7 @@ cv_image = (
         "pillow==10.4.0",
         "supabase>=2.0.0",
         "requests>=2.31.0",
+        "fastapi>=0.109.0",  # Required for web endpoints
     )
 )
 

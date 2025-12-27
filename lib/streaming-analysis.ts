@@ -69,6 +69,7 @@ export function updateWithVideoUrl(historyId: string, videoUrl: string): void {
 
 /**
  * Update the pending result with AI analysis results.
+ * Marks as complete since frame extraction happens client-side (fast).
  */
 export function updateWithAIResult(historyId: string, aiResult: any): void {
   const entry = getVideoById(historyId);
@@ -82,13 +83,13 @@ export function updateWithAIResult(historyId: string, aiResult: any): void {
       ...entry.result,
       ...aiResult,
       _pending: false,
-      _status: 'cv_processing',
+      _status: 'complete', // Mark complete - frame extraction is fast & client-side
     },
   });
   
   // Dispatch event for UI update
   dispatchUpdate(historyId, { 
-    status: 'cv_processing', 
+    status: 'complete', 
     title: aiResult.title,
     issue: aiResult.issue,
     grade: aiResult.estimatedGrade,
