@@ -41,6 +41,17 @@ export function useCamera(): UseCameraReturn {
     checkPermission();
   }, []);
 
+  // Attach stream to video element when both exist
+  useEffect(() => {
+    if (isStreaming && streamRef.current && videoRef.current) {
+      videoRef.current.srcObject = streamRef.current;
+      videoRef.current.play().catch(err => {
+        console.error('Error playing video:', err);
+        setError('Failed to start video playback');
+      });
+    }
+  }, [isStreaming]);
+
   const startCamera = useCallback(async () => {
     try {
       setError(null);
@@ -55,13 +66,8 @@ export function useCamera(): UseCameraReturn {
       });
 
       streamRef.current = stream;
-      
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
-        setIsStreaming(true);
-        setHasPermission(true);
-      }
+      setIsStreaming(true); // Set immediately to trigger video element render
+      setHasPermission(true);
     } catch (err) {
       console.error('Error accessing camera:', err);
       

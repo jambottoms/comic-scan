@@ -6,6 +6,7 @@ import { X, Upload, Video, Camera, Search, ScanLine, ChevronDown } from 'lucide-
 import { uploadToSupabaseWithProgress } from '@/lib/supabase/upload-with-progress';
 import { analyzeComicFromUrl } from '@/app/actions/analyze-from-url';
 import { addToHistory, generateThumbnail, updateHistoryEntry, getVideoById } from '@/lib/history';
+import { useCamera } from '@/lib/hooks/useCamera';
 // Note: CV analysis is now triggered manually via "Deep Scan" button in StreamingResultCard
 // import { startBackgroundCVAnalysis } from '@/lib/cv-analysis';
 import UploadProgressModal from '@/components/UploadProgressModal';
@@ -30,11 +31,12 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
   const [error, setError] = useState<string | null>(null);
   const [isClosing, setIsClosing] = useState(false);
   
+  // Use camera hook
+  const { videoRef, isStreaming, error: cameraError, startCamera, stopCamera, capturePhoto } = useCamera();
+  
   // Recording State
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const mediaStreamRef = useRef<MediaStream | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
@@ -82,76 +84,13 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
     return () => {
       stopCamera();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, activeTab, loading, showUploadModal]);
 
-  const startCamera = async () => {
-    try {
-      setError(null);
-      
-      // Check if MediaDevices API is available
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        throw new Error("Camera access is not supported. Please use upload.");
-      }
-      
-      const constraints = {
-        video: { 
-          // Request vertical-ish resolution for mobile full screen feel, or just high res
-          width: { ideal: 1920, min: 1280 },
-          height: { ideal: 1080, min: 720 },
-          facingMode: 'environment',
-        //   aspectRatio: 16 / 9, // Let it be natural aspect ratio to fill screen better
-        },
-        audio: false,
-      };
-
-      let stream: MediaStream;
-      try {
-        stream = await navigator.mediaDevices.getUserMedia(constraints);
-      } catch (err) {
-        // Fallback
-        stream = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: 'environment' },
-            audio: false,
-        });
-      }
-
-      mediaStreamRef.current = stream;
-
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        videoRef.current.play();
-      }
-    } catch (err: any) {
-      console.error("Camera error:", err);
-      
-      let errorMessage = "Failed to access camera.";
-      
-      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-        errorMessage = "Camera permission denied. Please allow camera access or use Upload.";
-      } else if (err.name === 'NotFoundError') {
-        errorMessage = "No camera found on this device.";
-      } else if (err.name === 'NotReadableError') {
-        errorMessage = "Camera is in use by another app.";
-      } else if (!window.isSecureContext) {
-        errorMessage = "Camera requires HTTPS. Please use Upload or secure connection.";
-      }
-
-      setError(errorMessage);
-    }
-  };
-
-  const stopCamera = () => {
-    if (mediaStreamRef.current) {
-      mediaStreamRef.current.getTracks().forEach(track => track.stop());
-      mediaStreamRef.current = null;
-    }
-    if (videoRef.current) {
-      videoRef.current.srcObject = null;
-    }
-  };
-
   const startRecording = () => {
-    if (!mediaStreamRef.current) return;
+    // Get stream from the hook's videoRef
+    const stream = videoRef.current?.srcObject as MediaStream | null;
+    if (!stream) return;
 
     try {
       const options: MediaRecorderOptions = {
@@ -200,30 +139,17 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
     }
   };
 
-  const capturePhoto = () => {
-    if (!videoRef.current) return;
+  const capturePhotoForIdentify = async () => {
+    const blob = await capturePhoto();
+    if (!blob) return;
     
-    const canvas = document.createElement('canvas');
-    canvas.width = videoRef.current.videoWidth;
-    canvas.height = videoRef.current.videoHeight;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    
-    // Draw current frame
-    ctx.drawImage(videoRef.current, 0, 0);
-    
-    // Convert to blob
-    canvas.toBlob((blob) => {
-      if (!blob) return;
-      
-      if (captureStep === 'front') {
-        setCapturedFiles(prev => ({ ...prev, front: blob }));
-        setCaptureStep('back');
-      } else if (captureStep === 'back') {
-        setCapturedFiles(prev => ({ ...prev, back: blob }));
-        setCaptureStep('video');
-      }
-    }, 'image/jpeg', 0.95);
+    if (captureStep === 'front') {
+      setCapturedFiles(prev => ({ ...prev, front: blob }));
+      setCaptureStep('back');
+    } else if (captureStep === 'back') {
+      setCapturedFiles(prev => ({ ...prev, back: blob }));
+      setCaptureStep('video');
+    }
   };
 
   const handleMultiModalProcessing = async () => {
@@ -549,6 +475,15 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
                             />
                         )}
                         
+                        {/* Camera Error Overlay */}
+                        {cameraError && (
+                            <div className="absolute inset-0 flex items-center justify-center bg-black/80 p-8">
+                                <div className="bg-red-900/80 backdrop-blur-md text-white px-6 py-4 rounded-lg max-w-md text-center">
+                                    <p className="font-medium">{cameraError}</p>
+                                </div>
+                            </div>
+                        )}
+                        
                         {/* Step Indicator Overlay */}
                         {activeTab === 'record' && !isRecording && (
                             <div className="absolute top-6 left-0 right-0 flex justify-center z-10 pointer-events-none">
@@ -605,7 +540,7 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
                                     ) : (
                                         // Photo Capture Controls
                                         <button
-                                            onClick={() => capturePhoto()}
+                                            onClick={() => capturePhotoForIdentify()}
                                             disabled={loading}
                                             className="w-20 h-20 bg-white rounded-full flex items-center justify-center border-4 border-gray-300 shadow-lg active:scale-95 transition-transform"
                                         >
