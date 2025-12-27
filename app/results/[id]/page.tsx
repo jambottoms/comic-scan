@@ -5,6 +5,8 @@ import { useParams, useRouter } from 'next/navigation';
 import { getVideoById } from '@/lib/history';
 import ResultSheet from '@/components/ResultSheet';
 
+export const dynamic = 'force-dynamic';  // Prevent caching of server actions
+
 export default function ResultPage() {
   const params = useParams();
   const router = useRouter();

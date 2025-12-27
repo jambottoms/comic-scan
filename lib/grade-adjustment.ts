@@ -65,16 +65,16 @@ export function adjustGradeWithCVAnalysis(
   const isFine = numericGrade >= 6.5;      // 6.5-7.9
   const isVeryGood = numericGrade >= 4.5;  // 4.5-6.4
   
-  // Damage categories
-  const isMinimalDamage = damageScore < 15;
-  const isMinorDamage = damageScore >= 15 && damageScore < 30;
-  const isModerateDamage = damageScore >= 30 && damageScore < 50;
-  const isSignificantDamage = damageScore >= 50 && damageScore < 70;
-  const isSevereDamage = damageScore >= 70;
+  // Damage categories - MORE STRICT (lower thresholds = more aggressive downgrade)
+  const isMinimalDamage = damageScore < 10;      // Was 15
+  const isMinorDamage = damageScore >= 10 && damageScore < 20;  // Was 15-30
+  const isModerateDamage = damageScore >= 20 && damageScore < 35;  // Was 30-50
+  const isSignificantDamage = damageScore >= 35 && damageScore < 55;  // Was 50-70
+  const isSevereDamage = damageScore >= 55;  // Was 70
   
-  // Critical region damage flags
-  const hasCriticalDamage = maxCriticalDamage >= 50;
-  const hasModerateCornerDamage = maxCriticalDamage >= 35;
+  // Critical region damage flags - MORE STRICT
+  const hasCriticalDamage = maxCriticalDamage >= 35;  // Was 50
+  const hasModerateCornerDamage = maxCriticalDamage >= 25;  // Was 35
   
   let adjustedNumeric = numericGrade;
   let adjustment: string | null = null;
@@ -84,49 +84,57 @@ export function adjustGradeWithCVAnalysis(
   // ADJUSTMENT RULES
   // =========================================
   
-  // Rule 1: Gem Mint (9.8-10.0) - Very strict
+  // Rule 1: Gem Mint (9.8-10.0) - EXTREMELY strict
   if (isGemMint) {
-    if (damageScore > 10 || maxCriticalDamage > 15) {
-      adjustedNumeric = Math.max(numericGrade - 1.5, 8.5);
+    if (damageScore > 5 || maxCriticalDamage > 10) {  // Was 10/15
+      adjustedNumeric = Math.max(numericGrade - 2.0, 7.5);  // Was -1.5
       adjustment = `Downgraded from Gem Mint: CV detected damage (overall: ${damageScore.toFixed(0)}, critical regions: ${maxCriticalDamage.toFixed(0)})`;
       confidence = 'high';
-    } else if (damageScore > 5) {
-      adjustedNumeric = Math.max(numericGrade - 0.5, 9.2);
+    } else if (damageScore > 2) {  // Was 5
+      adjustedNumeric = Math.max(numericGrade - 1.0, 8.5);  // Was -0.5
       adjustment = `Minor adjustment: subtle defects detected (score: ${damageScore.toFixed(0)})`;
       confidence = 'medium';
     }
   }
   
-  // Rule 2: Mint (9.0-9.7) - Strict
+  // Rule 2: Mint (9.0-9.7) - VERY strict
   else if (isMint) {
     if (isSevereDamage || hasCriticalDamage) {
-      adjustedNumeric = Math.max(numericGrade - 2.0, 6.5);
+      adjustedNumeric = Math.max(numericGrade - 3.0, 5.0);  // Was -2.0
       adjustment = `Significant downgrade: CV detected major damage (score: ${damageScore.toFixed(0)}, critical damage: ${maxCriticalDamage.toFixed(0)})`;
       confidence = 'high';
     } else if (isSignificantDamage || hasModerateCornerDamage) {
-      adjustedNumeric = Math.max(numericGrade - 1.0, 7.5);
+      adjustedNumeric = Math.max(numericGrade - 2.0, 6.0);  // Was -1.0
       adjustment = `Downgraded: noticeable damage detected (score: ${damageScore.toFixed(0)})`;
       confidence = 'high';
     } else if (isModerateDamage) {
-      adjustedNumeric = Math.max(numericGrade - 0.5, 8.5);
+      adjustedNumeric = Math.max(numericGrade - 1.5, 7.0);  // Was -0.5
+      adjustment = `Moderate adjustment for detected wear (score: ${damageScore.toFixed(0)})`;
+      confidence = 'high';  // Was 'medium'
+    } else if (isMinorDamage) {
+      adjustedNumeric = Math.max(numericGrade - 0.5, 8.0);
       adjustment = `Minor adjustment for detected wear (score: ${damageScore.toFixed(0)})`;
       confidence = 'medium';
     }
   }
   
-  // Rule 3: Near Mint (8.0-8.9) - Moderate
+  // Rule 3: Near Mint (8.0-8.9) - Strict
   else if (isNearMint) {
     if (isSevereDamage) {
-      adjustedNumeric = Math.max(numericGrade - 1.5, 5.5);
+      adjustedNumeric = Math.max(numericGrade - 2.5, 4.5);  // Was -1.5
       adjustment = `Downgraded: severe damage detected (score: ${damageScore.toFixed(0)})`;
       confidence = 'high';
     } else if (isSignificantDamage) {
-      adjustedNumeric = Math.max(numericGrade - 1.0, 6.5);
+      adjustedNumeric = Math.max(numericGrade - 2.0, 5.5);  // Was -1.0
       adjustment = `Adjusted for significant damage (score: ${damageScore.toFixed(0)})`;
       confidence = 'high';
     } else if (isModerateDamage) {
+      adjustedNumeric = Math.max(numericGrade - 1.5, 6.5);  // Was -0.5
+      adjustment = `Moderate adjustment for moderate wear (score: ${damageScore.toFixed(0)})`;
+      confidence = 'high';  // Was 'medium'
+    } else if (isMinorDamage) {
       adjustedNumeric = Math.max(numericGrade - 0.5, 7.5);
-      adjustment = `Minor adjustment for moderate wear (score: ${damageScore.toFixed(0)})`;
+      adjustment = `Minor adjustment for detected wear (score: ${damageScore.toFixed(0)})`;
       confidence = 'medium';
     }
   }
@@ -159,7 +167,7 @@ export function adjustGradeWithCVAnalysis(
   // POSITIVE CONFIRMATION
   // =========================================
   // If AI assigned low grade and CV confirms damage, increase confidence
-  if (numericGrade < 8.0 && damageScore > 30) {
+  if (numericGrade < 7.0 && damageScore > 20) {  // Was 8.0 and 30
     confidence = 'high';
     if (!adjustment) {
       adjustment = `CV confirms condition (damage score: ${damageScore.toFixed(0)})`;
@@ -167,7 +175,7 @@ export function adjustGradeWithCVAnalysis(
   }
   
   // If AI assigned high grade and CV confirms minimal damage, increase confidence
-  if (numericGrade >= 9.0 && damageScore < 15 && maxCriticalDamage < 20) {
+  if (numericGrade >= 9.0 && damageScore < 5 && maxCriticalDamage < 10) {  // Was 15 and 20
     confidence = 'high';
     if (!adjustment) {
       adjustment = `CV confirms excellent condition (minimal defects detected)`;

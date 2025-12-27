@@ -465,15 +465,24 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
   const shouldShow = isOpen || isClosing; // Keep visible during close animation
 
   const getStepTitle = () => {
-    if (captureStep === 'front') return "Step 1: Capture Front Cover";
-    if (captureStep === 'back') return "Step 2: Capture Back Cover";
-    return "Step 3: Record Video";
+    if (captureStep === 'front') return "Step 1: Capture Front Cover (Optional)";
+    if (captureStep === 'back') return "Step 2: Capture Back Cover (Optional)";
+    return "Step 3: Record Video (Required)";
   };
 
   const getUploadTitle = () => {
-    if (captureStep === 'front') return "Step 1: Upload Front Cover";
-    if (captureStep === 'back') return "Step 2: Upload Back Cover";
-    return "Step 3: Upload Video";
+    if (captureStep === 'front') return "Step 1: Upload Front Cover (Optional)";
+    if (captureStep === 'back') return "Step 2: Upload Back Cover (Optional)";
+    return "Step 3: Upload Video (Required)";
+  };
+
+  const skipCurrentStep = () => {
+    if (captureStep === 'front') {
+      setCaptureStep('back');
+    } else if (captureStep === 'back') {
+      setCaptureStep('video');
+    }
+    // Video step cannot be skipped
   };
 
   return (
@@ -573,34 +582,47 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
                     {/* Controls Bar - Floating at bottom */}
                     <div className="absolute bottom-0 left-0 right-0 p-6 sm:p-8 bg-gradient-to-t from-black/90 via-black/60 to-transparent pt-12">
                         {activeTab === 'record' && (
-                             <div className="flex justify-center items-center w-full">
-                                {captureStep === 'video' ? (
-                                    // Video Recording Controls
-                                    !isRecording ? (
+                             <div className="flex flex-col items-center gap-4 w-full">
+                                <div className="flex justify-center items-center w-full">
+                                    {captureStep === 'video' ? (
+                                        // Video Recording Controls
+                                        !isRecording ? (
+                                            <button
+                                                onClick={startRecording}
+                                                disabled={loading}
+                                                className="w-20 h-20 bg-white rounded-full flex items-center justify-center border-4 border-gray-300 shadow-lg active:scale-95 transition-transform"
+                                            >
+                                                <div className="w-16 h-16 bg-red-600 rounded-full" />
+                                            </button>
+                                        ) : (
+                                            <button
+                                                onClick={stopRecording}
+                                                className="w-20 h-20 bg-white rounded-full flex items-center justify-center border-4 border-gray-300 shadow-lg active:scale-95 transition-transform"
+                                            >
+                                                <div className="w-8 h-8 bg-red-600 rounded-sm" />
+                                            </button>
+                                        )
+                                    ) : (
+                                        // Photo Capture Controls
                                         <button
-                                            onClick={startRecording}
+                                            onClick={() => capturePhoto()}
                                             disabled={loading}
                                             className="w-20 h-20 bg-white rounded-full flex items-center justify-center border-4 border-gray-300 shadow-lg active:scale-95 transition-transform"
                                         >
-                                            <div className="w-16 h-16 bg-red-600 rounded-full" />
+                                            <div className="w-16 h-16 bg-white rounded-full border-2 border-gray-400" />
+                                            <Camera className="absolute text-black w-8 h-8" />
                                         </button>
-                                    ) : (
-                                        <button
-                                            onClick={stopRecording}
-                                            className="w-20 h-20 bg-white rounded-full flex items-center justify-center border-4 border-gray-300 shadow-lg active:scale-95 transition-transform"
-                                        >
-                                            <div className="w-8 h-8 bg-red-600 rounded-sm" />
-                                        </button>
-                                    )
-                                ) : (
-                                    // Photo Capture Controls
+                                    )}
+                                </div>
+                                
+                                {/* Skip Button - Only show for photo steps */}
+                                {captureStep !== 'video' && !isRecording && (
                                     <button
-                                        onClick={() => capturePhoto()}
+                                        onClick={skipCurrentStep}
                                         disabled={loading}
-                                        className="w-20 h-20 bg-white rounded-full flex items-center justify-center border-4 border-gray-300 shadow-lg active:scale-95 transition-transform"
+                                        className="px-6 py-2.5 bg-gray-700/80 hover:bg-gray-600/80 text-white rounded-full text-sm font-medium transition-colors shadow-lg backdrop-blur-sm"
                                     >
-                                        <div className="w-16 h-16 bg-white rounded-full border-2 border-gray-400" />
-                                        <Camera className="absolute text-black w-8 h-8" />
+                                        Skip Photo →
                                     </button>
                                 )}
                             </div>
@@ -635,24 +657,37 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
                         <h3 className="text-2xl font-bold text-white">{getUploadTitle()}</h3>
                         <p className="text-gray-400 max-w-xs mx-auto text-base leading-relaxed">
                             {captureStep === 'video' 
-                                ? "Select a video file showing all angles of the item." 
-                                : `Select a clear photo of the ${captureStep} cover.`}
+                                ? "Select a video file showing all angles of the item. This is required for grading." 
+                                : `Select a clear photo of the ${captureStep} cover, or skip to continue.`}
                         </p>
                     </div>
                     
-                    <label className="w-full max-w-sm mt-4">
-                        <input 
-                            type="file" 
-                            accept={captureStep === 'video' ? "video/*" : "image/*"}
-                            className="hidden" 
-                            onChange={handleFileUpload}
-                            disabled={loading} 
-                        />
-                        <div className="w-full py-4 bg-blue-600 hover:bg-blue-500 text-white text-lg font-bold rounded-2xl flex items-center justify-center gap-3 cursor-pointer transition-all active:scale-[0.98] shadow-lg shadow-blue-900/20">
-                            <Upload size={24} />
-                            Select {captureStep === 'video' ? 'Video' : 'Photo'}
-                        </div>
-                    </label>
+                    <div className="w-full max-w-sm space-y-3 mt-4">
+                        <label className="w-full block">
+                            <input 
+                                type="file" 
+                                accept={captureStep === 'video' ? "video/*" : "image/*"}
+                                className="hidden" 
+                                onChange={handleFileUpload}
+                                disabled={loading} 
+                            />
+                            <div className="w-full py-4 bg-blue-600 hover:bg-blue-500 text-white text-lg font-bold rounded-2xl flex items-center justify-center gap-3 cursor-pointer transition-all active:scale-[0.98] shadow-lg shadow-blue-900/20">
+                                <Upload size={24} />
+                                Select {captureStep === 'video' ? 'Video' : 'Photo'}
+                            </div>
+                        </label>
+                        
+                        {/* Skip Button - Only show for photo steps */}
+                        {captureStep !== 'video' && (
+                            <button
+                                onClick={skipCurrentStep}
+                                disabled={loading}
+                                className="w-full py-3 bg-gray-700 hover:bg-gray-600 text-white text-base font-medium rounded-2xl transition-all active:scale-[0.98] shadow-lg"
+                            >
+                                Skip Photo →
+                            </button>
+                        )}
+                    </div>
                     
                     {/* Progress Dots */}
                     <div className="flex gap-2 mt-4">

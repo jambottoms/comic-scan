@@ -126,12 +126,6 @@ def analyze_frame_chunk(
         return candidates
 
 
-@app.function(
-    image=cv_image,
-    timeout=300,  # 5 minute timeout
-    secrets=[modal.Secret.from_name("supabase-secrets")],
-)
-def analyze_video(video_url: str, scan_id: str, item_type: str = "card") -> dict:
     """
     PARALLEL VERSION: Main entry point with parallel frame processing.
     
@@ -556,16 +550,17 @@ def run_glint_analysis(golden_frames: list, output_dir: str) -> dict:
     # REGION-BASED ANALYSIS (Proper Comic Geometry)
     # =========================================
     # Now that we have a FLAT, WARPED comic, these regions are accurate!
-    # These percentages now correspond to actual corners and spine
+    # LARGER regions for better visibility in UI
     print(f"   📍 Extracting regions from warped comic...")
     
+    # INCREASED region sizes for better visibility
     regions = {
-        "corner_tl": (0, 0, int(w * 0.12), int(h * 0.12)),           # Top-left corner (actual corner!)
-        "corner_tr": (int(w * 0.88), 0, w, int(h * 0.12)),           # Top-right corner
-        "corner_bl": (0, int(h * 0.88), int(w * 0.12), h),           # Bottom-left corner
-        "corner_br": (int(w * 0.88), int(h * 0.88), w, h),           # Bottom-right corner
-        "spine": (0, int(h * 0.12), int(w * 0.08), int(h * 0.88)),   # Left spine (actual spine!)
-        "surface": (int(w * 0.12), int(h * 0.12), int(w * 0.88), int(h * 0.88)),  # Cover surface
+        "corner_tl": (0, 0, int(w * 0.18), int(h * 0.18)),           # Was 0.12 - now 18% for better visibility
+        "corner_tr": (int(w * 0.82), 0, w, int(h * 0.18)),           # Was 0.88/0.12
+        "corner_bl": (0, int(h * 0.82), int(w * 0.18), h),           # Was 0.88/0.12
+        "corner_br": (int(w * 0.82), int(h * 0.82), w, h),           # Was 0.88
+        "spine": (0, int(h * 0.15), int(w * 0.12), int(h * 0.85)),   # Was 0.08 - now 12% wider, taller for visibility
+        "surface": (int(w * 0.15), int(h * 0.15), int(w * 0.85), int(h * 0.85)),  # Was 0.12/0.88
     }
     
     gray = cv2.cvtColor(reference, cv2.COLOR_BGR2GRAY)
@@ -582,9 +577,19 @@ def run_glint_analysis(golden_frames: list, output_dir: str) -> dict:
         crop_defect = defect_mask[y1:y2, x1:x2]
         crop_score_map = defect_score_map[y1:y2, x1:x2]
         
+        # ENHANCEMENT: Upscale small crops for better visibility
+        # If crop is very small, resize to minimum 300px on shortest side
+        min_dimension = min(crop.shape[0], crop.shape[1])
+        if min_dimension < 250:  # Upscale tiny regions
+            scale_factor = 300 / min_dimension
+            new_width = int(crop.shape[1] * scale_factor)
+            new_height = int(crop.shape[0] * scale_factor)
+            crop = cv2.resize(crop, (new_width, new_height), interpolation=cv2.INTER_LANCZOS4)
+            crop_defect = cv2.resize(crop_defect, (new_width, new_height), interpolation=cv2.INTER_NEAREST)
+        
         # Save crop
         crop_path = output_path / f"crop_{name}.png"
-        cv2.imwrite(str(crop_path), crop)
+        cv2.imwrite(str(crop_path), crop, [cv2.IMWRITE_PNG_COMPRESSION, 6])  # Lower compression for quality
         region_paths[name] = str(crop_path)
         
         # Calculate region-specific metrics
@@ -620,10 +625,27 @@ def run_glint_analysis(golden_frames: list, output_dir: str) -> dict:
         # Create overlay visualization for this region
         overlay = crop.copy()
         red_overlay = np.zeros_like(crop)
-        red_overlay[:, :, 2] = crop_defect  # Red channel
+        
+        # Resize defect mask if we upscaled the crop
+        if crop_defect.shape != crop.shape[:2]:
+            crop_defect_display = cv2.resize(crop_defect, (crop.shape[1], crop.shape[0]), interpolation=cv2.INTER_NEAREST)
+        else:
+            crop_defect_display = crop_defect
+        
+        red_overlay[:, :, 2] = crop_defect_display  # Red channel
         overlay = cv2.addWeighted(overlay, 0.7, red_overlay, 0.3, 0)
+        
+        # Add border and label to overlay for easy identification
+        border_color = (0, 255, 255) if 'spine' in name else (255, 255, 0)
+        cv2.rectangle(overlay, (5, 5), (overlay.shape[1]-5, overlay.shape[0]-5), border_color, 3)
+        
+        # Add text label
+        label = name.replace('_', ' ').upper()
+        cv2.putText(overlay, label, (10, 30), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, border_color, 2)
+        
         overlay_path = output_path / f"overlay_{name}.png"
-        cv2.imwrite(str(overlay_path), overlay)
+        cv2.imwrite(str(overlay_path), overlay, [cv2.IMWRITE_PNG_COMPRESSION, 6])
     
     # =========================================
     # 6. OVERALL DAMAGE SCORE
