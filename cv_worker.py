@@ -353,10 +353,20 @@ def upload_results(supabase, scan_id: str, output_dir: Path, golden_frames: list
     return result
 
 
+# Pydantic model for request validation
+from pydantic import BaseModel
+from typing import Optional
+
+class AnalysisRequest(BaseModel):
+    videoUrl: str
+    scanId: str
+    itemType: Optional[str] = "card"
+
+
 # Web endpoint for triggering analysis
 @app.function(image=cv_image, secrets=[modal.Secret.from_name("supabase-secrets")])
-@modal.web_endpoint(method="POST")
-def trigger_analysis(request: dict) -> dict:
+@modal.fastapi_endpoint(method="POST")
+async def trigger_analysis(request: AnalysisRequest) -> dict:
     """
     HTTP endpoint to trigger CV analysis.
     
@@ -367,17 +377,16 @@ def trigger_analysis(request: dict) -> dict:
         "itemType": "card"
     }
     """
-    video_url = request.get("videoUrl")
-    scan_id = request.get("scanId")
-    item_type = request.get("itemType", "card")
-    
-    if not video_url or not scan_id:
-        return {"error": "Missing videoUrl or scanId"}
-    
-    # Run the analysis
-    result = analyze_video.remote(video_url, scan_id, item_type)
-    
-    return result
+    try:
+        print(f"[Modal] Received request: videoUrl={request.videoUrl}, scanId={request.scanId}")
+        
+        # Run the analysis
+        result = analyze_video.remote(request.videoUrl, request.scanId, request.itemType)
+        
+        return result
+    except Exception as e:
+        print(f"[Modal] Error: {e}")
+        return {"error": str(e), "type": type(e).__name__}
 
 
 # CLI entry point for local testing
