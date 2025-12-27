@@ -70,7 +70,8 @@ export function useCamera(): UseCameraReturn {
         // iOS Safari fix: Always re-attach to video element
         if (videoRef.current) {
           videoRef.current.srcObject = streamRef.current;
-          await videoRef.current.play();
+          // play() can fail on iOS but video still works - ignore error
+          videoRef.current.play().catch(() => {});
         }
         setIsStreaming(true);
         return;
@@ -100,7 +101,8 @@ export function useCamera(): UseCameraReturn {
       // iOS Safari fix: Immediately attach to video element
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        await videoRef.current.play();
+        // play() can fail on iOS but video still works - ignore error
+        videoRef.current.play().catch(() => {});
         console.log('🎥 Video playing');
       }
       
