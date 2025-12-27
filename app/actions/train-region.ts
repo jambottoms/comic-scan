@@ -53,13 +53,6 @@ export async function trainRegion(imageUrl: string, label: string) {
 
     if (!response.ok) {
       const errorText = await response.text();
-      
-      // Check if it's a duplicate sample error - treat as success
-      if (errorText.includes('already exists') || errorText.includes('existingSample')) {
-        console.log('[TrainRegion] Sample already exists in training data - skipping');
-        return { success: true, skipped: true };
-      }
-      
       throw new Error(`Nyckel Error: ${errorText}`);
     }
 

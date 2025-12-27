@@ -65,6 +65,11 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
   // Use viewport height hook to handle mobile browser chrome
   const { viewportHeight } = useViewportHeight();
   
+  // Debug logging
+  useEffect(() => {
+    console.log('GradeBookModal state:', { isOpen, activeTab, loading, showUploadModal, isStreaming, viewportHeight });
+  }, [isOpen, activeTab, loading, showUploadModal, isStreaming, viewportHeight]);
+  
   // Recording State
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
