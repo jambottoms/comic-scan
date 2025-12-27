@@ -1,12 +1,16 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { X, Upload, Video, Camera, Search, ScanLine, ChevronDown } from 'lucide-react';
+import { X, Upload, Video, Camera, Search, ScanLine, ChevronDown, Loader2, Check } from 'lucide-react';
 import { uploadToSupabaseWithProgress } from '@/lib/supabase/upload-with-progress';
+import { createClient } from '@/lib/supabase/client';
 import { analyzeComicFromUrl } from '@/app/actions/analyze-from-url';
 import { addToHistory, generateThumbnail, updateHistoryEntry, getVideoById } from '@/lib/history';
 import { useCamera } from '@/lib/hooks/useCamera';
+import Cropper, { Area } from 'react-easy-crop';
+import { trainDefect } from '@/app/actions/train-defect';
+import { trainRegion } from '@/app/actions/train-region';
 // Note: CV analysis is now triggered manually via "Deep Scan" button in StreamingResultCard
 // import { startBackgroundCVAnalysis } from '@/lib/cv-analysis';
 import UploadProgressModal from '@/components/UploadProgressModal';
@@ -16,6 +20,29 @@ import {
   updateWithAIResult, 
   updateWithError 
 } from '@/lib/streaming-analysis';
+
+const DEFECT_TYPES = [
+  "Spine Tick",
+  "Color Break",
+  "Corner Crease", 
+  "Soft Corner",
+  "Foxing/Mold",
+  "Tear/Rip",
+  "Missing Piece",
+  "Stain",
+  "Writing",
+  "Rusty Staple"
+];
+
+const REGION_TYPES = [
+  "Spine",
+  "Top Staple",
+  "Bottom Staple",
+  "Top Left Corner",
+  "Top Right Corner",
+  "Bottom Left Corner",
+  "Bottom Right Corner"
+];
 
 interface GradeBookModalProps {
   isOpen: boolean;
@@ -55,6 +82,15 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
     video: Blob | File | null;
   }>({ front: null, back: null, video: null });
 
+  // Training State
+  const [trainingStep, setTrainingStep] = useState<'capture' | 'crop' | 'tag'>('capture');
+  const [trainingImageSrc, setTrainingImageSrc] = useState<string | null>(null);
+  const [trainingCrop, setTrainingCrop] = useState({ x: 0, y: 0 });
+  const [trainingZoom, setTrainingZoom] = useState(1);
+  const [trainingCroppedAreaPixels, setTrainingCroppedAreaPixels] = useState<Area | null>(null);
+  const [selectedLabels, setSelectedLabels] = useState<string[]>([]);
+  const [isSubmittingTraining, setIsSubmittingTraining] = useState(false);
+
   // Reset/Sync tab when opening
   useEffect(() => {
     if (isOpen) {
@@ -65,6 +101,18 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
       setLoading(false);
     }
   }, [isOpen, initialTab]);
+
+  // Reset training state when switching away from train tab
+  useEffect(() => {
+    if (activeTab !== 'train') {
+      setTrainingStep('capture');
+      setTrainingImageSrc(null);
+      setSelectedLabels([]);
+      setTrainingCroppedAreaPixels(null);
+      setTrainingZoom(1);
+      setTrainingCrop({ x: 0, y: 0 });
+    }
+  }, [activeTab]);
 
   // Initialize camera when switching to record OR train tab
   // Defer camera start slightly to let the sheet animation complete first
@@ -149,6 +197,140 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
     } else if (captureStep === 'back') {
       setCapturedFiles(prev => ({ ...prev, back: blob }));
       setCaptureStep('video');
+    }
+  };
+
+  // Training Capture Handler
+  const handleTrainingCapture = async () => {
+    const blob = await capturePhoto();
+    if (blob) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        setTrainingImageSrc(reader.result as string);
+        setTrainingStep('crop');
+      };
+      reader.readAsDataURL(blob);
+    }
+  };
+
+  // Training Crop Complete
+  const onTrainingCropComplete = useCallback((croppedArea: Area, croppedAreaPixels: Area) => {
+    setTrainingCroppedAreaPixels(croppedAreaPixels);
+  }, []);
+
+  // Get Cropped Training Image
+  const getCroppedTrainingImg = useCallback(async () => {
+    if (!trainingImageSrc || !trainingCroppedAreaPixels) return null;
+
+    const image = new Image();
+    image.src = trainingImageSrc;
+    await new Promise((resolve) => (image.onload = resolve));
+
+    const canvas = document.createElement('canvas');
+    canvas.width = trainingCroppedAreaPixels.width;
+    canvas.height = trainingCroppedAreaPixels.height;
+    const ctx = canvas.getContext('2d');
+
+    if (!ctx) return null;
+
+    ctx.drawImage(
+      image,
+      trainingCroppedAreaPixels.x,
+      trainingCroppedAreaPixels.y,
+      trainingCroppedAreaPixels.width,
+      trainingCroppedAreaPixels.height,
+      0,
+      0,
+      trainingCroppedAreaPixels.width,
+      trainingCroppedAreaPixels.height
+    );
+
+    return new Promise<Blob>((resolve) => {
+      canvas.toBlob((blob) => {
+        resolve(blob!);
+      }, 'image/jpeg', 0.95);
+    });
+  }, [trainingImageSrc, trainingCroppedAreaPixels]);
+
+  // Toggle Training Label
+  const toggleTrainingLabel = (label: string) => {
+    setSelectedLabels(prev => {
+      if (prev.includes(label)) {
+        return prev.filter(l => l !== label);
+      } else {
+        return [...prev, label];
+      }
+    });
+  };
+
+  // Submit Training
+  const handleTrainingSubmit = async () => {
+    if (selectedLabels.length === 0) return;
+    setIsSubmittingTraining(true);
+
+    try {
+      const blob = await getCroppedTrainingImg();
+      if (!blob) throw new Error("Failed to crop");
+
+      // Upload to Supabase 'training-data' bucket
+      const supabase = createClient();
+      if (!supabase) throw new Error("Failed to create Supabase client");
+      
+      // Determine prefix based on selected labels
+      const hasDefect = selectedLabels.some(l => DEFECT_TYPES.includes(l));
+      const hasRegion = selectedLabels.some(l => REGION_TYPES.includes(l));
+      const prefix = hasDefect && hasRegion ? 'mixed' : hasDefect ? 'defect' : 'region';
+      
+      const filename = `${prefix}-${Date.now()}.jpg`;
+      const { error: uploadError } = await supabase.storage
+        .from('training-data')
+        .upload(filename, blob);
+
+      if (uploadError) throw uploadError;
+      
+      const { data: { publicUrl } } = supabase.storage
+        .from('training-data')
+        .getPublicUrl(filename);
+
+      // Smart Routing: Send to appropriate Nyckel functions in parallel
+      const promises: Promise<{ success: boolean; error?: string }>[] = [];
+
+      // 1. Process Defect Labels
+      const defectLabels = selectedLabels.filter(l => DEFECT_TYPES.includes(l));
+      if (defectLabels.length > 0) {
+        defectLabels.forEach(label => {
+          promises.push(trainDefect(publicUrl, label));
+        });
+      }
+
+      // 2. Process Region Labels
+      const regionLabels = selectedLabels.filter(l => REGION_TYPES.includes(l));
+      if (regionLabels.length > 0) {
+        regionLabels.forEach(label => {
+          promises.push(trainRegion(publicUrl, label));
+        });
+      }
+
+      const results = await Promise.all(promises);
+      
+      // Check for failures
+      const failures = results.filter(r => !r.success);
+      if (failures.length > 0) {
+        throw new Error(`Failed to train ${failures.length} labels: ${failures[0].error}`);
+      }
+      
+      // Reset training state and close modal
+      setTrainingStep('capture');
+      setTrainingImageSrc(null);
+      setSelectedLabels([]);
+      setTrainingCroppedAreaPixels(null);
+      alert(`Successfully added ${selectedLabels.length} training sample(s)!`);
+      handleClose();
+    } catch (e) {
+      console.error(e);
+      alert(`Failed to save sample: ${(e as Error).message}`);
+    } finally {
+      setIsSubmittingTraining(false);
     }
   };
 
@@ -501,13 +683,75 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
                             </div>
                         )}
 
-                        {/* Train AI Overlay Grid (Optional visual aid) */}
-                        {activeTab === 'train' && !loading && (
+                        {/* Train AI Overlay Grid (Only during capture step) */}
+                        {activeTab === 'train' && trainingStep === 'capture' && !loading && (
                             <div className="absolute inset-0 pointer-events-none">
                                 <div className="absolute top-[15%] left-0 right-0 flex flex-col items-center justify-center gap-4">
                                     <div className="w-64 h-80 border-2 border-purple-400 rounded-lg shadow-[0_0_15px_rgba(168,85,247,0.5)] bg-transparent" />
                                     <div className="text-center text-white/90 text-sm font-medium shadow-black drop-shadow-md bg-black/40 px-4 py-2 rounded-full backdrop-blur-sm">
                                         Position item in frame
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Train AI - Crop Step */}
+                        {activeTab === 'train' && trainingStep === 'crop' && trainingImageSrc && (
+                            <div className="absolute inset-0 bg-black">
+                                <Cropper
+                                    image={trainingImageSrc}
+                                    crop={trainingCrop}
+                                    zoom={trainingZoom}
+                                    aspect={1}
+                                    onCropChange={setTrainingCrop}
+                                    onZoomChange={setTrainingZoom}
+                                    onCropComplete={onTrainingCropComplete}
+                                />
+                            </div>
+                        )}
+
+                        {/* Train AI - Tag Step */}
+                        {activeTab === 'train' && trainingStep === 'tag' && (
+                            <div className="absolute inset-0 bg-black overflow-y-auto">
+                                <div className="p-6 pb-32 space-y-6">
+                                    {/* Defect Section */}
+                                    <div>
+                                        <h3 className="text-purple-400 text-sm font-bold uppercase tracking-wider mb-3 px-1">Defects</h3>
+                                        <div className="grid grid-cols-2 gap-2">
+                                            {DEFECT_TYPES.map(label => (
+                                                <button
+                                                    key={label}
+                                                    onClick={() => toggleTrainingLabel(label)}
+                                                    className={`p-3 rounded-xl text-left font-medium text-sm transition-all ${
+                                                        selectedLabels.includes(label)
+                                                            ? 'bg-purple-600 text-white shadow-lg ring-2 ring-purple-400' 
+                                                            : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+                                                    }`}
+                                                >
+                                                    {label}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+
+                                    {/* Region Section */}
+                                    <div>
+                                        <h3 className="text-emerald-400 text-sm font-bold uppercase tracking-wider mb-3 px-1">Regions</h3>
+                                        <div className="grid grid-cols-2 gap-2">
+                                            {REGION_TYPES.map(label => (
+                                                <button
+                                                    key={label}
+                                                    onClick={() => toggleTrainingLabel(label)}
+                                                    className={`p-3 rounded-xl text-left font-medium text-sm transition-all ${
+                                                        selectedLabels.includes(label)
+                                                            ? 'bg-emerald-600 text-white shadow-lg ring-2 ring-emerald-400' 
+                                                            : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+                                                    }`}
+                                                >
+                                                    {label}
+                                                </button>
+                                            ))}
+                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -563,16 +807,66 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
                             </div>
                         )}
 
+                        {/* Train AI Controls */}
                         {activeTab === 'train' && (
-                            <div className="flex justify-center items-center w-full">
-                                <button
-                                    onClick={() => alert("Train AI capture coming soon!")}
-                                    className="w-20 h-20 bg-white rounded-full flex items-center justify-center border-4 border-gray-300 shadow-lg active:scale-95 transition-transform"
-                                >
-                                    <div className="w-16 h-16 bg-purple-600 rounded-full flex items-center justify-center">
-                                        <Search className="text-white" size={32} />
+                            <div className="flex flex-col items-center gap-4 w-full">
+                                {trainingStep === 'capture' && (
+                                    <div className="flex justify-center items-center w-full">
+                                        <button
+                                            onClick={handleTrainingCapture}
+                                            disabled={loading}
+                                            className="w-20 h-20 bg-white rounded-full flex items-center justify-center border-4 border-gray-300 shadow-lg active:scale-95 transition-transform"
+                                        >
+                                            <div className="w-16 h-16 bg-white rounded-full border-2 border-gray-400" />
+                                            <Camera className="absolute text-black w-8 h-8" />
+                                        </button>
                                     </div>
-                                </button>
+                                )}
+
+                                {trainingStep === 'crop' && (
+                                    <div className="w-full flex flex-col gap-4">
+                                        {/* Zoom Slider */}
+                                        <div className="flex items-center gap-3 px-4">
+                                            <span className="text-white text-sm">Zoom:</span>
+                                            <input
+                                                type="range"
+                                                min={1}
+                                                max={3}
+                                                step={0.1}
+                                                value={trainingZoom}
+                                                onChange={(e) => setTrainingZoom(Number(e.target.value))}
+                                                className="flex-1"
+                                            />
+                                        </div>
+                                        {/* Next Button */}
+                                        <button
+                                            onClick={() => setTrainingStep('tag')}
+                                            className="w-full bg-white text-black font-bold py-4 rounded-full flex items-center justify-center gap-2"
+                                        >
+                                            Next <Check size={20} />
+                                        </button>
+                                    </div>
+                                )}
+
+                                {trainingStep === 'tag' && (
+                                    <button
+                                        onClick={handleTrainingSubmit}
+                                        disabled={selectedLabels.length === 0 || isSubmittingTraining}
+                                        className={`w-full disabled:bg-gray-700 disabled:opacity-50 text-white font-bold py-4 rounded-full flex items-center justify-center gap-2 transition-colors ${
+                                            selectedLabels.some(l => DEFECT_TYPES.includes(l)) && selectedLabels.some(l => REGION_TYPES.includes(l))
+                                                ? 'bg-gradient-to-r from-purple-600 to-emerald-600'
+                                                : selectedLabels.some(l => REGION_TYPES.includes(l))
+                                                    ? 'bg-emerald-600'
+                                                    : 'bg-purple-600'
+                                        }`}
+                                    >
+                                        {isSubmittingTraining ? (
+                                            <Loader2 className="animate-spin" />
+                                        ) : (
+                                            `Submit ${selectedLabels.length > 0 ? `(${selectedLabels.length})` : ''}`
+                                        )}
+                                    </button>
+                                )}
                             </div>
                         )}
                     </div>

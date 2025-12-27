@@ -8,7 +8,6 @@ import { getVideoHistory } from '@/lib/history';
 import { getSavedScans, SavedScan } from '@/lib/saved-scans';
 import FabMenu from '@/components/FabMenu';
 import GradeBookModal from '@/components/GradeBookModal';
-import TrainingModal from '@/components/TrainingModal';
 
 interface VersionInfo {
   version: string;
@@ -26,7 +25,6 @@ export default function Dashboard() {
   
   // Modal State
   const [isGradeBookOpen, setIsGradeBookOpen] = useState(false);
-  const [isTrainingOpen, setIsTrainingOpen] = useState(false);
   const [initialTab, setInitialTab] = useState<'record' | 'upload' | 'train'>('record');
 
   // Load history and saved scans only on client side after mount to prevent hydration mismatch
@@ -76,7 +74,8 @@ export default function Dashboard() {
   };
 
   const handleTrain = () => {
-    setIsTrainingOpen(true);
+    setInitialTab('train');
+    setIsGradeBookOpen(true);
   };
 
   // Format date for display
@@ -255,7 +254,7 @@ export default function Dashboard() {
         onRecord={handleRecord}
         onUpload={handleUpload}
         onTrain={handleTrain}
-        isHidden={isGradeBookOpen || isTrainingOpen}
+        isHidden={isGradeBookOpen}
       />
 
       <GradeBookModal 
@@ -264,12 +263,6 @@ export default function Dashboard() {
         onSuccess={handleGradeSuccess}
         initialTab={initialTab}
       />
-
-      {isTrainingOpen && (
-        <TrainingModal 
-          onClose={() => setIsTrainingOpen(false)}
-        />
-      )}
     </main>
   );
 }
