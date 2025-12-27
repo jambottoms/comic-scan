@@ -290,7 +290,7 @@ def analyze_video(video_url: str, scan_id: str, item_type: str = "card") -> dict
         return result
 
 
-def detect_and_warp_comic(image: np.ndarray) -> tuple:
+def detect_and_warp_comic(image) -> tuple:
     """
     Detect comic corners and apply perspective warp to flatten image.
     

@@ -165,7 +165,7 @@ def analyze_frame_chunk_gpu(
         return candidates
 
 
-def detect_and_warp_comic(image: np.ndarray) -> tuple:
+def detect_and_warp_comic(image) -> tuple:
     """
     Detect comic corners and apply perspective warp to flatten image.
     
