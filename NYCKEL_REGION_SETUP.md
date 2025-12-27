@@ -8,7 +8,7 @@ This guide explains how to set up the Region Detection function in Nyckel, which
 
 The Region Detection model helps the CV system:
 - Identify where the spine is located
-- Find staple positions (typically 2-3 staples in the spine)
+- Find staple positions (top and bottom staples in the spine)
 - Detect all four corners accurately
 
 This improves the overall grading accuracy by ensuring defect detection focuses on the right areas.
@@ -25,16 +25,15 @@ This improves the overall grading accuracy by ensuring defect detection focuses 
 
 ### 2. Add Region Labels
 
-Add the following 8 labels to your function (use exact names):
+Add the following 7 labels to your function (use exact names):
 
 1. **Spine**
 2. **Top Staple**
-3. **Middle Staple**
-4. **Bottom Staple**
-5. **Top Left Corner**
-6. **Top Right Corner**
-7. **Bottom Left Corner**
-8. **Bottom Right Corner**
+3. **Bottom Staple**
+4. **Top Left Corner**
+5. **Top Right Corner**
+6. **Bottom Left Corner**
+7. **Bottom Right Corner**
 
 ### 3. Get Function ID
 
@@ -97,8 +96,8 @@ After adding the environment variable in Vercel:
 
 #### Staple Training
 - Focus on individual staples in the spine
-- Capture top, middle, and bottom staples separately
-- Comics typically have 2-3 staples
+- Capture top and bottom staples separately
+- Comics have 2 staples (top and bottom)
 - Include different lighting conditions
 - Include both rusty and clean staples
 - Train on staples that are visible and tight vs. loose
@@ -122,7 +121,7 @@ Training Workflow
 │
 └── Region Detection (new)
     ├── Purpose: Locate key areas
-    └── Labels: Spine, Corners (4), Staples (3)
+    └── Labels: Spine, Corners (4), Staples (2)
 ```
 
 Both functions use the same Nyckel credentials (`NYCKEL_CLIENT_ID` and `NYCKEL_CLIENT_SECRET`) but different Function IDs.
@@ -146,7 +145,6 @@ Both functions use the same Nyckel credentials (`NYCKEL_CLIENT_ID` and `NYCKEL_C
 1. Check your Nyckel function labels match exactly:
    - Spine
    - Top Staple
-   - Middle Staple
    - Bottom Staple
    - Top Left Corner
    - Top Right Corner
