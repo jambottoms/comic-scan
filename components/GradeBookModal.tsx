@@ -125,6 +125,8 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
   useEffect(() => {
     const shouldUseCamera = (activeTab === 'record' || activeTab === 'train');
     
+    console.log('📷 Camera effect:', { isOpen, activeTab, shouldUseCamera, loading, showUploadModal, trainingStep });
+    
     if (isOpen && shouldUseCamera && !loading && !showUploadModal) {
       startCamera();
     } else if (!shouldUseCamera) {
@@ -135,6 +137,7 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
     return () => {
       // Only cleanup when modal closes, not on every effect run
       if (!isOpen) {
+        console.log('📷 Modal closing, stopping camera');
         stopCamera();
       }
     };

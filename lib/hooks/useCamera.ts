@@ -54,43 +54,35 @@ export function useCamera(): UseCameraReturn {
   }, [isStreaming]);
 
   const startCamera = useCallback(async () => {
+    console.log('🎥 startCamera called');
     try {
       setError(null);
-      shouldBeStreamingRef.current = true; // Mark that camera should be active
+      shouldBeStreamingRef.current = true;
       
       // Check if we already have an active stream
       if (streamRef.current && streamRef.current.active) {
+        console.log('🎥 Stream already active, skipping');
         setIsStreaming(true);
         return;
       }
       
-      // Check permission state first to avoid unnecessary prompts
-      if ('permissions' in navigator) {
-        try {
-          const permissionStatus = await navigator.permissions.query({ name: 'camera' as PermissionName });
-          if (permissionStatus.state === 'denied') {
-            throw new Error('NotAllowedError');
-          }
-        } catch (permErr) {
-          // Permission API might not be supported, continue anyway
-          console.log('Permission query not supported, proceeding with camera request');
-        }
-      }
+      console.log('🎥 Requesting camera access...');
       
       // Request camera access
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
-          facingMode: 'environment', // Use back camera on mobile
+          facingMode: 'environment',
           width: { ideal: 1920 },
           height: { ideal: 1080 }
         }
       });
 
+      console.log('🎥 Camera access granted, stream active');
       streamRef.current = stream;
-      setIsStreaming(true); // Set immediately to trigger video element render
+      setIsStreaming(true);
       setHasPermission(true);
     } catch (err) {
-      console.error('Error accessing camera:', err);
+      console.error('🎥 Camera error:', err);
       
       if (err instanceof Error) {
         if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
@@ -112,11 +104,13 @@ export function useCamera(): UseCameraReturn {
   }, []);
 
   const stopCamera = useCallback(() => {
-    shouldBeStreamingRef.current = false; // Mark that camera should be inactive
+    console.log('🎥 stopCamera called');
+    shouldBeStreamingRef.current = false;
     
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => track.stop());
       streamRef.current = null;
+      console.log('🎥 Camera stream stopped');
     }
     
     if (videoRef.current) {
