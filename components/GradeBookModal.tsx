@@ -121,16 +121,21 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
     }
   }, [activeTab]);
 
-  // Initialize camera when switching to record OR train tab
+  // Initialize camera when switching to record OR train tab (capture step only)
   useEffect(() => {
     const shouldUseCamera = (activeTab === 'record' || activeTab === 'train');
+    const isInCaptureMode = activeTab === 'record' || (activeTab === 'train' && trainingStep === 'capture');
     
-    console.log('📷 Camera effect:', { isOpen, activeTab, shouldUseCamera, loading, showUploadModal, trainingStep });
+    console.log('📷 Camera effect:', { isOpen, activeTab, shouldUseCamera, isInCaptureMode, loading, showUploadModal, trainingStep });
     
-    if (isOpen && shouldUseCamera && !loading && !showUploadModal) {
+    if (isOpen && isInCaptureMode && !loading && !showUploadModal) {
       startCamera();
+    } else if (!isInCaptureMode && shouldUseCamera) {
+      // Stop camera when in crop/tag steps but still on train tab
+      console.log('📷 Stopping camera for crop/tag step');
+      stopCamera();
     } else if (!shouldUseCamera) {
-      // Only stop if we're NOT on a camera tab
+      // Stop when switching away from camera tabs entirely
       stopCamera();
     }
     
