@@ -21,12 +21,12 @@ interface GradeBookModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess: (historyId: string) => void;
-  initialTab?: 'record' | 'upload' | 'identify';
+  initialTab?: 'record' | 'upload' | 'train';
 }
 
 export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab = 'record' }: GradeBookModalProps) {
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<'record' | 'upload' | 'identify'>('record');
+  const [activeTab, setActiveTab] = useState<'record' | 'upload' | 'train'>('record');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isClosing, setIsClosing] = useState(false);
@@ -66,10 +66,10 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
     }
   }, [isOpen, initialTab]);
 
-  // Initialize camera when switching to record OR identify tab
+  // Initialize camera when switching to record OR train tab
   // Defer camera start slightly to let the sheet animation complete first
   useEffect(() => {
-    const shouldUseCamera = (activeTab === 'record' || activeTab === 'identify');
+    const shouldUseCamera = (activeTab === 'record' || activeTab === 'train');
     
     if (isOpen && shouldUseCamera && !loading && !showUploadModal) {
       // Small delay to let the sheet animation start first (snappier feel)
@@ -139,7 +139,7 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
     }
   };
 
-  const capturePhotoForIdentify = async () => {
+  const capturePhotoForTrain = async () => {
     const blob = await capturePhoto();
     if (!blob) return;
     
@@ -383,7 +383,7 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
   const tabs = [
     { id: 'record', label: 'Record', icon: Video },
     { id: 'upload', label: 'Upload', icon: Upload },
-    { id: 'identify', label: 'Identify', icon: ScanLine },
+    { id: 'train', label: 'Train AI', icon: ScanLine },
   ] as const;
 
   // Always render but control visibility - this makes animations instant
@@ -460,8 +460,8 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
         {/* Content Area - Full height relative */}
         <div className="flex-1 relative bg-black flex flex-col overflow-hidden">
             
-            {/* Record & Identify View (Camera) */}
-            {(activeTab === 'record' || activeTab === 'identify') && (
+            {/* Record & Train View (Camera) */}
+            {(activeTab === 'record' || activeTab === 'train') && (
                 <div className="absolute inset-0 flex flex-col">
                     {/* Camera Feed - Fills available space */}
                     <div className="flex-1 relative bg-black overflow-hidden">
@@ -501,8 +501,8 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
                             </div>
                         )}
 
-                        {/* Identify Overlay Grid (Optional visual aid) */}
-                        {activeTab === 'identify' && !loading && (
+                        {/* Train AI Overlay Grid (Optional visual aid) */}
+                        {activeTab === 'train' && !loading && (
                             <div className="absolute inset-0 pointer-events-none">
                                 <div className="absolute top-[15%] left-0 right-0 flex flex-col items-center justify-center gap-4">
                                     <div className="w-64 h-80 border-2 border-purple-400 rounded-lg shadow-[0_0_15px_rgba(168,85,247,0.5)] bg-transparent" />
@@ -540,7 +540,7 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
                                     ) : (
                                         // Photo Capture Controls
                                         <button
-                                            onClick={() => capturePhotoForIdentify()}
+                                            onClick={() => capturePhotoForTrain()}
                                             disabled={loading}
                                             className="w-20 h-20 bg-white rounded-full flex items-center justify-center border-4 border-gray-300 shadow-lg active:scale-95 transition-transform"
                                         >
@@ -563,10 +563,10 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
                             </div>
                         )}
 
-                        {activeTab === 'identify' && (
+                        {activeTab === 'train' && (
                             <div className="flex justify-center items-center w-full">
                                 <button
-                                    onClick={() => alert("Identify capture coming soon!")}
+                                    onClick={() => alert("Train AI capture coming soon!")}
                                     className="w-20 h-20 bg-white rounded-full flex items-center justify-center border-4 border-gray-300 shadow-lg active:scale-95 transition-transform"
                                 >
                                     <div className="w-16 h-16 bg-purple-600 rounded-full flex items-center justify-center">
