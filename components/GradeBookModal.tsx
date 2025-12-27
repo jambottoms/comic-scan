@@ -32,6 +32,7 @@ const DEFECT_TYPES = [
   "Missing Piece",
   "Stain",
   "Writing",
+  "Date Stamp",
   "Rusty Staple"
 ];
 
