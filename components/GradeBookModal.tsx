@@ -95,6 +95,9 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
   const [selectedLabel, setSelectedLabel] = useState<string>('');
   const [isSubmittingTraining, setIsSubmittingTraining] = useState(false);
 
+  // Determine if current tab uses camera
+  const isCameraTab = activeTab === 'record' || activeTab === 'train';
+
   // Reset/Sync tab when opening
   useEffect(() => {
     if (isOpen) {
@@ -568,13 +571,15 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
 
   return (
     <div 
-      className={`fixed inset-0 z-50 flex flex-col transition-all duration-150 ease-out ${
+      className={`fixed inset-0 z-50 flex flex-col transition-all duration-150 ease-out overflow-hidden ${
         shouldShow ? 'pointer-events-auto' : 'pointer-events-none'
       } ${isVisible ? 'bg-black/80' : 'bg-black/0'} backdrop-blur-sm`}
-      style={{ visibility: shouldShow ? 'visible' : 'hidden' }}
+      style={{ visibility: shouldShow ? 'visible' : 'hidden', touchAction: 'none' }}
     >
       <div 
-        className={`w-full bg-gray-900 border-t border-gray-800 rounded-t-3xl shadow-2xl overflow-hidden overscroll-behavior-none flex flex-col transition-transform duration-200 ease-out ${
+        className={`w-full bg-gray-900 border-t border-gray-800 rounded-t-3xl shadow-2xl overflow-hidden overscroll-behavior-none flex flex-col ${
+          isCameraTab ? '' : 'transition-transform duration-200 ease-out'
+        } ${
           isVisible ? 'translate-y-0' : 'translate-y-full'
         }`}
         style={{ height: `${viewportHeight}px` }}
@@ -613,7 +618,7 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
         </div>
 
         {/* Content Area - Full height relative */}
-        <div className="flex-1 relative bg-black flex flex-col overflow-hidden touch-action-none">
+        <div className="flex-1 relative bg-black flex flex-col overflow-hidden touch-action-none overscroll-behavior-none">
             
             {/* Record & Train View (Camera) */}
             {(activeTab === 'record' || activeTab === 'train') && (
@@ -658,7 +663,7 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
 
                         {/* Train AI Overlay Grid (Only during capture step) */}
                         {activeTab === 'train' && trainingStep === 'capture' && !loading && (
-                            <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
+                            <div className="absolute inset-0 pointer-events-none flex items-start justify-center pt-16">
                                 <div className="flex flex-col items-center gap-4">
                                     <div className="w-64 h-80 border-2 border-purple-400 rounded-lg shadow-[0_0_15px_rgba(168,85,247,0.5)] bg-transparent" />
                                     <div className="text-center text-white/90 text-sm font-medium shadow-black drop-shadow-md bg-black/40 px-4 py-2 rounded-full backdrop-blur-sm">
