@@ -95,11 +95,6 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
   const [selectedLabel, setSelectedLabel] = useState<string>('');
   const [isSubmittingTraining, setIsSubmittingTraining] = useState(false);
 
-  // Debug logging
-  useEffect(() => {
-    console.log('GradeBookModal state:', { isOpen, activeTab, loading, showUploadModal, isStreaming, viewportHeight });
-  }, [isOpen, activeTab, loading, showUploadModal, isStreaming, viewportHeight]);
-
   // Reset/Sync tab when opening
   useEffect(() => {
     if (isOpen) {
@@ -124,16 +119,11 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
   }, [activeTab]);
 
   // Initialize camera when switching to record OR train tab
-  // Defer camera start slightly to let the sheet animation complete first
   useEffect(() => {
     const shouldUseCamera = (activeTab === 'record' || activeTab === 'train');
     
     if (isOpen && shouldUseCamera && !loading && !showUploadModal) {
-      // Small delay to let the sheet animation start first (snappier feel)
-      const timer = setTimeout(() => {
-        startCamera();
-      }, 50);
-      return () => clearTimeout(timer);
+      startCamera();
     } else {
       stopCamera();
     }
@@ -578,20 +568,20 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
 
   return (
     <div 
-      className={`fixed inset-0 z-50 flex flex-col justify-end transition-all duration-150 ease-out ${
+      className={`fixed inset-0 z-50 flex flex-col transition-all duration-150 ease-out ${
         shouldShow ? 'pointer-events-auto' : 'pointer-events-none'
       } ${isVisible ? 'bg-black/80' : 'bg-black/0'} backdrop-blur-sm`}
       style={{ visibility: shouldShow ? 'visible' : 'hidden' }}
     >
       <div 
-        className={`w-full bg-gray-900 border-t border-gray-800 rounded-t-3xl shadow-2xl overflow-hidden flex flex-col transition-transform duration-200 ease-out ${
+        className={`w-full bg-gray-900 border-t border-gray-800 rounded-t-3xl shadow-2xl overflow-hidden overscroll-behavior-none flex flex-col transition-transform duration-200 ease-out ${
           isVisible ? 'translate-y-0' : 'translate-y-full'
         }`}
-        style={{ height: `${viewportHeight * 0.95}px` }}
+        style={{ height: `${viewportHeight}px` }}
       >
         
         {/* Header */}
-        <div className="p-4 flex items-center justify-between bg-gray-900 z-20 relative">
+        <div className="p-4 flex items-center justify-between bg-gray-900 z-20 relative" style={{ paddingTop: 'max(1rem, env(safe-area-inset-top))' }}>
             <h2 className="text-xl font-bold text-white pl-2">Grade Book</h2>
             <button onClick={handleClose} className="p-2 hover:bg-gray-800 rounded-full text-gray-400 hover:text-white transition-colors">
                 <ChevronDown size={28} />
@@ -623,7 +613,7 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
         </div>
 
         {/* Content Area - Full height relative */}
-        <div className="flex-1 relative bg-black flex flex-col overflow-hidden">
+        <div className="flex-1 relative bg-black flex flex-col overflow-hidden touch-action-none">
             
             {/* Record & Train View (Camera) */}
             {(activeTab === 'record' || activeTab === 'train') && (

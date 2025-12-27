@@ -54,11 +54,9 @@ export function useCamera(): UseCameraReturn {
   }, [isStreaming]);
 
   const startCamera = useCallback(async () => {
-    console.log('📷 startCamera() called');
     try {
       setError(null);
       shouldBeStreamingRef.current = true; // Mark that camera should be active
-      console.log('📷 Requesting camera access...');
       
       // Request camera access
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -69,13 +67,11 @@ export function useCamera(): UseCameraReturn {
         }
       });
 
-      console.log('📷 Camera access granted, stream obtained');
       streamRef.current = stream;
       setIsStreaming(true); // Set immediately to trigger video element render
       setHasPermission(true);
-      console.log('📷 Camera started successfully');
     } catch (err) {
-      console.error('📷 Error accessing camera:', err);
+      console.error('Error accessing camera:', err);
       
       if (err instanceof Error) {
         if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
@@ -97,13 +93,11 @@ export function useCamera(): UseCameraReturn {
   }, []);
 
   const stopCamera = useCallback(() => {
-    console.log('📷 stopCamera() called');
     shouldBeStreamingRef.current = false; // Mark that camera should be inactive
     
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => track.stop());
       streamRef.current = null;
-      console.log('📷 Camera stream stopped');
     }
     
     if (videoRef.current) {
@@ -163,14 +157,9 @@ export function useCamera(): UseCameraReturn {
   // Handle page visibility changes (when user switches tabs or apps)
   useEffect(() => {
     const handleVisibilityChange = () => {
-      if (document.hidden) {
-        // Page is hidden - camera will be stopped by the OS
-        console.log('Page hidden - camera will be paused by OS');
-      } else {
+      if (!document.hidden) {
         // Page is visible again - restart camera if it should be active
-        console.log('Page visible - checking if camera should restart');
         if (shouldBeStreamingRef.current && !isStreaming) {
-          console.log('Restarting camera after visibility change');
           startCamera();
         }
       }
