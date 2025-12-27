@@ -270,8 +270,9 @@ def analyze_video(video_url: str, scan_id: str, item_type: str = "card") -> dict
         print(f"   Video: {total_frames} frames, {fps:.1f} fps, {total_frames/fps:.1f}s")
         
         # Determine optimal number of parallel workers
-        min_frames_per_chunk = 15  # Reduced for more parallelism (was 30)
-        max_workers = 20
+        # Modal can handle 100+ concurrent containers easily
+        min_frames_per_chunk = 5  # Minimum frames per worker for optical flow accuracy
+        max_workers = 100
         num_workers = min(max_workers, max(2, total_frames // min_frames_per_chunk))
         chunk_size = total_frames // num_workers
         
