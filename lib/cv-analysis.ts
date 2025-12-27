@@ -12,8 +12,18 @@ export interface CVAnalysisResult {
   frameTimestamps?: number[];
   defectMask?: string;
   varianceHeatmap?: string;
+  defectOverlay?: string;  // Enhanced visualization with defects highlighted
   regionCrops?: Record<string, string>;
   defectPercentage?: number;
+  damageScore?: number;  // 0-100 overall damage score (higher = more damage)
+  regionScores?: Record<string, number>;  // Per-region damage scores
+  regionDetails?: Record<string, {
+    defect_coverage: number;
+    mean_intensity: number;
+    max_intensity: number;
+    edge_density: number;
+    quality_score: number;
+  }>;
   error?: string;
   skipped?: boolean;
 }
@@ -120,8 +130,12 @@ function updateHistoryWithCVResults(historyId: string, cvResult: CVAnalysisResul
       frameTimestamps: cvResult.frameTimestamps,
       defectMask: cvResult.defectMask,
       varianceHeatmap: cvResult.varianceHeatmap,
+      defectOverlay: cvResult.defectOverlay,
       regionCrops: cvResult.regionCrops,
       defectPercentage: cvResult.defectPercentage,
+      damageScore: cvResult.damageScore,
+      regionScores: cvResult.regionScores,
+      regionDetails: cvResult.regionDetails,
     };
     
     localStorage.setItem(historyKey, JSON.stringify(history));

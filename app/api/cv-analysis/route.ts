@@ -44,8 +44,9 @@ export async function POST(request: NextRequest) {
     console.log(`[CV Analysis] Using webhook: ${modalWebhookUrl}`);
 
     // Create AbortController for timeout
+    // Modal has a 5-minute timeout, so we use 4.5 minutes here to give some buffer
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 120000); // 120 second timeout
+    const timeoutId = setTimeout(() => controller.abort(), 270000); // 4.5 minute timeout
 
     try {
       // Call Modal webhook with timeout
@@ -84,9 +85,9 @@ export async function POST(request: NextRequest) {
       clearTimeout(timeoutId);
       
       if (fetchError.name === 'AbortError') {
-        console.error('[CV Analysis] Request timed out after 120s');
+        console.error('[CV Analysis] Request timed out after 4.5 minutes');
         return NextResponse.json(
-          { error: 'CV analysis timed out', details: 'Request took longer than 120 seconds' },
+          { error: 'CV analysis timed out', details: 'Request took longer than 4.5 minutes' },
           { status: 504 }
         );
       }

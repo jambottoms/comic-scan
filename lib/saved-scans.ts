@@ -184,3 +184,43 @@ export async function isScanSaved(title: string, issue: string, grade: string): 
   }
 }
 
+/**
+ * Update a saved scan with new data (e.g. CV analysis results)
+ */
+export async function updateSavedScan(id: string, updates: Partial<SaveScanInput>): Promise<boolean> {
+  try {
+    const supabase = createClient();
+    
+    if (!supabase) {
+      return false;
+    }
+    
+    // Prepare update object
+    const updateData: any = {
+      updated_at: new Date().toISOString()
+    };
+    
+    if (updates.title !== undefined) updateData.title = updates.title;
+    if (updates.issue !== undefined) updateData.issue = updates.issue || null;
+    if (updates.grade !== undefined) updateData.grade = updates.grade;
+    if (updates.videoUrl !== undefined) updateData.video_url = updates.videoUrl || null;
+    if (updates.thumbnail !== undefined) updateData.thumbnail = updates.thumbnail || null;
+    if (updates.result !== undefined) updateData.result = updates.result;
+    
+    const { error } = await supabase
+      .from('saved_scans')
+      .update(updateData)
+      .eq('id', id);
+    
+    if (error) {
+      console.error('Failed to update saved scan:', error);
+      return false;
+    }
+    
+    return true;
+  } catch (error) {
+    console.error('Failed to update saved scan:', error);
+    return false;
+  }
+}
+

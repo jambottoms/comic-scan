@@ -5,7 +5,7 @@ import { Loader2, ScanLine, Sparkles, Camera, Microscope, Bookmark, Trash2, Maxi
 import { getVideoById, updateHistoryEntry } from '@/lib/history';
 import { subscribeToUpdates } from '@/lib/streaming-analysis';
 import { extractFramesFromVideo, ExtractedFrame } from '@/lib/frame-extractor';
-import { triggerCVAnalysis } from '@/lib/cv-analysis';
+import { triggerCVAnalysis, CVAnalysisResult } from '@/lib/cv-analysis';
 import { saveScan, deleteSavedScan, isScanSaved } from '@/lib/saved-scans';
 import ImageViewerModal from './ImageViewerModal';
 
@@ -170,6 +170,41 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
     }
   };
   
+  // Save deep scan results to localStorage
+  const saveDeepScanResults = (id: string, cvResult: CVAnalysisResult) => {
+    try {
+      const historyKey = 'comic-scan-history';
+      const historyStr = localStorage.getItem(historyKey);
+      
+      if (!historyStr) return;
+      
+      const history = JSON.parse(historyStr);
+      const entryIndex = history.findIndex((h: any) => h.id === id);
+      
+      if (entryIndex === -1) return;
+      
+      // Merge CV results into the result object
+      history[entryIndex].result = {
+        ...history[entryIndex].result,
+        goldenFrames: cvResult.goldenFrames,
+        frameTimestamps: cvResult.frameTimestamps,
+        defectMask: cvResult.defectMask,
+        varianceHeatmap: cvResult.varianceHeatmap,
+        defectOverlay: cvResult.defectOverlay,
+        regionCrops: cvResult.regionCrops,
+        defectPercentage: cvResult.defectPercentage,
+        damageScore: cvResult.damageScore,
+        regionScores: cvResult.regionScores,
+        regionDetails: cvResult.regionDetails,
+      };
+      
+      localStorage.setItem(historyKey, JSON.stringify(history));
+      console.log('[Deep Scan] Results saved to localStorage');
+    } catch (error) {
+      console.error('[Deep Scan] Failed to save results:', error);
+    }
+  };
+  
   const triggerDeepScan = async () => {
     if (!entry?.videoUrl || deepScanLoading) return;
     
@@ -197,7 +232,11 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
       
       if (result.success) {
         setDeepScanComplete(true);
-        // Reload entry to get updated results
+        
+        // Save CV results to localStorage first
+        saveDeepScanResults(historyId, result);
+        
+        // Now reload entry to get updated results
         const updated = getVideoById(historyId);
         if (updated) {
           setEntry(updated);
@@ -651,23 +690,140 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
           </div>
         )}
         
-        {/* Show defect heatmap if available from CV pipeline */}
-        {result.defectMask && (
-          <div className="mb-4">
-            <p className="text-gray-400 text-xs mb-2">Defect Heatmap</p>
-            <button 
-              className="w-full rounded-lg overflow-hidden border border-gray-600 bg-gray-900 relative group hover:border-purple-500 transition-colors"
-              onClick={() => openImageViewer(
-                result.defectMask,
-                "Defect Heatmap",
-                "Visualizing detected anomalies."
+        {/* Deep Scan Results Summary */}
+        {(result.defectMask || result.damageScore !== undefined || result.defectPercentage !== undefined) && (
+          <div className="mb-4 p-3 bg-gray-900/50 rounded-lg border border-gray-700">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-gray-400 text-xs uppercase tracking-wide flex items-center gap-2">
+                <span>🔬 Physical Condition Analysis</span>
+                <span className="text-[10px] text-gray-500 normal-case">(CV defect detection)</span>
+              </span>
+              {result.damageScore !== undefined ? (
+                <div className="flex flex-col items-end">
+                  <span className={`text-sm font-bold ${
+                    result.damageScore < 20 ? 'text-green-400' : 
+                    result.damageScore < 40 ? 'text-yellow-400' : 
+                    result.damageScore < 65 ? 'text-orange-400' : 'text-red-400'
+                  }`}>
+                    {result.damageScore < 20 ? '✓ Excellent' : 
+                     result.damageScore < 40 ? '⚡ Minor Wear' : 
+                     result.damageScore < 65 ? '⚠ Moderate Damage' : '✕ Heavy Damage'}
+                  </span>
+                  <span className="text-xs text-gray-500">
+                    {result.damageScore.toFixed(0)}% damage detected
+                  </span>
+                </div>
+              ) : result.defectPercentage !== undefined && (
+                <span className="text-gray-400 text-xs">
+                  Defect coverage: {result.defectPercentage.toFixed(1)}%
+                </span>
               )}
-            >
-              <img src={result.defectMask} alt="Defect Analysis Heatmap" className="w-full h-auto" />
-              <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
-                <Maximize2 className="w-8 h-8 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-lg" />
+            </div>
+            
+            {/* Grade Adjustment Message */}
+            {result.gradeAdjustment && (
+              <div className="mb-3 p-2 bg-blue-900/20 rounded border border-blue-700/30">
+                <p className="text-xs text-blue-300">
+                  📊 <span className="font-medium">Grade Adjustment:</span> {result.gradeAdjustment}
+                </p>
               </div>
-            </button>
+            )}
+            
+            {/* Per-region scores */}
+            {result.regionScores && Object.keys(result.regionScores).length > 0 && (
+              <div>
+                <p className="text-[10px] text-gray-500 mb-2">Region Damage (lower = better condition):</p>
+                <div className="grid grid-cols-3 gap-2 text-xs">
+                  {Object.entries(result.regionScores).map(([region, score]) => {
+                    const scoreNum = score as number;
+                    const regionLabel = region === 'spine' ? 'Spine' : 
+                                       region === 'surface' ? 'Cover' :
+                                       region.replace('corner_', '').toUpperCase();
+                    return (
+                      <div 
+                        key={region} 
+                        className={`px-2 py-1 rounded text-center ${
+                          scoreNum < 20 ? 'bg-green-900/30 text-green-400' :
+                          scoreNum < 40 ? 'bg-yellow-900/30 text-yellow-400' :
+                          scoreNum < 65 ? 'bg-orange-900/30 text-orange-400' :
+                          'bg-red-900/30 text-red-400'
+                        }`}
+                      >
+                        <div className="font-mono font-bold">{scoreNum.toFixed(0)}%</div>
+                        <div className="text-[10px] opacity-75">{regionLabel}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+        
+        {/* Show defect overlay and heatmap if available */}
+        {(result.defectOverlay || result.defectMask || result.varianceHeatmap) && (
+          <div className="mb-4">
+            <p className="text-gray-400 text-xs mb-2">Defect Visualization</p>
+            
+            {/* Primary: Defect Overlay (shows damage on actual image) */}
+            {result.defectOverlay && (
+              <button 
+                className="w-full mb-2 rounded-lg overflow-hidden border border-gray-600 bg-gray-900 relative group hover:border-purple-500 transition-colors"
+                onClick={() => openImageViewer(
+                  result.defectOverlay,
+                  "Defect Analysis",
+                  "AI-detected defects highlighted in red. Shows creases, tears, scratches, and surface wear identified by multi-layer analysis."
+                )}
+              >
+                <img src={result.defectOverlay} alt="Defect Analysis" className="w-full h-auto" />
+                <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
+                  <Maximize2 className="w-8 h-8 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-lg" />
+                </div>
+                <div className="absolute bottom-0 left-0 right-0 bg-black/70 text-xs text-center text-gray-300 py-1.5 font-medium">
+                  🔍 Detected Defects Overlay (Tap to Enlarge)
+                </div>
+              </button>
+            )}
+            
+            {/* Secondary: Heatmaps in grid */}
+            <div className="grid grid-cols-2 gap-2">
+              {result.varianceHeatmap && (
+                <button 
+                  className="rounded-lg overflow-hidden border border-gray-600 bg-gray-900 relative group hover:border-purple-500 transition-colors"
+                  onClick={() => openImageViewer(
+                    result.varianceHeatmap,
+                    "Damage Intensity Heatmap",
+                    "Color-coded damage intensity map. Red/hot areas indicate higher defect concentration from edges, texture anomalies, and surface wear."
+                  )}
+                >
+                  <img src={result.varianceHeatmap} alt="Damage Heatmap" className="w-full h-auto" />
+                  <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
+                    <Maximize2 className="w-6 h-6 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-lg" />
+                  </div>
+                  <div className="absolute bottom-0 left-0 right-0 bg-black/70 text-[10px] text-center text-gray-300 py-1">
+                    Intensity Heatmap
+                  </div>
+                </button>
+              )}
+              {result.defectMask && (
+                <button 
+                  className="rounded-lg overflow-hidden border border-gray-600 bg-gray-900 relative group hover:border-purple-500 transition-colors"
+                  onClick={() => openImageViewer(
+                    result.defectMask,
+                    "Defect Mask",
+                    "Binary mask showing all detected surface anomalies, creases, tears, and damage areas."
+                  )}
+                >
+                  <img src={result.defectMask} alt="Defect Mask" className="w-full h-auto" />
+                  <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
+                    <Maximize2 className="w-6 h-6 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-lg" />
+                  </div>
+                  <div className="absolute bottom-0 left-0 right-0 bg-black/70 text-[10px] text-center text-gray-300 py-1">
+                    Defect Mask
+                  </div>
+                </button>
+              )}
+            </div>
           </div>
         )}
         

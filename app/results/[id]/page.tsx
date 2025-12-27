@@ -14,11 +14,29 @@ export default function ResultPage() {
 
   useEffect(() => {
     if (id) {
-      const item = getVideoById(id);
-      if (item) {
-        setVideoItem(item);
-      }
-      setLoading(false);
+      const loadItem = () => {
+        const item = getVideoById(id);
+        if (item) {
+          setVideoItem(item);
+        }
+        setLoading(false);
+      };
+
+      loadItem();
+
+      // Listen for CV analysis updates
+      const handleCVUpdate = (e: CustomEvent) => {
+        if (e.detail?.historyId === id) {
+          console.log('[ResultPage] CV analysis update received, reloading item');
+          loadItem();
+        }
+      };
+
+      window.addEventListener('cv-analysis-complete' as any, handleCVUpdate);
+      
+      return () => {
+        window.removeEventListener('cv-analysis-complete' as any, handleCVUpdate);
+      };
     }
   }, [id]);
 

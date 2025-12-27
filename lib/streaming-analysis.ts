@@ -6,6 +6,7 @@
  */
 
 import { addToHistory, updateHistoryEntry, getVideoById } from './history';
+import { adjustGradeWithCVAnalysis } from './grade-adjustment';
 
 export interface PendingResult {
   id: string;
@@ -100,30 +101,76 @@ export function updateWithAIResult(historyId: string, aiResult: any): void {
 
 /**
  * Update the pending result with CV analysis results.
+ * Includes grade adjustment based on defect detection.
  */
 export function updateWithCVResult(historyId: string, cvResult: any): void {
   const entry = getVideoById(historyId);
   if (!entry) return;
   
+  // Adjust grade based on CV damage detection
+  let adjustedGrade = entry.grade || '';
+  let gradeAdjustment = null;
+  let gradeConfidence = null;
+  
+  if (cvResult.damageScore !== undefined && cvResult.damageScore !== null && entry.grade) {
+    const adjustment = adjustGradeWithCVAnalysis(
+      entry.grade,
+      cvResult.damageScore,
+      cvResult.regionScores || {}
+    );
+    
+    adjustedGrade = adjustment.adjustedGrade;
+    gradeAdjustment = adjustment.adjustment;
+    gradeConfidence = adjustment.confidence;
+    
+    // Log adjustment for debugging
+    if (adjustment.adjustment) {
+      console.log(`[CV Grade Adjustment] ${entry.grade} → ${adjustedGrade}: ${adjustment.adjustment}`);
+    }
+  }
+  
   updateHistoryEntry(historyId, {
+    grade: adjustedGrade,  // Update with adjusted grade
     result: {
       ...entry.result,
+      // Frame data
       goldenFrames: cvResult.goldenFrames,
       frameTimestamps: cvResult.frameTimestamps,
+      
+      // Defect visualizations
       defectMask: cvResult.defectMask,
       varianceHeatmap: cvResult.varianceHeatmap,
+      defectOverlay: cvResult.defectOverlay,
+      
+      // Region data
       regionCrops: cvResult.regionCrops,
+      
+      // Defect metrics
       defectPercentage: cvResult.defectPercentage,
+      damageScore: cvResult.damageScore,
+      regionScores: cvResult.regionScores,
+      regionDetails: cvResult.regionDetails,
+      
+      // Grade adjustment info
+      originalGrade: entry.grade,  // Preserve original AI grade
+      gradeAdjustment,
+      gradeConfidence,
+      
       _status: 'complete',
     },
   });
   
-  // Dispatch event for UI update
+  // Dispatch event for UI update with ALL CV data
   dispatchUpdate(historyId, { 
     status: 'complete',
+    grade: adjustedGrade,
     goldenFrames: cvResult.goldenFrames,
     defectMask: cvResult.defectMask,
+    defectOverlay: cvResult.defectOverlay,
+    damageScore: cvResult.damageScore,
+    regionScores: cvResult.regionScores,
     regionCrops: cvResult.regionCrops,
+    gradeAdjustment,
   });
 }
 
