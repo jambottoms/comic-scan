@@ -7,6 +7,7 @@ import { subscribeToUpdates } from '@/lib/streaming-analysis';
 import { extractFramesFromVideo, ExtractedFrame } from '@/lib/frame-extractor';
 import { saveScan, deleteSavedScan, isScanSaved } from '@/lib/saved-scans';
 import ImageViewerModal from './ImageViewerModal';
+import HybridGradeDisplay from './HybridGradeDisplay';
 
 interface StreamingResultCardProps {
   historyId: string;
@@ -455,6 +456,13 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
         </div>
       </div>
 
+      {/* Hybrid Grade Display - AI + CV Analysis */}
+      {result.hybridGrade && (
+        <div className="max-w-2xl w-full mb-4">
+          <HybridGradeDisplay hybridGrade={result.hybridGrade} />
+        </div>
+      )}
+
       {/* CV Analysis Section - Fast client-side extraction */}
       <div className="bg-gray-800 p-4 rounded-xl border border-gray-700 max-w-2xl w-full mb-4">
         <h3 className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-3 flex items-center gap-2">
@@ -503,6 +511,9 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
                     <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
                       <Maximize2 className="w-6 h-6 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-lg" />
                     </div>
+                    <div className="absolute bottom-0 left-0 right-0 bg-black/70 text-[10px] text-center text-gray-300 py-0.5 font-mono">
+                      {timestamp.toFixed(2)}s
+                    </div>
                   </button>
                 );
               })
@@ -529,7 +540,7 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
           {/* Show remaining frames in a second row if we have 5 */}
           {extractedFrames.length > 3 && (
             <div className="grid grid-cols-2 gap-2 mt-2">
-              {extractedFrames.slice(3, 5).map((frame, idx) => {
+              {extractedFrames.slice(3).map((frame, idx) => {
                 const { title, desc } = getFrameDescription(frame.timestamp);
                 return (
                   <button 
@@ -551,9 +562,9 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
           )}
           
           {/* Show remaining server-side golden frames in a second row if we have more than 3 */}
-          {extractedFrames.length === 0 && result.goldenFrames && result.goldenFrames.length > 3 && (
+          {!extractedFrames.length && result.goldenFrames && result.goldenFrames.length > 3 && (
             <div className="grid grid-cols-2 gap-2 mt-2">
-              {result.goldenFrames.slice(3, 5).map((frame: string, idx: number) => {
+              {result.goldenFrames.slice(3).map((frame: string, idx: number) => {
                 const timestamp = result.frameTimestamps ? result.frameTimestamps[idx + 3] : 0;
                 const { title, desc } = getFrameDescription(timestamp);
                 return (
@@ -567,7 +578,7 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
                       <Maximize2 className="w-6 h-6 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-lg" />
                     </div>
                     <div className="absolute bottom-0 left-0 right-0 bg-black/70 text-[10px] text-center text-gray-300 py-0.5 font-mono">
-                      Frame {idx + 4}
+                      {timestamp.toFixed(2)}s
                     </div>
                   </button>
                 );

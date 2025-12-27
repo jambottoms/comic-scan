@@ -371,6 +371,8 @@ Use appropriate grading scale: CGC for comics, PSA/BGS for cards. Be concise and
       // Step 7: Get golden frames from Modal worker and do detailed analysis
       let detailedAnalysis = null;
       let goldenFrames: string[] = [];
+      let frameTimestamps: number[] = [];
+      let cvAnalysis: any = null;
       
       try {
         const modalWebhookUrl = process.env.MODAL_CV_WEBHOOK_URL;
@@ -393,7 +395,13 @@ Use appropriate grading scale: CGC for comics, PSA/BGS for cards. Be concise and
           if (modalResponse.ok) {
             const modalResult = await modalResponse.json();
             goldenFrames = modalResult.goldenFrames || [];
+            const cvAnalysis = modalResult.cvAnalysis || null;
+            const frameTimestamps = modalResult.frameTimestamps || [];
+            
             console.log(`[Server Action] Got ${goldenFrames.length} golden frames from Modal`);
+            if (cvAnalysis) {
+              console.log(`[Server Action] CV Analysis: ${cvAnalysis.damageScore?.toFixed(1)}% damage detected`);
+            }
             
             // Step 8: Do multi-frame Gemini analysis if we have frames
             if (goldenFrames.length >= 2) {
@@ -481,11 +489,50 @@ RESPOND IN JSON:
         // Don't fail the whole analysis if Modal fails
       }
       
-      // Add golden frames and detailed analysis to result
+      // Step 9: Fuse AI and CV grades if both available
+      let hybridGrade = null;
+      if (detailedAnalysis && cvAnalysis && cvAnalysis.damageScore !== undefined) {
+        try {
+          const { fuseGrades } = await import('@/lib/grade-adjustment');
+          
+          const aiGrade = parseFloat(parsedResult.estimatedGrade);
+          const aiConfidence = detailedAnalysis.confidence || 'medium';
+          
+          hybridGrade = fuseGrades(
+            aiGrade,
+            aiConfidence,
+            cvAnalysis.damageScore,
+            cvAnalysis.regionScores || {},
+            detailedAnalysis
+          );
+          
+          console.log(`[Server Action] Hybrid Grade: ${hybridGrade.displayGrade} (confidence: ${hybridGrade.overallConfidence})`);
+          console.log(`[Server Action] Agreement: ${hybridGrade.agreement}, AI: ${hybridGrade.aiGrade}, CV: ${hybridGrade.cvGrade}`);
+          
+          // Update result with hybrid grade
+          parsedResult.estimatedGrade = hybridGrade.finalGrade;
+          parsedResult.reasoning = hybridGrade.reasoning;
+          
+          // Add CV images to hybridGrade
+          if (cvAnalysis.images) {
+            hybridGrade.cvAnalysis = {
+              ...hybridGrade.cvAnalysis,
+              ...cvAnalysis.images
+            };
+          }
+        } catch (fusionError) {
+          console.warn("[Server Action] Grade fusion failed:", fusionError);
+        }
+      }
+      
+      // Add golden frames, detailed analysis, CV analysis, and hybrid grade to result
       const enrichedResult = {
         ...parsedResult,
         goldenFrames,
+        frameTimestamps,
         detailedAnalysis,
+        cvAnalysis,
+        hybridGrade,
       };
       
       return { success: true, data: enrichedResult };

@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { Bookmark, BookmarkCheck, Trash2, Loader2, ScanLine, Maximize2 } from 'lucide-react';
 import VideoInvestigatorModal from './VideoInvestigatorModal';
 import ImageViewerModal from './ImageViewerModal';
+import HybridGradeDisplay from './HybridGradeDisplay';
 import { saveScan, deleteSavedScan, isScanSaved, updateSavedScan } from '@/lib/saved-scans';
 
 interface ResultCardProps {
@@ -494,6 +495,13 @@ export default function ResultCard({ result, videoUrl, thumbnail, savedScanId, o
         )}
       </div>
 
+      {/* Hybrid Grade Display - AI + CV Analysis */}
+      {result.hybridGrade && (
+        <div className="max-w-2xl w-full mb-4">
+          <HybridGradeDisplay hybridGrade={result.hybridGrade} />
+        </div>
+      )}
+
       {/* CV Analysis Section - Golden Frames & Defect Analysis */}
       {(result.analysisImages || result.goldenFrames || result.defectMask) && (
         <div className="bg-gray-800 p-4 rounded-xl border border-gray-700 max-w-2xl w-full mb-4">
@@ -508,7 +516,8 @@ export default function ResultCard({ result, videoUrl, thumbnail, savedScanId, o
               <p className="text-gray-400 text-xs mb-2">Golden Frames (Tap to Enlarge)</p>
               <div className="grid grid-cols-3 gap-2">
                 {result.goldenFrames.slice(0, 3).map((frame: string, idx: number) => {
-                  const { title, desc } = getFrameDescription(idx);
+                  const timestamp = result.frameTimestamps ? result.frameTimestamps[idx] : 0;
+                  const { title, desc } = getFrameDescription(timestamp);
                   return (
                     <button 
                       key={idx} 
@@ -517,41 +526,74 @@ export default function ResultCard({ result, videoUrl, thumbnail, savedScanId, o
                         frame, 
                         title,
                         desc,
-                        result.frameTimestamps ? result.frameTimestamps[idx] : undefined
+                        timestamp
                       )}
                     >
                       <img src={frame} alt={`Golden Frame ${idx + 1}`} className="w-full h-full object-cover" />
                       <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
                         <Maximize2 className="w-6 h-6 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-lg" />
                       </div>
+                      <div className="absolute bottom-0 left-0 right-0 bg-black/70 text-[10px] text-center text-gray-300 py-0.5 font-mono">
+                        {timestamp.toFixed(2)}s
+                      </div>
                     </button>
                   );
                 })}
               </div>
+              
+              {/* Show remaining frames in a second row if we have 5 */}
+              {result.goldenFrames.length > 3 && (
+                <div className="grid grid-cols-2 gap-2 mt-2">
+                  {result.goldenFrames.slice(3).map((frame: string, idx: number) => {
+                    const timestamp = result.frameTimestamps ? result.frameTimestamps[idx + 3] : 0;
+                    const { title, desc } = getFrameDescription(timestamp);
+                    return (
+                      <button 
+                        key={idx + 3} 
+                        className="relative aspect-[3/4] rounded-lg overflow-hidden border border-gray-600 bg-gray-900 group hover:border-purple-500 transition-colors"
+                        onClick={() => openImageViewer(
+                          frame, 
+                          title,
+                          desc,
+                          timestamp
+                        )}
+                      >
+                        <img src={frame} alt={`Golden Frame ${idx + 4}`} className="w-full h-full object-cover" />
+                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
+                          <Maximize2 className="w-6 h-6 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-lg" />
+                        </div>
+                        <div className="absolute bottom-0 left-0 right-0 bg-black/70 text-[10px] text-center text-gray-300 py-0.5 font-mono">
+                          {timestamp.toFixed(2)}s
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
           
           {/* Deep Scan Results Summary */}
-          {(result.damageScore !== undefined || result.defectPercentage !== undefined) && (
+          {(result.cvAnalysis?.damageScore !== undefined || result.damageScore !== undefined || result.defectPercentage !== undefined) && (
             <div className="mb-4 p-3 bg-gray-900/50 rounded-lg border border-gray-700">
               <div className="flex items-center justify-between mb-3">
                 <span className="text-gray-400 text-xs uppercase tracking-wide flex items-center gap-2">
                   <span>🔬 Physical Condition Analysis</span>
                   <span className="text-[10px] text-gray-500 normal-case">(CV defect detection)</span>
                 </span>
-                {result.damageScore !== undefined ? (
+                {(result.cvAnalysis?.damageScore !== undefined || result.damageScore !== undefined) ? (
                   <div className="flex flex-col items-end">
                     <span className={`text-sm font-bold ${
-                      result.damageScore < 20 ? 'text-green-400' : 
-                      result.damageScore < 40 ? 'text-yellow-400' : 
-                      result.damageScore < 65 ? 'text-orange-400' : 'text-red-400'
+                      (result.cvAnalysis?.damageScore || result.damageScore) < 20 ? 'text-green-400' : 
+                      (result.cvAnalysis?.damageScore || result.damageScore) < 40 ? 'text-yellow-400' : 
+                      (result.cvAnalysis?.damageScore || result.damageScore) < 65 ? 'text-orange-400' : 'text-red-400'
                     }`}>
-                      {result.damageScore < 20 ? '✓ Excellent' : 
-                       result.damageScore < 40 ? '⚡ Minor Wear' : 
-                       result.damageScore < 65 ? '⚠ Moderate Damage' : '✕ Heavy Damage'}
+                      {(result.cvAnalysis?.damageScore || result.damageScore) < 20 ? '✓ Excellent' : 
+                       (result.cvAnalysis?.damageScore || result.damageScore) < 40 ? '⚡ Minor Wear' : 
+                       (result.cvAnalysis?.damageScore || result.damageScore) < 65 ? '⚠ Moderate Damage' : '✕ Heavy Damage'}
                     </span>
                     <span className="text-xs text-gray-500">
-                      {result.damageScore.toFixed(0)}% damage detected
+                      {(result.cvAnalysis?.damageScore || result.damageScore).toFixed(0)}% damage detected
                     </span>
                   </div>
                 ) : result.defectPercentage !== undefined && (
@@ -571,16 +613,16 @@ export default function ResultCard({ result, videoUrl, thumbnail, savedScanId, o
               )}
               
               {/* Per-region scores with images */}
-              {result.regionScores && Object.keys(result.regionScores).length > 0 && (
+              {(result.cvAnalysis?.regionScores || result.regionScores) && Object.keys(result.cvAnalysis?.regionScores || result.regionScores).length > 0 && (
                 <div>
                   <p className="text-[10px] text-gray-500 mb-2">Region Damage (lower = better condition):</p>
                   <div className="grid grid-cols-2 gap-2 text-xs">
-                    {Object.entries(result.regionScores).map(([region, score]) => {
+                    {Object.entries(result.cvAnalysis?.regionScores || result.regionScores).map(([region, score]) => {
                       const scoreNum = score as number;
                       const regionLabel = region === 'spine' ? 'Spine' : 
                                          region === 'surface' ? 'Cover' :
                                          region.replace('corner_', '').toUpperCase();
-                      const regionImage = result.regionCrops?.[region];
+                      const regionImage = result.cvAnalysis?.regionCrops?.[region] || result.regionCrops?.[region];
                       
                       return (
                         <div 

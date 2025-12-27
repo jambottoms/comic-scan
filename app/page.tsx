@@ -8,6 +8,7 @@ import { getVideoHistory } from '@/lib/history';
 import { getSavedScans, SavedScan } from '@/lib/saved-scans';
 import FabMenu from '@/components/FabMenu';
 import GradeBookModal from '@/components/GradeBookModal';
+import TrainingModal from '@/components/TrainingModal';
 
 interface VersionInfo {
   version: string;
@@ -25,6 +26,7 @@ export default function Dashboard() {
   
   // Modal State
   const [isGradeBookOpen, setIsGradeBookOpen] = useState(false);
+  const [isTrainingOpen, setIsTrainingOpen] = useState(false);
   const [initialTab, setInitialTab] = useState<'record' | 'upload' | 'identify'>('record');
 
   // Load history and saved scans only on client side after mount to prevent hydration mismatch
@@ -43,17 +45,17 @@ export default function Dashboard() {
   // Fetch version info on mount
   useEffect(() => {
     fetch('/version.json')
-      .then(res => res.json())
-      .then(data => setVersionInfo(data))
-      .catch(err => {
-        console.error('Failed to load version info:', err);
-        setVersionInfo({
-          version: '0.1.0',
-          commitHash: 'unknown',
-          commitDate: new Date().toISOString().split('T')[0],
-          buildTime: new Date().toISOString(),
-        });
+    .then(res => res.json())
+    .then(data => setVersionInfo(data))
+    .catch(err => {
+      console.error('Failed to load version info:', err);
+      setVersionInfo({
+        version: '0.1.0',
+        commitHash: 'unknown',
+        commitDate: new Date().toISOString().split('T')[0],
+        buildTime: new Date().toISOString(),
       });
+    });
   }, []);
 
   const handleGradeSuccess = (historyId: string) => {
@@ -76,6 +78,10 @@ export default function Dashboard() {
   const handleIdentify = () => {
     setInitialTab('identify');
     setIsGradeBookOpen(true);
+  };
+
+  const handleTrain = () => {
+    setIsTrainingOpen(true);
   };
 
   // Format date for display
@@ -254,6 +260,7 @@ export default function Dashboard() {
         onRecord={handleRecord}
         onUpload={handleUpload}
         onIdentify={handleIdentify}
+        onTrain={handleTrain}
       />
 
       <GradeBookModal 
@@ -262,6 +269,12 @@ export default function Dashboard() {
         onSuccess={handleGradeSuccess}
         initialTab={initialTab}
       />
+
+      {isTrainingOpen && (
+        <TrainingModal 
+          onClose={() => setIsTrainingOpen(false)}
+        />
+      )}
     </main>
   );
 }

@@ -16,6 +16,7 @@ import modal
 import os
 import json
 import tempfile
+import numpy as np
 from pathlib import Path
 
 # Create Modal app
@@ -108,7 +109,7 @@ def analyze_frame_chunk(
             motion = np.mean(magnitude)
         
         # Only keep frames with low motion (stable)
-        if motion <= 1.0:
+        if motion <= 3.0:
             candidates.append({
                 'frame_number': frame_number,
                 'sharpness': float(sharpness),
@@ -171,7 +172,7 @@ def find_golden_frame_candidates(video_path: str, total_frames: int, fps: float)
             motion = np.mean(magnitude)
         
         # Only keep frames with low motion (stable)
-        if motion <= 1.0:
+        if motion <= 3.0:
             candidates.append({
                 'frame_number': frame_number,
                 'sharpness': float(sharpness),
@@ -187,7 +188,7 @@ def find_golden_frame_candidates(video_path: str, total_frames: int, fps: float)
     
     cap.release()
     
-    print(f"   Found {len(candidates)} stable frames (motion <= 1.0)")
+    print(f"   Found {len(candidates)} stable frames (motion <= 3.0)")
     return candidates
 
 
@@ -306,7 +307,7 @@ def analyze_video(video_url: str, scan_id: str, item_type: str = "card") -> dict
             all_candidates.extend(candidates)
         
         print(f"✅ Analyzed ALL {total_frames} frames in parallel")
-        print(f"   Found {len(all_candidates)} stable frames (motion <= 1.0)")
+        print(f"   Found {len(all_candidates)} stable frames (motion <= 3.0)")
         
         # Sort by sharpness (highest first) - SAME SELECTION LOGIC
         all_candidates.sort(key=lambda x: x['sharpness'], reverse=True)
@@ -352,9 +353,23 @@ def analyze_video(video_url: str, scan_id: str, item_type: str = "card") -> dict
         
         cap.release()
         
-        # Upload golden frames to Supabase (no CV defect analysis - Gemini handles that)
+        # Run CV defect analysis on golden frames
+        print("\n🔬 Running CV defect analysis...")
+        cv_analysis_result = None
+        try:
+            cv_analysis_result = run_cv_analysis(golden_frames, output_dir, scan_id)
+            print(f"   ✅ CV Analysis complete: {cv_analysis_result['damageScore']:.1f}% damage detected")
+        except Exception as cv_error:
+            print(f"   ⚠️ Warning: CV analysis failed: {cv_error}")
+            # Don't fail the whole analysis if CV fails
+        
+        # Upload golden frames to Supabase
         print("\n📤 Uploading golden frames to Supabase...")
         result = upload_golden_frames(scan_id, golden_frames)
+        
+        # Add CV analysis to result if available
+        if cv_analysis_result:
+            result["cvAnalysis"] = cv_analysis_result
         
         # Clean up the shared Volume to free space
         print("\n🧹 Cleaning up shared Volume...")
@@ -367,6 +382,238 @@ def analyze_video(video_url: str, scan_id: str, item_type: str = "card") -> dict
         
         print("\n✅ Analysis complete!")
         return result
+
+
+def run_cv_analysis(golden_frames: list, output_dir: Path, scan_id: str) -> dict:
+    """
+    Run CV defect analysis on golden frames using glint analyzer logic.
+    
+    Performs:
+    - Frame alignment
+    - Variance calculation
+    - Defect mask generation
+    - Region-by-region analysis
+    """
+    import cv2
+    import numpy as np
+    
+    # Region definitions (same as glint_analyzer.py)
+    REGIONS = {
+        "spine": {"x_start": 0.0, "x_end": 0.08, "y_start": 0.0, "y_end": 1.0},
+        "corner_tl": {"x_start": 0.0, "x_end": 0.15, "y_start": 0.0, "y_end": 0.12},
+        "corner_tr": {"x_start": 0.85, "x_end": 1.0, "y_start": 0.0, "y_end": 0.12},
+        "corner_bl": {"x_start": 0.0, "x_end": 0.15, "y_start": 0.88, "y_end": 1.0},
+        "corner_br": {"x_start": 0.85, "x_end": 1.0, "y_start": 0.88, "y_end": 1.0},
+        "surface": {"x_start": 0.20, "x_end": 0.80, "y_start": 0.20, "y_end": 0.80}
+    }
+    
+    # Load frames
+    frames = []
+    for gf in golden_frames:
+        img = cv2.imread(gf['path'])
+        if img is not None:
+            frames.append(img)
+    
+    if len(frames) < 2:
+        print(f"   ⚠️ Need at least 2 frames for CV analysis, got {len(frames)}")
+        return None
+    
+    print(f"   Analyzing {len(frames)} frames...")
+    
+    # Align frames (simple feature-based alignment)
+    reference = frames[0]
+    aligned_frames = [reference]
+    
+    orb = cv2.ORB_create(nfeatures=1000)
+    ref_gray = cv2.cvtColor(reference, cv2.COLOR_BGR2GRAY)
+    ref_kp, ref_desc = orb.detectAndCompute(ref_gray, None)
+    
+    for i, frame in enumerate(frames[1:], 1):
+        frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        kp, desc = orb.detectAndCompute(frame_gray, None)
+        
+        if desc is None or ref_desc is None or len(desc) < 4:
+            aligned_frames.append(frame)
+            continue
+        
+        bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+        matches = bf.match(ref_desc, desc)
+        matches = sorted(matches, key=lambda x: x.distance)[:50]
+        
+        if len(matches) >= 4:
+            src_pts = np.float32([ref_kp[m.queryIdx].pt for m in matches]).reshape(-1, 1, 2)
+            dst_pts = np.float32([kp[m.trainIdx].pt for m in matches]).reshape(-1, 1, 2)
+            H, mask = cv2.findHomography(dst_pts, src_pts, cv2.RANSAC, 5.0)
+            
+            if H is not None:
+                h, w = reference.shape[:2]
+                aligned_frame = cv2.warpPerspective(frame, H, (w, h))
+                aligned_frames.append(aligned_frame)
+            else:
+                aligned_frames.append(frame)
+        else:
+            aligned_frames.append(frame)
+    
+    print(f"   Aligned {len(aligned_frames)} frames")
+    
+    # Compute variance map
+    gray_frames = [cv2.cvtColor(f, cv2.COLOR_BGR2GRAY).astype(np.float32) for f in aligned_frames]
+    stack = np.stack(gray_frames, axis=0)
+    variance_map = np.var(stack, axis=0)
+    
+    # Compute max difference map
+    max_diff = np.zeros_like(gray_frames[0])
+    for i in range(len(gray_frames)):
+        for j in range(i + 1, len(gray_frames)):
+            diff = np.abs(gray_frames[i] - gray_frames[j])
+            max_diff = np.maximum(max_diff, diff)
+    
+    # Create defect mask
+    combined = (variance_map / variance_map.max() + max_diff / max_diff.max()) / 2
+    mean_val = np.mean(combined)
+    std_val = np.std(combined)
+    threshold = mean_val + 2.0 * std_val
+    
+    defect_mask = (combined > threshold).astype(np.uint8) * 255
+    kernel = np.ones((3, 3), np.uint8)
+    defect_mask = cv2.morphologyEx(defect_mask, cv2.MORPH_OPEN, kernel)
+    defect_mask = cv2.morphologyEx(defect_mask, cv2.MORPH_CLOSE, kernel)
+    defect_mask = cv2.dilate(defect_mask, kernel, iterations=2)
+    
+    # Calculate overall damage score
+    overall_defect_pct = (np.sum(defect_mask > 0) / defect_mask.size) * 100
+    
+    # Analyze each region
+    region_scores = {}
+    region_analyses = []
+    
+    for region_name, region_def in REGIONS.items():
+        h, w = reference.shape[:2]
+        x1 = int(w * region_def["x_start"])
+        x2 = int(w * region_def["x_end"])
+        y1 = int(h * region_def["y_start"])
+        y2 = int(h * region_def["y_end"])
+        
+        # Extract region crops
+        crop = reference[y1:y2, x1:x2]
+        mask_crop = defect_mask[y1:y2, x1:x2]
+        var_crop = variance_map[y1:y2, x1:x2]
+        
+        # Calculate defect statistics
+        defect_pixels = np.sum(mask_crop > 0)
+        total_pixels = mask_crop.shape[0] * mask_crop.shape[1]
+        defect_pct = (defect_pixels / total_pixels) * 100 if total_pixels > 0 else 0
+        
+        region_scores[region_name] = defect_pct
+        
+        # Save crops
+        crop_filename = f"crop_{region_name}.png"
+        crop_path = output_dir / crop_filename
+        cv2.imwrite(str(crop_path), crop, [cv2.IMWRITE_PNG_COMPRESSION, 9])
+        
+        mask_filename = f"mask_{region_name}.png"
+        mask_path = output_dir / mask_filename
+        cv2.imwrite(str(mask_path), mask_crop, [cv2.IMWRITE_PNG_COMPRESSION, 9])
+        
+        # Create overlay
+        overlay = crop.copy()
+        red_overlay = np.zeros_like(crop)
+        red_overlay[:, :, 2] = mask_crop
+        overlay = cv2.addWeighted(overlay, 0.7, red_overlay, 0.3, 0)
+        
+        overlay_filename = f"overlay_{region_name}.png"
+        overlay_path = output_dir / overlay_filename
+        cv2.imwrite(str(overlay_path), overlay, [cv2.IMWRITE_PNG_COMPRESSION, 9])
+        
+        region_analyses.append({
+            'region_name': region_name,
+            'crop_file': crop_filename,
+            'mask_file': mask_filename,
+            'overlay_file': overlay_filename,
+            'defect_percentage': defect_pct
+        })
+        
+        print(f"   Region {region_name}: {defect_pct:.1f}% defects")
+    
+    # Save full visualizations
+    mask_file = "defect_mask_full.png"
+    cv2.imwrite(str(output_dir / mask_file), defect_mask, [cv2.IMWRITE_PNG_COMPRESSION, 9])
+    
+    var_normalized = (variance_map / variance_map.max() * 255).astype(np.uint8)
+    var_heatmap = cv2.applyColorMap(var_normalized, cv2.COLORMAP_JET)
+    var_file = "variance_heatmap.png"
+    cv2.imwrite(str(output_dir / var_file), var_heatmap, [cv2.IMWRITE_PNG_COMPRESSION, 9])
+    
+    # Upload CV images to Supabase
+    print(f"   Uploading CV analysis images...")
+    cv_images = upload_cv_images(scan_id, output_dir, region_analyses, defect_mask, var_heatmap)
+    
+    return {
+        "damageScore": float(overall_defect_pct),
+        "regionScores": region_scores,
+        "images": cv_images
+    }
+
+
+def upload_cv_images(scan_id: str, output_dir: Path, region_analyses: list, 
+                      defect_mask: np.ndarray, variance_heatmap: np.ndarray) -> dict:
+    """
+    Upload CV analysis images to Supabase Storage.
+    """
+    import os
+    import cv2
+    import numpy as np
+    
+    supabase_url = os.environ["SUPABASE_URL"]
+    supabase_key = os.environ["SUPABASE_KEY"]
+    bucket = "analysis-images"
+    
+    result = {
+        "regionCrops": {},
+        "regionOverlays": {},
+        "defectMask": None,
+        "varianceMap": None
+    }
+    
+    # Upload region crops and overlays
+    for analysis in region_analyses:
+        region = analysis['region_name']
+        
+        # Crop
+        crop_path = output_dir / analysis['crop_file']
+        if crop_path.exists():
+            remote_path = f"{scan_id}/regions/crop_{region}.png"
+            with open(crop_path, 'rb') as f:
+                url = upload_to_supabase_storage(supabase_url, supabase_key, bucket, remote_path, f.read())
+                result["regionCrops"][region] = url
+                print(f"      ✅ Uploaded crop: {region}")
+        
+        # Overlay
+        overlay_path = output_dir / analysis['overlay_file']
+        if overlay_path.exists():
+            remote_path = f"{scan_id}/regions/overlay_{region}.png"
+            with open(overlay_path, 'rb') as f:
+                url = upload_to_supabase_storage(supabase_url, supabase_key, bucket, remote_path, f.read())
+                result["regionOverlays"][region] = url
+    
+    # Upload full visualizations
+    mask_path = output_dir / "defect_mask_full.png"
+    if mask_path.exists():
+        remote_path = f"{scan_id}/analysis/defect_mask_full.png"
+        with open(mask_path, 'rb') as f:
+            url = upload_to_supabase_storage(supabase_url, supabase_key, bucket, remote_path, f.read())
+            result["defectMask"] = url
+            print(f"      ✅ Uploaded defect mask")
+    
+    var_path = output_dir / "variance_heatmap.png"
+    if var_path.exists():
+        remote_path = f"{scan_id}/analysis/variance_heatmap.png"
+        with open(var_path, 'rb') as f:
+            url = upload_to_supabase_storage(supabase_url, supabase_key, bucket, remote_path, f.read())
+            result["varianceMap"] = url
+            print(f"      ✅ Uploaded variance heatmap")
+    
+    return result
 
 
 def upload_to_supabase_storage(supabase_url: str, supabase_key: str, bucket: str, 
