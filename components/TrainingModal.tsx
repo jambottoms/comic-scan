@@ -5,6 +5,7 @@ import Cropper, { Area } from 'react-easy-crop';
 import { X, Camera, Check, Loader2 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { trainDefect } from '@/app/actions/train-defect';
+import { trainRegion } from '@/app/actions/train-region';
 
 const DEFECT_TYPES = [
   "Spine Tick",
@@ -19,6 +20,18 @@ const DEFECT_TYPES = [
   "Rusty Staple"
 ];
 
+const REGION_TYPES = [
+  "Spine",
+  "Front Staple",
+  "Back Staple",
+  "Top Left Corner",
+  "Top Right Corner",
+  "Bottom Left Corner",
+  "Bottom Right Corner"
+];
+
+type TrainingMode = 'defect' | 'region';
+
 export default function TrainingModal({ onClose }: { onClose: () => void }) {
   const [imageSrc, setImageSrc] = useState<string | null>(null);
   const [crop, setCrop] = useState({ x: 0, y: 0 });
@@ -26,7 +39,8 @@ export default function TrainingModal({ onClose }: { onClose: () => void }) {
   const [croppedAreaPixels, setCroppedAreaPixels] = useState<Area | null>(null);
   const [selectedLabel, setSelectedLabel] = useState<string>("");
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [step, setStep] = useState<'capture' | 'crop' | 'tag'>('capture');
+  const [step, setStep] = useState<'mode' | 'capture' | 'crop' | 'tag'>('mode');
+  const [trainingMode, setTrainingMode] = useState<TrainingMode>('defect');
 
   // 1. Handle File Input (Camera)
   const onFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -88,7 +102,8 @@ export default function TrainingModal({ onClose }: { onClose: () => void }) {
       const supabase = createClient();
       if (!supabase) throw new Error("Failed to create Supabase client");
       
-      const filename = `train-${Date.now()}.jpg`;
+      const prefix = trainingMode === 'defect' ? 'defect' : 'region';
+      const filename = `${prefix}-${Date.now()}.jpg`;
       const { error: uploadError } = await supabase.storage
         .from('training-data')
         .upload(filename, blob);
@@ -99,16 +114,17 @@ export default function TrainingModal({ onClose }: { onClose: () => void }) {
         .from('training-data')
         .getPublicUrl(filename);
 
-      // Send to Nyckel
-      const result = await trainDefect(publicUrl, selectedLabel);
+      // Send to appropriate Nyckel function
+      const result = trainingMode === 'defect'
+        ? await trainDefect(publicUrl, selectedLabel)
+        : await trainRegion(publicUrl, selectedLabel);
       
       if (!result.success) {
         throw new Error(result.error);
       }
       
       onClose();
-      // Simple alert for now - could be a toast in a fuller implementation
-      alert("Training sample added successfully!"); 
+      alert(`${trainingMode === 'defect' ? 'Defect' : 'Region'} training sample added successfully!`); 
     } catch (e) {
       console.error(e);
       alert(`Failed to save sample: ${(e as Error).message}`);
@@ -117,12 +133,19 @@ export default function TrainingModal({ onClose }: { onClose: () => void }) {
     }
   };
 
+  const labelOptions = trainingMode === 'defect' ? DEFECT_TYPES : REGION_TYPES;
+  const headerTitle = 
+    step === 'mode' ? 'Choose Training Type' :
+    step === 'capture' ? 'New Sample' : 
+    step === 'crop' ? `Crop ${trainingMode === 'defect' ? 'Defect' : 'Region'}` : 
+    `Label ${trainingMode === 'defect' ? 'Defect' : 'Region'}`;
+
   return (
     <div className="fixed inset-0 z-50 bg-black/95 flex flex-col">
       {/* Header */}
       <div className="p-4 flex justify-between items-center border-b border-gray-800">
         <h2 className="text-white font-bold text-lg">
-          {step === 'capture' ? 'New Sample' : step === 'crop' ? 'Crop Defect' : 'Label Defect'}
+          {headerTitle}
         </h2>
         <button onClick={onClose} className="p-2 text-gray-400 hover:text-white">
           <X />
@@ -132,6 +155,39 @@ export default function TrainingModal({ onClose }: { onClose: () => void }) {
       {/* Content */}
       <div className="flex-1 relative flex flex-col items-center justify-center p-4 w-full">
         
+        {/* Step 1: Choose Training Mode */}
+        {step === 'mode' && (
+          <div className="w-full max-w-md space-y-4">
+            <button
+              onClick={() => {
+                setTrainingMode('defect');
+                setStep('capture');
+              }}
+              className="w-full p-6 rounded-xl bg-gradient-to-br from-purple-600 to-purple-700 hover:from-purple-500 hover:to-purple-600 text-white text-left transition-all"
+            >
+              <div className="text-2xl mb-2">🔍</div>
+              <div className="font-bold text-xl mb-1">Train Defect Detection</div>
+              <div className="text-sm text-purple-100">
+                Teach the AI to identify specific types of defects (creases, tears, stains, etc.)
+              </div>
+            </button>
+
+            <button
+              onClick={() => {
+                setTrainingMode('region');
+                setStep('capture');
+              }}
+              className="w-full p-6 rounded-xl bg-gradient-to-br from-emerald-600 to-emerald-700 hover:from-emerald-500 hover:to-emerald-600 text-white text-left transition-all"
+            >
+              <div className="text-2xl mb-2">📍</div>
+              <div className="font-bold text-xl mb-1">Train Region Detection</div>
+              <div className="text-sm text-emerald-100">
+                Teach the AI to locate key areas (spine, corners, staples)
+              </div>
+            </button>
+          </div>
+        )}
+
         {step === 'capture' && (
           <label className="flex flex-col items-center gap-4 cursor-pointer p-8 rounded-2xl bg-gray-900 border-2 border-dashed border-gray-700 active:border-purple-500 w-full max-w-sm">
             <Camera size={48} className="text-purple-500" />
@@ -162,13 +218,15 @@ export default function TrainingModal({ onClose }: { onClose: () => void }) {
 
         {step === 'tag' && (
           <div className="grid grid-cols-2 gap-3 w-full max-w-md overflow-y-auto max-h-[60vh] pb-20">
-            {DEFECT_TYPES.map(label => (
+            {labelOptions.map(label => (
               <button
                 key={label}
                 onClick={() => setSelectedLabel(label)}
                 className={`p-4 rounded-xl text-left font-medium transition-all ${
                   selectedLabel === label 
-                    ? 'bg-purple-600 text-white shadow-lg shadow-purple-900/50' 
+                    ? trainingMode === 'defect'
+                      ? 'bg-purple-600 text-white shadow-lg shadow-purple-900/50'
+                      : 'bg-emerald-600 text-white shadow-lg shadow-emerald-900/50'
                     : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
                 }`}
               >
@@ -194,7 +252,9 @@ export default function TrainingModal({ onClose }: { onClose: () => void }) {
           <button 
             onClick={handleSubmit}
             disabled={!selectedLabel || isSubmitting}
-            className="w-full bg-purple-600 disabled:bg-gray-700 text-white font-bold py-4 rounded-full flex items-center justify-center gap-2"
+            className={`w-full disabled:bg-gray-700 text-white font-bold py-4 rounded-full flex items-center justify-center gap-2 ${
+              trainingMode === 'defect' ? 'bg-purple-600' : 'bg-emerald-600'
+            }`}
           >
             {isSubmitting ? <Loader2 className="animate-spin" /> : 'Submit Training Data'}
           </button>
