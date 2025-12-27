@@ -313,8 +313,11 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
 
       const results = await Promise.all(promises);
       
-      // Check for failures
+      // Check for failures and count skipped samples
       const failures = results.filter(r => !r.success);
+      const skipped = results.filter(r => r.success && (r as any).skipped).length;
+      const successful = results.filter(r => r.success && !(r as any).skipped).length;
+      
       if (failures.length > 0) {
         throw new Error(`Failed to train ${failures.length} labels: ${failures[0].error}`);
       }
@@ -324,7 +327,16 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
       setTrainingImageSrc(null);
       setSelectedLabels([]);
       setTrainingCroppedAreaPixels(null);
-      alert(`Successfully added ${selectedLabels.length} training sample(s)!`);
+      
+      // Provide appropriate feedback
+      if (skipped > 0 && successful === 0) {
+        alert('This image already exists in the training data. Try capturing a different sample.');
+      } else if (skipped > 0) {
+        alert(`Successfully added ${successful} new sample(s)! (${skipped} already existed)`);
+      } else {
+        alert(`Successfully added ${selectedLabels.length} training sample(s)!`);
+      }
+      
       handleClose();
     } catch (e) {
       console.error(e);
