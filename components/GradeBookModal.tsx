@@ -65,11 +65,6 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
   // Use viewport height hook to handle mobile browser chrome
   const { viewportHeight } = useViewportHeight();
   
-  // Debug logging
-  useEffect(() => {
-    console.log('GradeBookModal state:', { isOpen, activeTab, loading, showUploadModal, isStreaming, viewportHeight });
-  }, [isOpen, activeTab, loading, showUploadModal, isStreaming, viewportHeight]);
-  
   // Recording State
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
@@ -99,6 +94,11 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
   const [trainingCroppedAreaPixels, setTrainingCroppedAreaPixels] = useState<Area | null>(null);
   const [selectedLabel, setSelectedLabel] = useState<string>('');
   const [isSubmittingTraining, setIsSubmittingTraining] = useState(false);
+
+  // Debug logging
+  useEffect(() => {
+    console.log('GradeBookModal state:', { isOpen, activeTab, loading, showUploadModal, isStreaming, viewportHeight });
+  }, [isOpen, activeTab, loading, showUploadModal, isStreaming, viewportHeight]);
 
   // Reset/Sync tab when opening
   useEffect(() => {
