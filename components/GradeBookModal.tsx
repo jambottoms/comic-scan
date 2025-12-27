@@ -544,6 +544,9 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
 
   // Handle close animation - reset all workflow state
   const handleClose = () => {
+    // Stop camera immediately
+    stopCamera();
+    
     // Reset training state
     setTrainingStep('capture');
     setTrainingImageSrc(null);
