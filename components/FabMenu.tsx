@@ -14,11 +14,11 @@ export default function FabMenu({ onRecord, onUpload, onIdentify, onTrain }: Fab
   const [isOpen, setIsOpen] = useState(false);
 
   return (
-    <div className="fixed bottom-6 right-6 z-40 flex flex-col items-end gap-4">
+    <div className="fixed bottom-6 right-6 z-[9999] flex flex-col items-end gap-4">
       {/* Overlay to close when clicking outside */}
       {isOpen && (
         <div 
-          className="fixed inset-0 bg-black/50 z-[-1]" 
+          className="fixed inset-0 bg-black/50 -z-10" 
           onClick={() => setIsOpen(false)}
         />
       )}
