@@ -586,7 +586,7 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
         } ${
           isVisible ? 'translate-y-0' : 'translate-y-full'
         }`}
-        style={{ height: '100vh', height: '100dvh' }}
+        style={{ height: '100dvh' }}
       >
         
         {/* Header */}
