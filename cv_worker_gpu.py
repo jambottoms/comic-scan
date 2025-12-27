@@ -165,11 +165,90 @@ def analyze_frame_chunk_gpu(
         return candidates
 
 
+def detect_and_warp_comic(image: np.ndarray) -> tuple:
+    """
+    Detect comic corners and apply perspective warp to flatten image.
+    
+    Returns:
+        (warped_image, success_flag)
+    """
+    import cv2
+    import numpy as np
+    
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    edges = cv2.Canny(blurred, 50, 150)
+    
+    kernel = np.ones((3, 3), np.uint8)
+    edges = cv2.dilate(edges, kernel, iterations=2)
+    
+    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    if not contours:
+        return None, False
+    
+    contours = sorted(contours, key=cv2.contourArea, reverse=True)
+    
+    # Find largest quadrilateral
+    for contour in contours[:5]:
+        peri = cv2.arcLength(contour, True)
+        approx = cv2.approxPolyDP(contour, 0.02 * peri, True)
+        
+        if len(approx) == 4:
+            area = cv2.contourArea(approx)
+            image_area = image.shape[0] * image.shape[1]
+            
+            if area > 0.1 * image_area:
+                corners = approx.reshape(4, 2).astype(np.float32)
+                
+                # Order corners: TL, TR, BR, BL
+                rect = np.zeros((4, 2), dtype=np.float32)
+                s = corners.sum(axis=1)
+                rect[0] = corners[np.argmin(s)]  # Top-left
+                rect[2] = corners[np.argmax(s)]  # Bottom-right
+                
+                diff = np.diff(corners, axis=1)
+                rect[1] = corners[np.argmin(diff)]  # Top-right
+                rect[3] = corners[np.argmax(diff)]  # Bottom-left
+                
+                # Calculate output dimensions
+                tl, tr, br, bl = rect
+                width_top = np.linalg.norm(tr - tl)
+                width_bottom = np.linalg.norm(br - bl)
+                target_width = int(max(width_top, width_bottom))
+                
+                height_left = np.linalg.norm(bl - tl)
+                height_right = np.linalg.norm(br - tr)
+                target_height = int(max(height_left, height_right))
+                
+                # Destination points
+                dst = np.array([
+                    [0, 0],
+                    [target_width - 1, 0],
+                    [target_width - 1, target_height - 1],
+                    [0, target_height - 1]
+                ], dtype=np.float32)
+                
+                # Apply perspective transform
+                M = cv2.getPerspectiveTransform(rect, dst)
+                warped = cv2.warpPerspective(
+                    image, M, (target_width, target_height),
+                    flags=cv2.INTER_LANCZOS4,
+                    borderMode=cv2.BORDER_CONSTANT,
+                    borderValue=(0, 0, 0)
+                )
+                
+                return warped, True
+    
+    return None, False
+
+
 def run_glint_analysis_gpu(golden_frames: list, output_dir: str) -> dict:
     """
-    GPU-accelerated defect analysis.
+    GPU-accelerated defect analysis with perspective correction.
     
     Uses CUDA for faster edge detection and morphological operations.
+    Now includes proper perspective warp for accurate corner/spine detection.
     """
     import cv2
     import numpy as np
@@ -178,24 +257,41 @@ def run_glint_analysis_gpu(golden_frames: list, output_dir: str) -> dict:
     if len(golden_frames) < 1:
         return {"error": "Need at least 1 frame for analysis"}
     
-    # Load all frames
+    # Load and warp all frames
     frames = []
+    warped_frames = []
+    warp_success_count = 0
+    
+    print(f"   📐 Detecting corners and warping frames...")
     for gf in golden_frames:
         img = cv2.imread(gf['path'])
         if img is not None:
             frames.append(img)
+            
+            # Try to detect and warp
+            warped, success = detect_and_warp_comic(img)
+            if success and warped is not None:
+                warped_frames.append(warped)
+                warp_success_count += 1
+                print(f"      ✅ Warped frame {len(warped_frames)}")
+            else:
+                print(f"      ⚠️  Could not warp frame, using original")
+                warped_frames.append(img)  # Fallback to original
     
-    if len(frames) < 1:
-        return {"error": "Could not load frames"}
+    if len(warped_frames) < 1:
+        return {"error": "Could not process frames"}
+    
+    # Use warped frames for analysis (or originals if warp failed)
+    frames_to_analyze = warped_frames if warp_success_count > 0 else frames
     
     # Ensure all frames are same size
-    reference_shape = frames[0].shape
-    frames = [f for f in frames if f.shape == reference_shape]
+    reference_shape = frames_to_analyze[0].shape
+    frames_to_analyze = [f for f in frames_to_analyze if f.shape == reference_shape]
     
-    h, w = frames[0].shape[:2]
+    h, w = frames_to_analyze[0].shape[:2]
     output_path = Path(output_dir)
     
-    print(f"   🔍 Analyzing {len(frames)} frames for defects (GPU-accelerated)...")
+    print(f"   🔍 Analyzing {len(frames_to_analyze)} {'warped' if warp_success_count > 0 else 'original'} frames for defects (GPU-accelerated)...")
     
     # Check GPU availability
     cuda_available = cv2.cuda.getCudaEnabledDeviceCount() > 0
@@ -203,7 +299,7 @@ def run_glint_analysis_gpu(golden_frames: list, output_dir: str) -> dict:
     
     frame_defect_maps = []
     
-    for idx, frame in enumerate(frames):
+    for idx, frame in enumerate(frames_to_analyze):
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         
         if cuda_available:

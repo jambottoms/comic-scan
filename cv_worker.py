@@ -290,15 +290,94 @@ def analyze_video(video_url: str, scan_id: str, item_type: str = "card") -> dict
         return result
 
 
+def detect_and_warp_comic(image: np.ndarray) -> tuple:
+    """
+    Detect comic corners and apply perspective warp to flatten image.
+    
+    Returns:
+        (warped_image, success_flag)
+    """
+    import cv2
+    import numpy as np
+    
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    edges = cv2.Canny(blurred, 50, 150)
+    
+    kernel = np.ones((3, 3), np.uint8)
+    edges = cv2.dilate(edges, kernel, iterations=2)
+    
+    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    if not contours:
+        return None, False
+    
+    contours = sorted(contours, key=cv2.contourArea, reverse=True)
+    
+    # Find largest quadrilateral
+    for contour in contours[:5]:
+        peri = cv2.arcLength(contour, True)
+        approx = cv2.approxPolyDP(contour, 0.02 * peri, True)
+        
+        if len(approx) == 4:
+            area = cv2.contourArea(approx)
+            image_area = image.shape[0] * image.shape[1]
+            
+            if area > 0.1 * image_area:
+                corners = approx.reshape(4, 2).astype(np.float32)
+                
+                # Order corners: TL, TR, BR, BL
+                rect = np.zeros((4, 2), dtype=np.float32)
+                s = corners.sum(axis=1)
+                rect[0] = corners[np.argmin(s)]  # Top-left
+                rect[2] = corners[np.argmax(s)]  # Bottom-right
+                
+                diff = np.diff(corners, axis=1)
+                rect[1] = corners[np.argmin(diff)]  # Top-right
+                rect[3] = corners[np.argmax(diff)]  # Bottom-left
+                
+                # Calculate output dimensions
+                tl, tr, br, bl = rect
+                width_top = np.linalg.norm(tr - tl)
+                width_bottom = np.linalg.norm(br - bl)
+                target_width = int(max(width_top, width_bottom))
+                
+                height_left = np.linalg.norm(bl - tl)
+                height_right = np.linalg.norm(br - tr)
+                target_height = int(max(height_left, height_right))
+                
+                # Destination points
+                dst = np.array([
+                    [0, 0],
+                    [target_width - 1, 0],
+                    [target_width - 1, target_height - 1],
+                    [0, target_height - 1]
+                ], dtype=np.float32)
+                
+                # Apply perspective transform
+                M = cv2.getPerspectiveTransform(rect, dst)
+                warped = cv2.warpPerspective(
+                    image, M, (target_width, target_height),
+                    flags=cv2.INTER_LANCZOS4,
+                    borderMode=cv2.BORDER_CONSTANT,
+                    borderValue=(0, 0, 0)
+                )
+                
+                return warped, True
+    
+    return None, False
+
+
 def run_glint_analysis(golden_frames: list, output_dir: str) -> dict:
     """
-    Enhanced multi-frame defect analysis.
+    Enhanced multi-frame defect analysis with perspective correction.
     
     Key improvements:
-    1. Analyzes ALL frames (not just first) to catch defects in any lighting
-    2. Uses adaptive statistical thresholding (more sensitive)
-    3. Multi-scale edge detection with lower thresholds
-    4. Combines frames using MAX pooling (if defect visible in any frame, it counts)
+    1. Detects comic corners and warps to flat perspective FIRST
+    2. Analyzes warped frames for accurate defect detection
+    3. Region crops are based on actual comic geometry (not random percentages)
+    4. Multi-scale edge detection with lower thresholds
+    5. Combines frames using MAX pooling
     
     Returns meaningful defect scores that correlate with actual damage.
     """
@@ -309,31 +388,48 @@ def run_glint_analysis(golden_frames: list, output_dir: str) -> dict:
     if len(golden_frames) < 1:
         return {"error": "Need at least 1 frame for analysis"}
     
-    # Load all frames
+    # Load and warp all frames
     frames = []
+    warped_frames = []
+    warp_success_count = 0
+    
+    print(f"   📐 Detecting corners and warping frames...")
     for gf in golden_frames:
         img = cv2.imread(gf['path'])
         if img is not None:
             frames.append(img)
+            
+            # Try to detect and warp
+            warped, success = detect_and_warp_comic(img)
+            if success and warped is not None:
+                warped_frames.append(warped)
+                warp_success_count += 1
+                print(f"      ✅ Warped frame {len(warped_frames)}")
+            else:
+                print(f"      ⚠️  Could not warp frame, using original")
+                warped_frames.append(img)  # Fallback to original
     
-    if len(frames) < 1:
-        return {"error": "Could not load frames"}
+    if len(warped_frames) < 1:
+        return {"error": "Could not process frames"}
+    
+    # Use warped frames for analysis (or originals if warp failed)
+    frames_to_analyze = warped_frames if warp_success_count > 0 else frames
     
     # Ensure all frames are same size
-    reference_shape = frames[0].shape
-    frames = [f for f in frames if f.shape == reference_shape]
+    reference_shape = frames_to_analyze[0].shape
+    frames_to_analyze = [f for f in frames_to_analyze if f.shape == reference_shape]
     
-    h, w = frames[0].shape[:2]
+    h, w = frames_to_analyze[0].shape[:2]
     output_path = Path(output_dir)
     
-    print(f"   🔍 Analyzing {len(frames)} frames for defects...")
+    print(f"   🔍 Analyzing {len(frames_to_analyze)} {'warped' if warp_success_count > 0 else 'original'} frames for defects...")
     
     # =========================================
     # ANALYZE ALL FRAMES (not just first!)
     # =========================================
     frame_defect_maps = []
     
-    for idx, frame in enumerate(frames):
+    for idx, frame in enumerate(frames_to_analyze):
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         gray_float = gray.astype(np.float32)
         
@@ -390,8 +486,8 @@ def run_glint_analysis(golden_frames: list, output_dir: str) -> dict:
     
     # Also compute variance across frames for light-catching defects
     variance_map = np.zeros_like(gray_float)
-    if len(frames) >= 2:
-        gray_frames = [cv2.cvtColor(f, cv2.COLOR_BGR2GRAY).astype(np.float32) for f in frames]
+    if len(frames_to_analyze) >= 2:
+        gray_frames = [cv2.cvtColor(f, cv2.COLOR_BGR2GRAY).astype(np.float32) for f in frames_to_analyze]
         stack = np.stack(gray_frames, axis=0)
         variance_map = np.var(stack, axis=0)
         
@@ -434,37 +530,27 @@ def run_glint_analysis(golden_frames: list, output_dir: str) -> dict:
     # Store combined_defect_map for heatmap visualization
     defect_score_map = combined_defect_map
     
-    # Use first frame as reference for visualization
-    reference = frames[0]
+    # Use first warped frame as reference for visualization
+    reference = frames_to_analyze[0]
     
     # =========================================
-    # REGION-BASED ANALYSIS
+    # REGION-BASED ANALYSIS (Proper Comic Geometry)
     # =========================================
-    # Define critical regions with expanded coverage
+    # Now that we have a FLAT, WARPED comic, these regions are accurate!
+    # These percentages now correspond to actual corners and spine
+    print(f"   📍 Extracting regions from warped comic...")
+    
     regions = {
-        "corner_tl": (0, 0, int(w * 0.18), int(h * 0.15)),           # Top-left corner
-        "corner_tr": (int(w * 0.82), 0, w, int(h * 0.15)),           # Top-right corner
-        "corner_bl": (0, int(h * 0.85), int(w * 0.18), h),           # Bottom-left corner
-        "corner_br": (int(w * 0.82), int(h * 0.85), w, h),           # Bottom-right corner
-        "spine": (0, int(h * 0.15), int(w * 0.12), int(h * 0.85)),   # Left spine area
-        "surface": (int(w * 0.15), int(h * 0.15), int(w * 0.85), int(h * 0.85)),  # Cover surface
+        "corner_tl": (0, 0, int(w * 0.12), int(h * 0.12)),           # Top-left corner (actual corner!)
+        "corner_tr": (int(w * 0.88), 0, w, int(h * 0.12)),           # Top-right corner
+        "corner_bl": (0, int(h * 0.88), int(w * 0.12), h),           # Bottom-left corner
+        "corner_br": (int(w * 0.88), int(h * 0.88), w, h),           # Bottom-right corner
+        "spine": (0, int(h * 0.12), int(w * 0.08), int(h * 0.88)),   # Left spine (actual spine!)
+        "surface": (int(w * 0.12), int(h * 0.12), int(w * 0.88), int(h * 0.88)),  # Cover surface
     }
     
     gray = cv2.cvtColor(reference, cv2.COLOR_BGR2GRAY)
     edges_medium = cv2.Canny(gray, 40, 120)  # For edge density calculation
-    
-    # =========================================
-    # 5. REGION-BASED ANALYSIS
-    # =========================================
-    # Define critical regions with expanded coverage
-    regions = {
-        "corner_tl": (0, 0, int(w * 0.18), int(h * 0.15)),           # Top-left corner
-        "corner_tr": (int(w * 0.82), 0, w, int(h * 0.15)),           # Top-right corner
-        "corner_bl": (0, int(h * 0.85), int(w * 0.18), h),           # Bottom-left corner
-        "corner_br": (int(w * 0.82), int(h * 0.85), w, h),           # Bottom-right corner
-        "spine": (0, int(h * 0.15), int(w * 0.12), int(h * 0.85)),   # Left spine area
-        "surface": (int(w * 0.15), int(h * 0.15), int(w * 0.85), int(h * 0.85)),  # Cover surface
-    }
     
     region_paths = {}
     region_scores = {}
