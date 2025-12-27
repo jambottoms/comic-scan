@@ -102,7 +102,7 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
         options.mimeType = 'video/webm;codecs=vp8';
       }
 
-      const recorder = new MediaRecorder(mediaStreamRef.current, options);
+      const recorder = new MediaRecorder(stream, options);
       mediaRecorderRef.current = recorder;
       chunksRef.current = [];
 
