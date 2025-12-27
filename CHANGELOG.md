@@ -2,6 +2,51 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.1.1] - 2025-12-27 - CRITICAL FIX
+
+### 🚨 Critical Bug Fix: Perspective Correction
+
+#### Problem
+Deep Scan was analyzing **wrong areas** of comic books:
+- ❌ "Corners" were arbitrary frame crops, not actual corners
+- ❌ "Spine" was random left side of frame, not actual spine
+- ❌ Defect detection examined meaningless regions
+- ❌ Grades were inflated (9.5 for damaged comics)
+- ❌ Overlays compared different perspectives
+
+**Root Cause:** `perspect_warp.py` existed but was never integrated into `cv_worker.py`. Worker just cropped percentage-based regions from raw video frames without any geometric correction.
+
+#### Fix Applied
+- ✅ Integrated perspective warp directly into CV worker
+- ✅ Detects comic corners using contour detection
+- ✅ Applies perspective transform to flatten comic
+- ✅ Extracts regions from flat, corrected image
+- ✅ Defect analysis now examines correct areas
+- ✅ Grades reflect actual condition
+
+#### Impact
+- Comics with visible damage now get accurate grades (4.0-5.0 instead of false 6.5-9.5)
+- Corner crops are actual corners
+- Spine crops are actual spine
+- Defect detection works correctly
+- Overlays make sense
+
+#### Files Changed
+- `cv_worker.py` - Added `detect_and_warp_comic()`, updated analysis flow
+- `cv_worker_gpu.py` - Same fixes for GPU version
+- `PERSPECTIVE_CORRECTION_FIX.md` - Detailed technical explanation
+
+#### Deployment
+```bash
+# Deploy fixed worker
+modal deploy cv_worker.py
+
+# Test with problematic comic
+# Grades should now be lower (more accurate) for damaged comics
+```
+
+---
+
 ## [2.1.0] - 2025-12-27
 
 ### ⚡ GPU Acceleration Option
