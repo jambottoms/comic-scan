@@ -690,7 +690,7 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
 
                         {/* Train AI Overlay Grid (Only during capture step) */}
                         {activeTab === 'train' && trainingStep === 'capture' && !loading && (
-                            <div className="absolute inset-0 pointer-events-none flex items-start justify-center pt-12">
+                            <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
                                 <div className="flex flex-col items-center gap-4">
                                     <div className="w-64 h-80 border-2 border-purple-400 rounded-lg shadow-[0_0_15px_rgba(168,85,247,0.5)] bg-transparent" />
                                     <div className="text-center text-white/90 text-sm font-medium shadow-black drop-shadow-md bg-black/40 px-4 py-2 rounded-full backdrop-blur-sm">
@@ -702,16 +702,23 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
 
                         {/* Train AI - Crop Step */}
                         {activeTab === 'train' && trainingStep === 'crop' && trainingImageSrc && (
-                            <div className="absolute inset-0 bg-black pt-12">
+                            <div className="absolute inset-0 bg-black">
                                 <div className="relative w-full h-full">
                                     <Cropper
                                         image={trainingImageSrc}
                                         crop={trainingCrop}
                                         zoom={trainingZoom}
-                                        aspect={1}
+                                        aspect={4/5}
+                                        cropSize={{ width: 256, height: 320 }}
                                         onCropChange={setTrainingCrop}
                                         onZoomChange={setTrainingZoom}
                                         onCropComplete={onTrainingCropComplete}
+                                        style={{
+                                            cropAreaStyle: {
+                                                border: '2px solid rgb(168, 85, 247)',
+                                                boxShadow: '0 0 15px rgba(168, 85, 247, 0.5)'
+                                            }
+                                        }}
                                     />
                                 </div>
                             </div>
