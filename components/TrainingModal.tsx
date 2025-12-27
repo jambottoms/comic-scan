@@ -187,7 +187,13 @@ export default function TrainingModal({ onClose }: { onClose: () => void }) {
         throw new Error(`Failed to train ${failures.length} labels: ${failures[0].error}`);
       }
       
-      onClose();
+      // Reset to capture mode instead of closing
+      setStep('capture');
+      setImageSrc(null);
+      setSelectedLabels([]);
+      setCroppedAreaPixels(null);
+      setZoom(1);
+      setCrop({ x: 0, y: 0 });
       alert(`Successfully added ${selectedLabels.length} training sample(s)!`); 
     } catch (e) {
       console.error(e);

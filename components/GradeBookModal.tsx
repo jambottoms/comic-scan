@@ -8,6 +8,7 @@ import { createClient } from '@/lib/supabase/client';
 import { analyzeComicFromUrl } from '@/app/actions/analyze-from-url';
 import { addToHistory, generateThumbnail, updateHistoryEntry, getVideoById } from '@/lib/history';
 import { useCamera } from '@/lib/hooks/useCamera';
+import { useViewportHeight } from '@/lib/hooks/useViewportHeight';
 import Cropper, { Area } from 'react-easy-crop';
 import { trainDefect } from '@/app/actions/train-defect';
 import { trainRegion } from '@/app/actions/train-region';
@@ -60,6 +61,9 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
   
   // Use camera hook
   const { videoRef, isStreaming, error: cameraError, startCamera, stopCamera, capturePhoto } = useCamera();
+  
+  // Use viewport height hook to handle mobile browser chrome
+  const { viewportHeight } = useViewportHeight();
   
   // Recording State
   const [isRecording, setIsRecording] = useState(false);
@@ -578,7 +582,7 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
         className={`w-full bg-gray-900 border-t border-gray-800 rounded-t-3xl shadow-2xl overflow-hidden flex flex-col transition-transform duration-200 ease-out ${
           isVisible ? 'translate-y-0' : 'translate-y-full'
         }`}
-        style={{ height: '95vh' }}
+        style={{ height: `${viewportHeight * 0.95}px` }}
       >
         
         {/* Header */}
@@ -659,8 +663,8 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
 
                         {/* Train AI Overlay Grid (Only during capture step) */}
                         {activeTab === 'train' && trainingStep === 'capture' && !loading && (
-                            <div className="absolute inset-0 pointer-events-none">
-                                <div className="absolute top-[15%] left-0 right-0 flex flex-col items-center justify-center gap-4">
+                            <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
+                                <div className="flex flex-col items-center gap-4">
                                     <div className="w-64 h-80 border-2 border-purple-400 rounded-lg shadow-[0_0_15px_rgba(168,85,247,0.5)] bg-transparent" />
                                     <div className="text-center text-white/90 text-sm font-medium shadow-black drop-shadow-md bg-black/40 px-4 py-2 rounded-full backdrop-blur-sm">
                                         Position item in frame
@@ -733,7 +737,7 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
                     </div>
 
                     {/* Controls Bar - Floating at bottom */}
-                    <div className="absolute bottom-0 left-0 right-0 p-6 sm:p-8 bg-gradient-to-t from-black/90 via-black/60 to-transparent pt-12">
+                    <div className="absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-black/90 via-black/60 to-transparent pt-16 pb-8" style={{ paddingBottom: 'max(2rem, env(safe-area-inset-bottom))' }}>
                         {activeTab === 'record' && (
                              <div className="flex flex-col items-center gap-4 w-full">
                                 <div className="flex justify-center items-center w-full">

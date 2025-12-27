@@ -18,6 +18,7 @@ export function useCamera(): UseCameraReturn {
   const [isStreaming, setIsStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [hasPermission, setHasPermission] = useState(false);
+  const shouldBeStreamingRef = useRef(false); // Track if camera should be active
 
   // Check if we already have camera permission
   useEffect(() => {
@@ -55,6 +56,7 @@ export function useCamera(): UseCameraReturn {
   const startCamera = useCallback(async () => {
     try {
       setError(null);
+      shouldBeStreamingRef.current = true; // Mark that camera should be active
       
       // Request camera access
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -86,10 +88,13 @@ export function useCamera(): UseCameraReturn {
       }
       
       setIsStreaming(false);
+      shouldBeStreamingRef.current = false;
     }
   }, []);
 
   const stopCamera = useCallback(() => {
+    shouldBeStreamingRef.current = false; // Mark that camera should be inactive
+    
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => track.stop());
       streamRef.current = null;
@@ -148,6 +153,29 @@ export function useCamera(): UseCameraReturn {
       stopCamera();
     };
   }, [stopCamera]);
+
+  // Handle page visibility changes (when user switches tabs or apps)
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        // Page is hidden - camera will be stopped by the OS
+        console.log('Page hidden - camera will be paused by OS');
+      } else {
+        // Page is visible again - restart camera if it should be active
+        console.log('Page visible - checking if camera should restart');
+        if (shouldBeStreamingRef.current && !isStreaming) {
+          console.log('Restarting camera after visibility change');
+          startCamera();
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [isStreaming, startCamera]);
 
   return {
     videoRef,
