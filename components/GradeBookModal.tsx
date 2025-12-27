@@ -541,8 +541,22 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
     }
   };
 
-  // Handle close animation
+  // Handle close animation - reset all workflow state
   const handleClose = () => {
+    // Reset training state
+    setTrainingStep('capture');
+    setTrainingImageSrc(null);
+    setSelectedLabel('');
+    
+    // Reset capture/record state
+    setCaptureStep('front');
+    setCapturedFiles({ front: null, back: null, video: null });
+    
+    // Clear errors and loading
+    setError(null);
+    setLoading(false);
+    
+    // Animate close
     setIsClosing(true);
     setTimeout(() => {
       onClose();
@@ -601,7 +615,7 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
         <div className="p-4 flex items-center justify-between bg-gray-900 z-20 relative" style={{ paddingTop: 'max(1rem, env(safe-area-inset-top))' }}>
             <h2 className="text-xl font-bold text-white pl-2">Grade Book</h2>
             <button onClick={handleClose} className="p-2 hover:bg-gray-800 rounded-full text-gray-400 hover:text-white transition-colors">
-                <ChevronDown size={28} />
+                <X size={24} />
             </button>
         </div>
 
