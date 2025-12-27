@@ -37,93 +37,71 @@ cv_image = (
 )
 
 
-@app.function(
-    image=cv_image,
-    timeout=90,  # Each chunk processes faster
-    secrets=[modal.Secret.from_name("supabase-secrets")],
-)
-def analyze_frame_chunk(
-    video_url: str,
-    start_frame: int,
-    end_frame: int,
-    fps: float,
-    chunk_id: int
-) -> list:
+def find_golden_frame_candidates(video_path: str, total_frames: int, fps: float) -> list:
     """
-    Analyze a chunk of frames in parallel.
+    Analyze all frames sequentially to find stable, sharp frames.
     
-    Maintains full precision by analyzing every frame with the same algorithms.
-    Returns list of candidate frames (without frame data to reduce memory).
+    Single-pass analysis that downloads once and processes all frames.
+    For 5-10 second videos (150-300 frames), this is fast enough.
     
     Args:
-        video_url: Public URL of the video
-        start_frame: Starting frame number
-        end_frame: Ending frame number
+        video_path: Local path to downloaded video
+        total_frames: Total number of frames in video
         fps: Video FPS for timestamp calculation
-        chunk_id: Chunk identifier for logging
     
     Returns:
-        List of candidate frames with quality metrics
+        List of candidate frames with quality metrics, sorted by sharpness
     """
     import cv2
     import numpy as np
-    import requests
     
-    print(f"[Chunk {chunk_id}] Processing frames {start_frame}-{end_frame}")
+    print(f"   Analyzing {total_frames} frames for sharpness/motion...")
     
-    with tempfile.TemporaryDirectory() as tmpdir:
-        video_path = Path(tmpdir) / "input.mp4"
+    cap = cv2.VideoCapture(str(video_path))
+    candidates = []
+    prev_gray = None
+    
+    for frame_number in range(total_frames):
+        ret, frame = cap.read()
+        if not ret:
+            break
         
-        # Download video
-        response = requests.get(video_url, stream=True)
-        response.raise_for_status()
-        with open(video_path, 'wb') as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                f.write(chunk)
+        curr_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         
-        cap = cv2.VideoCapture(str(video_path))
-        cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+        # Calculate sharpness (Laplacian Variance)
+        laplacian = cv2.Laplacian(curr_gray, cv2.CV_64F)
+        sharpness = laplacian.var()
         
-        candidates = []
-        prev_gray = None
+        # Calculate motion (Optical Flow) - skip first frame
+        motion = 0.0
+        if prev_gray is not None:
+            flow = cv2.calcOpticalFlowFarneback(
+                prev_gray, curr_gray, None,
+                pyr_scale=0.5, levels=3, winsize=15,
+                iterations=3, poly_n=5, poly_sigma=1.2, flags=0
+            )
+            magnitude, _ = cv2.cartToPolar(flow[..., 0], flow[..., 1])
+            motion = np.mean(magnitude)
         
-        for frame_number in range(start_frame, end_frame):
-            ret, frame = cap.read()
-            if not ret:
-                break
-            
-            curr_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            
-            # Calculate sharpness (Laplacian Variance) - SAME ALGORITHM
-            laplacian = cv2.Laplacian(curr_gray, cv2.CV_64F)
-            sharpness = laplacian.var()
-            
-            # Calculate motion (Optical Flow) - SAME ALGORITHM
-            motion = 0.0
-            if prev_gray is not None:
-                flow = cv2.calcOpticalFlowFarneback(
-                    prev_gray, curr_gray, None,
-                    pyr_scale=0.5, levels=3, winsize=15,
-                    iterations=3, poly_n=5, poly_sigma=1.2, flags=0
-                )
-                magnitude, _ = cv2.cartToPolar(flow[..., 0], flow[..., 1])
-                motion = np.mean(magnitude)
-            
-            # Only keep frames with low motion (stable) - SAME THRESHOLD
-            if motion <= 1.0:
-                candidates.append({
-                    'frame_number': frame_number,
-                    'sharpness': float(sharpness),
-                    'motion': float(motion),
-                    'timestamp': frame_number / fps
-                })
-            
-            prev_gray = curr_gray
+        # Only keep frames with low motion (stable)
+        if motion <= 1.0:
+            candidates.append({
+                'frame_number': frame_number,
+                'sharpness': float(sharpness),
+                'motion': float(motion),
+                'timestamp': frame_number / fps
+            })
         
-        cap.release()
+        prev_gray = curr_gray
         
-        print(f"[Chunk {chunk_id}] Found {len(candidates)} stable frames")
-        return candidates
+        # Progress indicator every 50 frames
+        if frame_number > 0 and frame_number % 50 == 0:
+            print(f"      Processed {frame_number}/{total_frames} frames...")
+    
+    cap.release()
+    
+    print(f"   Found {len(candidates)} stable frames (motion <= 1.0)")
+    return candidates
 
 
 @app.function(
@@ -133,10 +111,10 @@ def analyze_frame_chunk(
 )
 def analyze_video(video_url: str, scan_id: str, item_type: str = "card") -> dict:
     """
-    PARALLEL VERSION: Main entry point with parallel frame processing.
+    Main entry point for video analysis.
     
-    Maintains 100% precision by analyzing every frame, just distributes
-    the work across multiple Modal containers for 3-5x speedup.
+    Downloads video once and processes all frames sequentially.
+    For typical 5-10 second videos, this is efficient and reliable.
     
     Args:
         video_url: Public URL of the video in Supabase
@@ -165,7 +143,7 @@ def analyze_video(video_url: str, scan_id: str, item_type: str = "card") -> dict
     # Note: We use REST API for storage uploads (full support for new sb_secret_ keys)
     supabase = None
     
-    print(f"🎬 Processing scan: {scan_id} (PARALLEL MODE - Full Precision)")
+    print(f"🎬 Processing scan: {scan_id}")
     print(f"📹 Video URL: {video_url}")
     print(f"🏷️ Item type: {item_type}")
     
@@ -176,7 +154,7 @@ def analyze_video(video_url: str, scan_id: str, item_type: str = "card") -> dict
         output_dir = tmpdir / "analysis"
         output_dir.mkdir()
         
-        # Download video
+        # Download video ONCE
         print("📥 Downloading video...")
         response = requests.get(video_url, stream=True)
         response.raise_for_status()
@@ -195,46 +173,9 @@ def analyze_video(video_url: str, scan_id: str, item_type: str = "card") -> dict
         
         print(f"   Video: {total_frames} frames, {fps:.1f} fps, {total_frames/fps:.1f}s")
         
-        # Determine optimal number of parallel workers
-        # For precision: ensure each chunk has enough frames for accurate optical flow
-        min_frames_per_chunk = 30  # Need enough frames for meaningful motion analysis
-        max_workers = 10
-        num_workers = min(max_workers, max(2, total_frames // min_frames_per_chunk))
-        
-        chunk_size = total_frames // num_workers
-        
-        print(f"🔀 Splitting into {num_workers} parallel workers...")
-        print(f"   Each worker analyzes ~{chunk_size} frames")
-        
-        # Prepare chunk parameters with 1-frame overlap for optical flow continuity
-        chunk_params = []
-        for i in range(num_workers):
-            start = i * chunk_size
-            # Add 1 frame overlap (except last chunk)
-            end = min((i + 1) * chunk_size + (1 if i < num_workers - 1 else 0), total_frames)
-            chunk_params.append({
-                'video_url': video_url,
-                'start_frame': start,
-                'end_frame': end,
-                'fps': fps,
-                'chunk_id': i
-            })
-        
-        # Process chunks in parallel using Modal's .map()
-        print(f"⚡ Processing {num_workers} chunks in parallel...")
-        all_candidates = []
-        
-        for candidates in analyze_frame_chunk.map(
-            [p['video_url'] for p in chunk_params],
-            [p['start_frame'] for p in chunk_params],
-            [p['end_frame'] for p in chunk_params],
-            [p['fps'] for p in chunk_params],
-            [p['chunk_id'] for p in chunk_params],
-        ):
-            all_candidates.extend(candidates)
-        
-        print(f"✅ Analyzed ALL {total_frames} frames")
-        print(f"   Found {len(all_candidates)} stable frames (motion ≤ 1.0)")
+        # Find golden frame candidates (single-pass, no re-download)
+        print("🔍 Finding best frames...")
+        all_candidates = find_golden_frame_candidates(str(video_path), total_frames, fps)
         
         # Sort by sharpness (highest first) - SAME SELECTION LOGIC
         all_candidates.sort(key=lambda x: x['sharpness'], reverse=True)
@@ -280,9 +221,9 @@ def analyze_video(video_url: str, scan_id: str, item_type: str = "card") -> dict
         
         cap.release()
         
-        # Run glint analysis
-        print("\n🔦 Running glint analysis...")
-        analysis_results = run_glint_analysis(golden_frames, str(output_dir))
+        # Run defect analysis
+        print("\n🔍 Running defect analysis...")
+        analysis_results = run_defect_analysis(golden_frames, str(output_dir))
         
         # Upload results to Supabase
         print("\n📤 Uploading to Supabase...")
@@ -292,104 +233,7 @@ def analyze_video(video_url: str, scan_id: str, item_type: str = "card") -> dict
         return result
 
 
-def detect_and_warp_comic(image) -> tuple:
-    """
-    Detect comic corners and apply perspective warp to flatten image.
-    
-    Returns:
-        (warped_image, success_flag)
-    """
-    import cv2
-    import numpy as np
-    
-    print(f"        [WARP] Starting corner detection...")
-    print(f"        [WARP] Image shape: {image.shape}")
-    
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-    edges = cv2.Canny(blurred, 50, 150)
-    
-    kernel = np.ones((3, 3), np.uint8)
-    edges = cv2.dilate(edges, kernel, iterations=2)
-    
-    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    
-    print(f"        [WARP] Found {len(contours) if contours else 0} contours")
-    
-    if not contours:
-        print(f"        [WARP] FAIL: No contours found")
-        return None, False
-    
-    contours = sorted(contours, key=cv2.contourArea, reverse=True)
-    print(f"        [WARP] Largest contour area: {cv2.contourArea(contours[0])}")
-    
-    # Find largest quadrilateral
-    for i, contour in enumerate(contours[:5]):
-        peri = cv2.arcLength(contour, True)
-        approx = cv2.approxPolyDP(contour, 0.02 * peri, True)
-        
-        print(f"        [WARP] Contour {i}: {len(approx)} points, area={cv2.contourArea(contour):.0f}")
-        
-        if len(approx) == 4:
-            area = cv2.contourArea(approx)
-            image_area = image.shape[0] * image.shape[1]
-            
-            print(f"        [WARP] Quad found! Area: {area:.0f} ({area/image_area*100:.1f}% of image)")
-            
-            if area > 0.1 * image_area:
-                corners = approx.reshape(4, 2).astype(np.float32)
-                
-                # Order corners: TL, TR, BR, BL
-                rect = np.zeros((4, 2), dtype=np.float32)
-                s = corners.sum(axis=1)
-                rect[0] = corners[np.argmin(s)]  # Top-left
-                rect[2] = corners[np.argmax(s)]  # Bottom-right
-                
-                diff = np.diff(corners, axis=1)
-                rect[1] = corners[np.argmin(diff)]  # Top-right
-                rect[3] = corners[np.argmax(diff)]  # Bottom-left
-                
-                print(f"        [WARP] Corners ordered: TL={rect[0]}, TR={rect[1]}, BR={rect[2]}, BL={rect[3]}")
-                
-                # Calculate output dimensions
-                tl, tr, br, bl = rect
-                width_top = np.linalg.norm(tr - tl)
-                width_bottom = np.linalg.norm(br - bl)
-                target_width = int(max(width_top, width_bottom))
-                
-                height_left = np.linalg.norm(bl - tl)
-                height_right = np.linalg.norm(br - tr)
-                target_height = int(max(height_left, height_right))
-                
-                print(f"        [WARP] Target dimensions: {target_width}x{target_height}")
-                
-                # Destination points
-                dst = np.array([
-                    [0, 0],
-                    [target_width - 1, 0],
-                    [target_width - 1, target_height - 1],
-                    [0, target_height - 1]
-                ], dtype=np.float32)
-                
-                # Apply perspective transform
-                M = cv2.getPerspectiveTransform(rect, dst)
-                warped = cv2.warpPerspective(
-                    image, M, (target_width, target_height),
-                    flags=cv2.INTER_LANCZOS4,
-                    borderMode=cv2.BORDER_CONSTANT,
-                    borderValue=(0, 0, 0)
-                )
-                
-                print(f"        [WARP] SUCCESS! Warped to {warped.shape}")
-                return warped, True
-            else:
-                print(f"        [WARP] Quad too small ({area/image_area*100:.1f}% < 10%)")
-    
-    print(f"        [WARP] FAIL: No valid quadrilateral found")
-    return None, False
-
-
-def run_glint_analysis(golden_frames: list, output_dir: str) -> dict:
+def run_defect_analysis(golden_frames: list, output_dir: str) -> dict:
     """
     Simplified defect analysis - analyzes frames directly without warping.
     
@@ -435,8 +279,13 @@ def run_glint_analysis(golden_frames: list, output_dir: str) -> dict:
     
     print(f"   🔍 Analyzing {len(frames_to_analyze)} frames at {w}x{h}...")
     
+    # Helper function to normalize arrays to 0-1 range
+    def safe_normalize(arr):
+        arr_max = arr.max()
+        return arr / arr_max if arr_max > 0 else arr
+    
     # =========================================
-    # ANALYZE ALL FRAMES (not just first!)
+    # ANALYZE ALL FRAMES
     # =========================================
     frame_defect_maps = []
     
@@ -468,10 +317,6 @@ def run_glint_analysis(golden_frames: list, output_dir: str) -> dict:
         local_std = np.sqrt(np.maximum(local_sqr_mean - local_mean**2, 0))
         
         # Normalize each component to 0-1 range
-        def safe_normalize(arr):
-            arr_max = arr.max()
-            return arr / arr_max if arr_max > 0 else arr
-        
         edge_norm = safe_normalize(edge_combined)
         laplacian_norm = safe_normalize(laplacian_abs)
         sobel_norm = safe_normalize(sobel_magnitude)
@@ -501,11 +346,6 @@ def run_glint_analysis(golden_frames: list, output_dir: str) -> dict:
         gray_frames = [cv2.cvtColor(f, cv2.COLOR_BGR2GRAY).astype(np.float32) for f in frames_to_analyze]
         stack = np.stack(gray_frames, axis=0)
         variance_map = np.var(stack, axis=0)
-        
-        def safe_normalize(arr):
-            arr_max = arr.max()
-            return arr / arr_max if arr_max > 0 else arr
-        
         variance_norm = safe_normalize(variance_map)
         
         # BOOST variance contribution - creases catch light differently
@@ -541,7 +381,7 @@ def run_glint_analysis(golden_frames: list, output_dir: str) -> dict:
     # Store combined_defect_map for heatmap visualization
     defect_score_map = combined_defect_map
     
-    # Use first warped frame as reference for visualization
+    # Use first frame as reference for visualization
     reference = frames_to_analyze[0]
     
     # =========================================
@@ -577,7 +417,6 @@ def run_glint_analysis(golden_frames: list, output_dir: str) -> dict:
     for name, (x1, y1, x2, y2) in regions.items():
         # Extract region crops
         crop = reference[y1:y2, x1:x2]
-        crop_gray = gray[y1:y2, x1:x2]
         crop_defect = defect_mask[y1:y2, x1:x2]
         crop_score_map = defect_score_map[y1:y2, x1:x2]
         
@@ -660,12 +499,11 @@ def run_glint_analysis(golden_frames: list, output_dir: str) -> dict:
     # 6. OVERALL DAMAGE SCORE
     # =========================================
     # Calculate weighted overall damage score
-    # Corners and spine are more critical for grading
+    # Quadrant corners and center are weighted for overall condition
     region_weights = {
-        "corner_tl": 0.15, "corner_tr": 0.15,
-        "corner_bl": 0.15, "corner_br": 0.15,
-        "spine": 0.20,
-        "surface": 0.20
+        "top_left": 0.15, "top_right": 0.15,
+        "bottom_left": 0.15, "bottom_right": 0.15,
+        "center": 0.30, "full_frame": 0.10
     }
     
     overall_damage_score = sum(
