@@ -1,11 +1,12 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import Cropper, { Area } from 'react-easy-crop';
-import { X, Camera, Check, Loader2 } from 'lucide-react';
+import { X, Camera, Check, Loader2, Upload } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { trainDefect } from '@/app/actions/train-defect';
 import { trainRegion } from '@/app/actions/train-region';
+import { useCamera } from '@/lib/hooks/useCamera';
 
 const DEFECT_TYPES = [
   "Spine Tick",
@@ -41,8 +42,41 @@ export default function TrainingModal({ onClose }: { onClose: () => void }) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [step, setStep] = useState<'mode' | 'capture' | 'crop' | 'tag'>('mode');
   const [trainingMode, setTrainingMode] = useState<TrainingMode>('defect');
+  
+  // Use camera hook
+  const { videoRef, isStreaming, error: cameraError, startCamera, stopCamera, capturePhoto } = useCamera();
 
-  // 1. Handle File Input (Camera)
+  // Start camera when entering capture step
+  useEffect(() => {
+    if (step === 'capture') {
+      startCamera();
+    } else {
+      stopCamera();
+    }
+  }, [step, startCamera, stopCamera]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      stopCamera();
+    };
+  }, [stopCamera]);
+
+  // Handle camera capture
+  const handleCameraCapture = async () => {
+    const blob = await capturePhoto();
+    if (blob) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        setImageSrc(reader.result as string);
+        stopCamera();
+        setStep('crop');
+      };
+      reader.readAsDataURL(blob);
+    }
+  };
+
+  // 1. Handle File Input (Camera) - Fallback
   const onFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       const file = e.target.files[0];
@@ -189,17 +223,57 @@ export default function TrainingModal({ onClose }: { onClose: () => void }) {
         )}
 
         {step === 'capture' && (
-          <label className="flex flex-col items-center gap-4 cursor-pointer p-8 rounded-2xl bg-gray-900 border-2 border-dashed border-gray-700 active:border-purple-500 w-full max-w-sm">
-            <Camera size={48} className="text-purple-500" />
-            <span className="text-gray-300 font-medium">Take Photo of Defect</span>
-            <input 
-              type="file" 
-              accept="image/*" 
-              capture="environment" 
-              className="hidden" 
-              onChange={onFileChange}
-            />
-          </label>
+          <div className="w-full max-w-2xl flex flex-col items-center gap-4">
+            {/* Camera Stream */}
+            {isStreaming ? (
+              <div className="relative w-full aspect-[3/4] bg-black rounded-xl overflow-hidden">
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  playsInline
+                  className="w-full h-full object-cover"
+                />
+                
+                {/* Capture Button */}
+                <div className="absolute bottom-6 left-0 right-0 flex justify-center">
+                  <button
+                    onClick={handleCameraCapture}
+                    className="w-16 h-16 rounded-full bg-white border-4 border-gray-300 hover:bg-gray-100 transition-all active:scale-95"
+                  >
+                    <Camera className="w-8 h-8 mx-auto text-black" />
+                  </button>
+                </div>
+              </div>
+            ) : cameraError ? (
+              // Error state - show file input fallback
+              <div className="flex flex-col items-center gap-4 w-full max-w-sm">
+                <div className="text-red-400 text-sm text-center p-4 bg-red-900/20 rounded-lg border border-red-700/30">
+                  {cameraError}
+                </div>
+                <label className="flex flex-col items-center gap-4 cursor-pointer p-8 rounded-2xl bg-gray-900 border-2 border-dashed border-gray-700 hover:border-purple-500 w-full transition-colors">
+                  <Upload size={48} className="text-purple-500" />
+                  <span className="text-gray-300 font-medium text-center">
+                    Upload Photo Instead
+                  </span>
+                  <span className="text-gray-500 text-xs text-center">
+                    Or enable camera permissions and try again
+                  </span>
+                  <input 
+                    type="file" 
+                    accept="image/*" 
+                    className="hidden" 
+                    onChange={onFileChange}
+                  />
+                </label>
+              </div>
+            ) : (
+              // Loading state
+              <div className="flex flex-col items-center gap-4 p-8">
+                <Loader2 className="w-12 h-12 text-purple-500 animate-spin" />
+                <span className="text-gray-400">Starting camera...</span>
+              </div>
+            )}
+          </div>
         )}
 
         {step === 'crop' && imageSrc && (
