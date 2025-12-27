@@ -374,8 +374,6 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
                 </button>
               )
             )}
-              </div>
-            )}
           </div>
         </div>
 
