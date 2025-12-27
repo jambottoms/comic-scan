@@ -300,6 +300,9 @@ def detect_and_warp_comic(image) -> tuple:
     import cv2
     import numpy as np
     
+    print(f"        [WARP] Starting corner detection...")
+    print(f"        [WARP] Image shape: {image.shape}")
+    
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
     edges = cv2.Canny(blurred, 50, 150)
@@ -309,19 +312,27 @@ def detect_and_warp_comic(image) -> tuple:
     
     contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     
+    print(f"        [WARP] Found {len(contours) if contours else 0} contours")
+    
     if not contours:
+        print(f"        [WARP] FAIL: No contours found")
         return None, False
     
     contours = sorted(contours, key=cv2.contourArea, reverse=True)
+    print(f"        [WARP] Largest contour area: {cv2.contourArea(contours[0])}")
     
     # Find largest quadrilateral
-    for contour in contours[:5]:
+    for i, contour in enumerate(contours[:5]):
         peri = cv2.arcLength(contour, True)
         approx = cv2.approxPolyDP(contour, 0.02 * peri, True)
+        
+        print(f"        [WARP] Contour {i}: {len(approx)} points, area={cv2.contourArea(contour):.0f}")
         
         if len(approx) == 4:
             area = cv2.contourArea(approx)
             image_area = image.shape[0] * image.shape[1]
+            
+            print(f"        [WARP] Quad found! Area: {area:.0f} ({area/image_area*100:.1f}% of image)")
             
             if area > 0.1 * image_area:
                 corners = approx.reshape(4, 2).astype(np.float32)
@@ -336,6 +347,8 @@ def detect_and_warp_comic(image) -> tuple:
                 rect[1] = corners[np.argmin(diff)]  # Top-right
                 rect[3] = corners[np.argmax(diff)]  # Bottom-left
                 
+                print(f"        [WARP] Corners ordered: TL={rect[0]}, TR={rect[1]}, BR={rect[2]}, BL={rect[3]}")
+                
                 # Calculate output dimensions
                 tl, tr, br, bl = rect
                 width_top = np.linalg.norm(tr - tl)
@@ -345,6 +358,8 @@ def detect_and_warp_comic(image) -> tuple:
                 height_left = np.linalg.norm(bl - tl)
                 height_right = np.linalg.norm(br - tr)
                 target_height = int(max(height_left, height_right))
+                
+                print(f"        [WARP] Target dimensions: {target_width}x{target_height}")
                 
                 # Destination points
                 dst = np.array([
@@ -363,8 +378,12 @@ def detect_and_warp_comic(image) -> tuple:
                     borderValue=(0, 0, 0)
                 )
                 
+                print(f"        [WARP] SUCCESS! Warped to {warped.shape}")
                 return warped, True
+            else:
+                print(f"        [WARP] Quad too small ({area/image_area*100:.1f}% < 10%)")
     
+    print(f"        [WARP] FAIL: No valid quadrilateral found")
     return None, False
 
 
