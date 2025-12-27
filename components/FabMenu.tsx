@@ -7,10 +7,16 @@ interface FabMenuProps {
   onRecord: () => void;
   onUpload: () => void;
   onTrain: () => void;
+  isHidden?: boolean;
 }
 
-export default function FabMenu({ onRecord, onUpload, onTrain }: FabMenuProps) {
+export default function FabMenu({ onRecord, onUpload, onTrain, isHidden = false }: FabMenuProps) {
   const [isOpen, setIsOpen] = useState(false);
+
+  // Hide the entire FAB when a modal is open
+  if (isHidden) {
+    return null;
+  }
 
   return (
     <div className="fixed bottom-6 right-6 z-[9999] flex flex-col items-end gap-4">

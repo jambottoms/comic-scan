@@ -255,6 +255,7 @@ export default function Dashboard() {
         onRecord={handleRecord}
         onUpload={handleUpload}
         onTrain={handleTrain}
+        isHidden={isGradeBookOpen || isTrainingOpen}
       />
 
       <GradeBookModal 
