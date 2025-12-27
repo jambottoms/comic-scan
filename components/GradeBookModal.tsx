@@ -239,8 +239,11 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
       if (msg.includes("timeout")) msg += " Try a shorter video.";
       setError(msg);
       setShowUploadModal(false);
+      // Keep loading true for 3 seconds so error stays visible (camera won't restart)
+      setTimeout(() => {
+        setLoading(false);
+      }, 5000);
     } finally {
-      setLoading(false);
       URL.revokeObjectURL(videoUrl);
       uploadXhrRef.current = null;
     }
@@ -349,17 +352,17 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
                             </div>
                         )}
 
-                        {/* Identify Overlay Grid (Optional visual aid) */}
-                        {activeTab === 'identify' && !loading && (
-                            <div className="absolute inset-0 pointer-events-none">
-                                <div className="absolute top-[15%] left-0 right-0 flex flex-col items-center justify-center gap-4">
-                                    <div className="w-64 h-80 border-2 border-purple-400 rounded-lg shadow-[0_0_15px_rgba(168,85,247,0.5)] bg-transparent" />
-                                    <div className="text-center text-white/90 text-sm font-medium shadow-black drop-shadow-md bg-black/40 px-4 py-2 rounded-full backdrop-blur-sm">
-                                        Position comic cover in frame
-                                    </div>
-                                </div>
-                            </div>
-                        )}
+                                        {/* Identify Overlay Grid (Optional visual aid) */}
+                                        {activeTab === 'identify' && !loading && (
+                                            <div className="absolute inset-0 pointer-events-none">
+                                                <div className="absolute top-[15%] left-0 right-0 flex flex-col items-center justify-center gap-4">
+                                                    <div className="w-64 h-80 border-2 border-purple-400 rounded-lg shadow-[0_0_15px_rgba(168,85,247,0.5)] bg-transparent" />
+                                                    <div className="text-center text-white/90 text-sm font-medium shadow-black drop-shadow-md bg-black/40 px-4 py-2 rounded-full backdrop-blur-sm">
+                                                        Position item in frame
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        )}
                     </div>
 
                     {/* Controls Bar - Floating at bottom */}
@@ -430,14 +433,58 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
                 </div>
             )}
 
-            {/* Error Overlay */}
+            {/* Error Overlay - Full screen when loading (after error) */}
             {error && (
-                <div className="absolute top-4 left-4 right-4 z-50 animate-in slide-in-from-top-4 fade-in">
-                    <div className="bg-red-500/90 backdrop-blur border border-red-500 text-white px-4 py-3 rounded-xl shadow-xl flex items-start gap-3">
-                        <div className="bg-white/20 p-1 rounded-full shrink-0 mt-0.5">
-                            <X size={16} />
+                <div className={`absolute inset-0 z-50 flex items-center justify-center p-6 ${loading ? 'bg-black/95' : 'bg-transparent pointer-events-none'}`}>
+                    <div className={`bg-red-500/95 backdrop-blur border border-red-400 text-white px-6 py-5 rounded-2xl shadow-2xl max-w-sm w-full relative ${loading ? '' : 'pointer-events-auto'}`}>
+                        {/* Close button - top right */}
+                        <button 
+                            onClick={() => { setError(null); setLoading(false); }}
+                            className="absolute top-3 right-3 p-2 hover:bg-white/20 rounded-full transition-colors"
+                            aria-label="Close error"
+                        >
+                            <X size={20} />
+                        </button>
+                        
+                        <h3 className="font-bold text-lg mb-3 pr-8">Upload Failed</h3>
+                        
+                        {/* Copyable error text */}
+                        <div 
+                            className="p-3 bg-black/30 rounded-lg text-sm text-white/90 leading-relaxed select-all cursor-text font-mono break-words"
+                            onClick={(e) => {
+                                // Select all text on click for easy copying
+                                const range = document.createRange();
+                                range.selectNodeContents(e.currentTarget);
+                                const selection = window.getSelection();
+                                selection?.removeAllRanges();
+                                selection?.addRange(range);
+                            }}
+                        >
+                            {error}
                         </div>
-                        <p className="text-sm font-medium">{error}</p>
+                        <p className="text-xs text-white/60 mt-2 text-center">Tap error to select • Long press to copy</p>
+                        <div className="flex gap-2 mt-4">
+                            <button 
+                                onClick={() => {
+                                    navigator.clipboard.writeText(error);
+                                    // Brief visual feedback
+                                    const btn = document.activeElement as HTMLButtonElement;
+                                    if (btn) {
+                                        btn.textContent = 'Copied!';
+                                        setTimeout(() => { btn.textContent = 'Copy Error'; }, 1500);
+                                    }
+                                }}
+                                className="flex-1 py-3 bg-white/10 hover:bg-white/20 rounded-xl font-medium transition-colors text-sm"
+                            >
+                                Copy Error
+                            </button>
+                            <button 
+                                onClick={() => { setError(null); setLoading(false); }}
+                                className="flex-1 py-3 bg-white/20 hover:bg-white/30 rounded-xl font-medium transition-colors"
+                            >
+                                Try Again
+                            </button>
+                        </div>
                     </div>
                 </div>
             )}

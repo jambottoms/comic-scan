@@ -178,7 +178,35 @@ export async function analyzeComicFromUrl(videoUrl: string, mimeType?: string): 
     const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({
       model: "gemini-2.5-flash",
-      systemInstruction: "You are a professional comic book grading service. Analyze the video objectively and report findings using standard CGC grading terminology. Identify the comic (title, issue number, year, variant if applicable). Document all visible defects and condition issues factually. Use precise, clinical language. For each finding, include the timestamp in MM:SS format where it appears. Return JSON with: title, issue, estimatedGrade (CGC scale: 0.5-10.0), reasoning. In reasoning, list each defect or condition issue with its timestamp. Use objective descriptors: 'spine stress', 'corner blunting', 'color break', 'staple rust', etc. Avoid subjective language."
+      systemInstruction: `You are a professional collectibles grading service. You can grade comic books, trading cards (Magic: The Gathering, Pokémon, sports cards, etc.), and other collectibles.
+
+CRITICAL: You MUST ALWAYS respond with valid JSON, no matter what. Never respond with plain text.
+
+First, identify what TYPE of collectible is being shown:
+- "comic" for comic books
+- "card" for trading cards (MTG, Pokemon, sports, TCG, etc.)
+- "toy" for action figures, figurines, etc.
+- "other" for other collectibles
+- "unknown" if you cannot identify the item
+
+RESPONSE FORMAT (always use this JSON structure):
+{
+  "itemType": "comic" | "card" | "toy" | "other" | "unknown",
+  "title": "Name of item (card name, comic title, toy name)",
+  "issue": "Issue #, Set name, or Series (use 'N/A' if not applicable)",
+  "year": "Year if identifiable",
+  "variant": "Variant info if applicable (foil, first edition, chase, etc.)",
+  "estimatedGrade": "X.X on appropriate scale (see below)",
+  "gradingScale": "CGC" | "PSA" | "BGS" | "Custom",
+  "reasoning": "Detailed condition notes with timestamps"
+}
+
+GRADING SCALES BY TYPE:
+- Comics: CGC 0.5-10.0 scale. Terms: spine stress, corner blunting, color break, staple rust, page tanning
+- Trading Cards: PSA 1-10 or BGS 1-10 scale. Terms: centering, corners, edges, surface, print lines, whitening
+- Toys: Custom 1-10 scale. Terms: paint wear, joint looseness, accessory completeness, package condition
+
+Include timestamps (MM:SS) for each defect observation. Be objective and clinical.`
     });
     
     // Add timeout wrapper - Vercel has 300s timeout, so use 280s to be safe
@@ -187,7 +215,7 @@ export async function analyzeComicFromUrl(videoUrl: string, mimeType?: string): 
     });
 
     // Step 6: The Final Call - Pass the file to model.generateContent using:
-    // [{ fileData: { mimeType: 'video/mp4', fileUri: file.uri } }, { text: "Analyze this comic video." }]
+    // [{ fileData: { mimeType: 'video/mp4', fileUri: file.uri } }, { text: "Analyze this collectible video." }]
     const payload = [
       { 
         fileData: { 
@@ -196,7 +224,23 @@ export async function analyzeComicFromUrl(videoUrl: string, mimeType?: string): 
         } 
       }, 
       { 
-        text: "Analyze this comic book video. Identify: title, issue number, year, variant (if any). Document all visible defects and condition issues using standard CGC grading terminology. For each finding, include timestamp in MM:SS format. Return JSON: {title, issue, estimatedGrade (0.5-10.0 CGC scale), reasoning}. In reasoning, list each defect with timestamp. Use objective terms: 'spine stress lines', 'corner wear', 'cover crease', 'page tanning', 'staple rust', 'color break', etc. Be concise and factual. Format: 'Defect name at MM:SS - brief description'." 
+        text: `Analyze this collectible. RESPOND ONLY WITH VALID JSON.
+
+Identify the item type (comic, card, toy, other) and grade it appropriately.
+
+JSON format:
+{
+  "itemType": "comic|card|toy|other|unknown",
+  "title": "Item name",
+  "issue": "Issue/Set/Series or N/A",
+  "year": "Year if known",
+  "variant": "Variant info or null",
+  "estimatedGrade": "X.X",
+  "gradingScale": "CGC|PSA|BGS|Custom",
+  "reasoning": "Condition notes with MM:SS timestamps"
+}
+
+Use appropriate grading scale: CGC for comics, PSA/BGS for cards. Be concise and objective.` 
       }
     ];
     
@@ -255,12 +299,32 @@ export async function analyzeComicFromUrl(videoUrl: string, mimeType?: string): 
     try {
       const parsedResult = JSON.parse(cleanText);
       console.log("[Server Action] Parsed JSON result:", parsedResult);
+      
+      // Check if the AI couldn't identify the item
+      if (parsedResult.itemType === 'unknown') {
+        return {
+          success: false,
+          error: `Could not identify this collectible. ${parsedResult.reasoning || 'Please try again with better lighting or a clearer video.'}`
+        };
+      }
+      
       return { success: true, data: parsedResult };
     } catch (parseError) {
       console.error("Failed to parse JSON:", cleanText);
+      
+      // Check if the text indicates an identification issue
+      const lowerText = cleanText.toLowerCase();
+      if (lowerText.includes('cannot identify') || lowerText.includes('unable to') || 
+          lowerText.includes('not clear') || lowerText.includes('cannot determine')) {
+        return { 
+          success: false, 
+          error: `Could not identify this item. The AI reported: "${cleanText.substring(0, 150)}..."` 
+        };
+      }
+      
       return { 
         success: false, 
-        error: `Invalid JSON response from AI: ${cleanText.substring(0, 100)}` 
+        error: `Invalid JSON response from AI: ${cleanText.substring(0, 200)}` 
       };
     }
 

@@ -2,6 +2,7 @@
 
 # Analysis output
 temp_analysis/
+test_video.mp4
 
 # Python
 venv/

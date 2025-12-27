@@ -2,7 +2,7 @@
 
 import { useRef, useState, useEffect } from 'react';
 import Link from 'next/link';
-import { Bookmark, BookmarkCheck, Trash2, Loader2 } from 'lucide-react';
+import { Bookmark, BookmarkCheck, Trash2, Loader2, ScanLine } from 'lucide-react';
 import VideoInvestigatorModal from './VideoInvestigatorModal';
 import { saveScan, deleteSavedScan, isScanSaved } from '@/lib/saved-scans';
 
@@ -310,8 +310,8 @@ export default function ResultCard({ result, videoUrl, thumbnail, savedScanId, o
                <div className="flex items-center gap-2 text-gray-300">
                  <span className="text-lg font-bold">#{issue.replace('#', '')}</span>
                </div>
-               <div className="text-xs text-gray-500 mt-1 font-mono uppercase tracking-wide">
-                 ComicScan Graded • {new Date().getFullYear()}
+                               <div className="text-xs text-gray-500 mt-1 font-mono uppercase tracking-wide">
+                 GradeVault • {new Date().getFullYear()}
                </div>
             </div>
           </div>
@@ -420,6 +420,73 @@ export default function ResultCard({ result, videoUrl, thumbnail, savedScanId, o
           </div>
         )}
       </div>
+
+      {/* CV Analysis Section - Golden Frames & Defect Analysis */}
+      {(result.analysisImages || result.goldenFrames || result.defectMask) && (
+        <div className="bg-gray-800 p-4 rounded-xl border border-gray-700 max-w-2xl w-full mb-4">
+          <h3 className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-3 flex items-center gap-2">
+            <ScanLine className="w-4 h-4" />
+            Condition Analysis
+          </h3>
+          
+          {/* Golden Frames Grid */}
+          {result.goldenFrames && result.goldenFrames.length > 0 && (
+            <div className="mb-4">
+              <p className="text-gray-400 text-xs mb-2">Golden Frames (Sharpest Captures)</p>
+              <div className="grid grid-cols-3 gap-2">
+                {result.goldenFrames.slice(0, 3).map((frame: string, idx: number) => (
+                  <div key={idx} className="aspect-[3/4] rounded-lg overflow-hidden border border-gray-600 bg-gray-900">
+                    <img src={frame} alt={`Golden Frame ${idx + 1}`} className="w-full h-full object-cover" />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          
+          {/* Defect Mask / Heatmap */}
+          {result.defectMask && (
+            <div className="mb-4">
+              <p className="text-gray-400 text-xs mb-2">Defect Heatmap</p>
+              <div className="rounded-lg overflow-hidden border border-gray-600 bg-gray-900">
+                <img src={result.defectMask} alt="Defect Analysis Heatmap" className="w-full h-auto" />
+              </div>
+            </div>
+          )}
+          
+          {/* Corner & Spine Crops */}
+          {result.regionCrops && Object.keys(result.regionCrops).length > 0 && (
+            <div>
+              <p className="text-gray-400 text-xs mb-2">Region Analysis</p>
+              <div className="grid grid-cols-5 gap-1">
+                {['corner_tl', 'corner_tr', 'spine', 'corner_bl', 'corner_br'].map((region) => (
+                  result.regionCrops[region] && (
+                    <div key={region} className="relative">
+                      <div className="aspect-square rounded overflow-hidden border border-gray-600 bg-gray-900">
+                        <img 
+                          src={result.regionCrops[region]} 
+                          alt={region.replace('_', ' ')} 
+                          className="w-full h-full object-cover" 
+                        />
+                      </div>
+                      <span className="absolute bottom-0 left-0 right-0 bg-black/70 text-[8px] text-center text-gray-300 py-0.5 uppercase">
+                        {region.replace('corner_', '').replace('_', '')}
+                      </span>
+                    </div>
+                  )
+                ))}
+              </div>
+            </div>
+          )}
+          
+          {/* Pixels per MM info */}
+          {result.pixelsPerMm && (
+            <div className="mt-3 pt-3 border-t border-gray-700 text-xs text-gray-500 flex justify-between">
+              <span>Resolution: {result.pixelsPerMm.toFixed(1)} px/mm</span>
+              <span>≈ {(result.pixelsPerMm * 25.4).toFixed(0)} DPI</span>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Video Preview - Moved to Bottom */}
       {videoUrl && (

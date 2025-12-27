@@ -22,10 +22,11 @@ import glob
 
 
 # Region definitions (as percentages of image dimensions)
+# Works for comics (spine + corners) and cards (corners + surface)
 REGIONS = {
     "spine": {
         "x_start": 0.0,
-        "x_end": 0.08,      # Left 8% of image
+        "x_end": 0.08,      # Left 8% of image (comics only)
         "y_start": 0.0,
         "y_end": 1.0
     },
@@ -52,6 +53,12 @@ REGIONS = {
         "x_end": 1.0,
         "y_start": 0.88,
         "y_end": 1.0
+    },
+    "surface": {
+        "x_start": 0.20,    # Center region for surface analysis (cards)
+        "x_end": 0.80,
+        "y_start": 0.20,
+        "y_end": 0.80
     }
 }
 

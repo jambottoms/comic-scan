@@ -60,7 +60,7 @@ export default function ResultSheet({
         
         {/* Header */}
         <div className="p-4 flex items-center justify-between bg-gray-900 z-20 relative border-b border-gray-800">
-            <h2 className="text-xl font-bold text-white pl-2">Comic Grade</h2>
+            <h2 className="text-xl font-bold text-white pl-2">Grade Results</h2>
             <button onClick={handleClose} className="p-2 hover:bg-gray-800 rounded-full text-gray-400 hover:text-white transition-colors">
                 <ChevronDown size={28} />
             </button>

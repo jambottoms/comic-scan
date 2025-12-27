@@ -21,9 +21,18 @@ from typing import List, Tuple, Optional
 import glob
 
 
-# Standard Modern Comic Book Dimensions (in mm)
+# Standard Collectible Dimensions (in mm)
+# Comic Books (Modern Age)
 COMIC_WIDTH_MM = 168.275
 COMIC_HEIGHT_MM = 260.35
+
+# Trading Cards (Standard - MTG, Pokemon, Sports)
+CARD_WIDTH_MM = 63.5    # 2.5 inches
+CARD_HEIGHT_MM = 88.9   # 3.5 inches
+
+# Default dimensions (can be overridden via CLI)
+DEFAULT_WIDTH_MM = COMIC_WIDTH_MM
+DEFAULT_HEIGHT_MM = COMIC_HEIGHT_MM
 
 
 @dataclass
@@ -250,20 +259,29 @@ def perspective_transform(
 
 def calculate_pixels_per_mm(
     width_px: int,
-    height_px: int
+    height_px: int,
+    item_type: str = "comic"
 ) -> Tuple[float, float, float]:
     """
-    Calculate pixels per mm based on standard comic dimensions.
+    Calculate pixels per mm based on collectible dimensions.
     
     Args:
         width_px: Output image width in pixels
         height_px: Output image height in pixels
+        item_type: Type of collectible ("comic", "card")
     
     Returns:
         Tuple of (px_per_mm_x, px_per_mm_y, px_per_mm_avg)
     """
-    px_per_mm_x = width_px / COMIC_WIDTH_MM
-    px_per_mm_y = height_px / COMIC_HEIGHT_MM
+    if item_type == "card":
+        width_mm = CARD_WIDTH_MM
+        height_mm = CARD_HEIGHT_MM
+    else:  # Default to comic
+        width_mm = COMIC_WIDTH_MM
+        height_mm = COMIC_HEIGHT_MM
+    
+    px_per_mm_x = width_px / width_mm
+    px_per_mm_y = height_px / height_mm
     px_per_mm_avg = (px_per_mm_x + px_per_mm_y) / 2
     
     return px_per_mm_x, px_per_mm_y, px_per_mm_avg
@@ -354,11 +372,24 @@ def main():
     else:
         input_pattern = sys.argv[1]
     
+    # Check for --type argument
+    item_type = "comic"  # Default
+    for i, arg in enumerate(sys.argv):
+        if arg == "--type" and i + 1 < len(sys.argv):
+            item_type = sys.argv[i + 1].lower()
+            break
+    
     print("=" * 60)
-    print("📐 Perspective Warp - Comic Book Grading")
+    print("📐 Perspective Warp - Collectibles Grading")
     print("=" * 60)
     print()
-    print(f"Standard Comic Dimensions: {COMIC_WIDTH_MM} x {COMIC_HEIGHT_MM} mm")
+    
+    if item_type == "card":
+        print(f"Item Type: Trading Card")
+        print(f"Standard Dimensions: {CARD_WIDTH_MM} x {CARD_HEIGHT_MM} mm")
+    else:
+        print(f"Item Type: Comic Book")
+        print(f"Standard Dimensions: {COMIC_WIDTH_MM} x {COMIC_HEIGHT_MM} mm")
     
     # Find input files
     if os.path.isfile(input_pattern):

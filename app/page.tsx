@@ -88,7 +88,7 @@ export default function Dashboard() {
     <main className="min-h-screen bg-black text-white p-4 pb-24 flex flex-col items-center overflow-y-auto">
       <div className="w-full max-w-2xl flex flex-col items-center">
         <h1 className="text-2xl sm:text-3xl font-bold mb-2 text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-blue-400">
-            ComicScan
+            GradeVault
         </h1>
         
         {versionInfo && (
@@ -111,10 +111,10 @@ export default function Dashboard() {
             </div>
             ) : history.length === 0 ? (
             <div className="text-center text-gray-500 py-16 border border-gray-800 rounded-2xl bg-gray-900/50 flex flex-col items-center gap-4">
-                <div className="w-16 h-16 rounded-full bg-gray-800 flex items-center justify-center text-3xl">📚</div>
+                <div className="w-16 h-16 rounded-full bg-gray-800 flex items-center justify-center text-3xl">🎴</div>
                 <div>
-                    <p className="text-lg font-medium text-white">No comics yet</p>
-                    <p className="text-sm mt-1 max-w-xs mx-auto">Tap the + button to grade your first comic book or add to your collection.</p>
+                    <p className="text-lg font-medium text-white">No scans yet</p>
+                    <p className="text-sm mt-1 max-w-xs mx-auto">Tap the + button to grade your first collectible — comics, cards, toys & more.</p>
                 </div>
             </div>
             ) : (

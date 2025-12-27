@@ -30,17 +30,22 @@ except ImportError:
 # Nyckel function ID (created during setup)
 FUNCTION_ID = "dk9p25arxhpsqexb"
 
-# Default labels for comic book defect classification
+# Default labels for collectible defect classification
+# Works for comics, trading cards, toys, and other collectibles
 DEFAULT_LABELS = [
-    "pristine",      # No visible defects
-    "minor_wear",    # Light surface wear, minor edge wear
-    "crease",        # Visible fold lines
-    "tear",          # Paper separation
-    "stain",         # Discoloration, foxing, water damage
+    "pristine",      # No visible defects (Gem Mint / 10)
+    "near_mint",     # Minimal wear, nearly perfect (9-9.5)
+    "minor_wear",    # Light surface wear, minor edge wear (7-8.5)
+    "moderate_wear", # Visible wear, light creasing (5-6.5)
+    "heavy_wear",    # Significant damage, creases, tears (3-4.5)
+    "damaged",       # Major defects, missing pieces (1-2.5)
 ]
 
-# Region names to process
-REGIONS = ["spine", "corner_tl", "corner_tr", "corner_bl", "corner_br"]
+# Region names to process (adaptable for different collectible types)
+# Comics: spine + 4 corners
+# Cards: 4 corners + surface
+# Toys: joints, paint, accessories
+REGIONS = ["spine", "corner_tl", "corner_tr", "corner_bl", "corner_br", "surface"]
 
 
 @dataclass
