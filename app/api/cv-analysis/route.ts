@@ -14,9 +14,6 @@ import { NextRequest, NextResponse } from 'next/server';
  * }
  */
 
-// Modal webhook URL - set this in environment variables after deployment
-const MODAL_WEBHOOK_URL = process.env.MODAL_CV_WEBHOOK_URL;
-
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
@@ -29,9 +26,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Read env var inside the function (not at module level) so it picks up changes
+    const modalWebhookUrl = process.env.MODAL_CV_WEBHOOK_URL;
+
     // If Modal webhook is not configured, return early
-    if (!MODAL_WEBHOOK_URL) {
+    if (!modalWebhookUrl) {
       console.log('[CV Analysis] Modal webhook not configured, skipping CV analysis');
+      console.log('[CV Analysis] MODAL_CV_WEBHOOK_URL value:', modalWebhookUrl);
       return NextResponse.json({
         success: false,
         message: 'CV analysis not configured. Set MODAL_CV_WEBHOOK_URL in environment variables.',
@@ -40,9 +41,10 @@ export async function POST(request: NextRequest) {
     }
 
     console.log(`[CV Analysis] Triggering analysis for scan: ${scanId}`);
+    console.log(`[CV Analysis] Using webhook: ${modalWebhookUrl}`);
 
     // Call Modal webhook
-    const modalResponse = await fetch(MODAL_WEBHOOK_URL, {
+    const modalResponse = await fetch(modalWebhookUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -82,10 +84,12 @@ export async function POST(request: NextRequest) {
 
 // Also support GET for health checks
 export async function GET() {
+  const modalWebhookUrl = process.env.MODAL_CV_WEBHOOK_URL;
   return NextResponse.json({
     status: 'ok',
-    configured: !!MODAL_WEBHOOK_URL,
-    message: MODAL_WEBHOOK_URL 
+    configured: !!modalWebhookUrl,
+    webhookUrl: modalWebhookUrl ? modalWebhookUrl.substring(0, 50) + '...' : null,
+    message: modalWebhookUrl 
       ? 'CV analysis ready' 
       : 'Set MODAL_CV_WEBHOOK_URL to enable CV analysis'
   });
