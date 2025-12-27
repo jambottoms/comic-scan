@@ -206,7 +206,16 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
   };
   
   const triggerDeepScan = async () => {
-    if (!entry?.videoUrl || deepScanLoading) return;
+    if (!entry?.videoUrl || deepScanLoading) {
+      console.log('[Deep Scan] Skipped - no videoUrl or already loading', { 
+        hasVideoUrl: !!entry?.videoUrl, 
+        isLoading: deepScanLoading 
+      });
+      return;
+    }
+    
+    console.log('[Deep Scan] Starting deep scan for:', historyId);
+    console.log('[Deep Scan] Video URL:', entry.videoUrl);
     
     setDeepScanLoading(true);
     setDeepScanError(null);
@@ -225,12 +234,17 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
     
     try {
       const itemType = entry?.result?.itemType || 'card';
+      console.log('[Deep Scan] Calling triggerCVAnalysis with itemType:', itemType);
+      
       const result = await triggerCVAnalysis(entry.videoUrl, historyId, itemType);
+      
+      console.log('[Deep Scan] Raw API result:', JSON.stringify(result, null, 2));
       
       clearInterval(progressInterval);
       setDeepScanProgress(100);
       
-      if (result.success) {
+      if (result.success && result.defectMask) {
+        console.log('[Deep Scan] SUCCESS - has defect data');
         setDeepScanComplete(true);
         
         // Save CV results to localStorage first
@@ -253,11 +267,17 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
           detail: { historyId, cvResult: result }
         }));
       } else if (result.skipped) {
-        setDeepScanError('Deep scan not configured on server');
+        console.log('[Deep Scan] SKIPPED - server not configured');
+        setDeepScanError('Deep scan not configured. Set MODAL_CV_WEBHOOK_URL on server.');
+      } else if (result.success && !result.defectMask) {
+        console.log('[Deep Scan] SUCCESS but NO defect data - possible Modal issue');
+        setDeepScanError('Analysis completed but no defect data returned. Check Modal logs.');
       } else {
-        setDeepScanError(result.error || 'Deep scan failed');
+        console.log('[Deep Scan] FAILED:', result.error || result.message || 'Unknown error');
+        setDeepScanError(result.error || result.message || 'Deep scan failed');
       }
     } catch (err: any) {
+      console.error('[Deep Scan] EXCEPTION:', err);
       clearInterval(progressInterval);
       setDeepScanProgress(0);
       setDeepScanError(err.message || 'Deep scan failed');
