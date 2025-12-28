@@ -409,12 +409,21 @@ Use appropriate grading scale: CGC for comics, PSA/BGS for cards. Be concise, ob
           
           if (modalResponse.ok) {
             const modalResult = await modalResponse.json();
+            
+            // DEBUG: Log full Modal response
+            console.log("[Server Action] Modal response:", JSON.stringify(modalResult, null, 2).substring(0, 2000));
+            
             goldenFrames = modalResult.goldenFrames || [];
             cvAnalysis = modalResult.cvAnalysis || null;
             frameTimestamps = modalResult.frameTimestamps || [];
             defectLabels = modalResult.cvAnalysis?.defectLabels || {};
             
             console.log(`[Server Action] Got ${goldenFrames.length} golden frames from Modal`);
+            
+            // DEBUG: Log if Modal returned an error
+            if (modalResult.error) {
+              console.error(`[Server Action] Modal returned error: ${modalResult.error}`);
+            }
             if (cvAnalysis) {
               console.log(`[Server Action] CV Analysis: ${cvAnalysis.damageScore?.toFixed(1)}% damage detected`);
             }
