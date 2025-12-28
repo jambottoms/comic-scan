@@ -341,6 +341,24 @@ export default function ResultCard({ result, videoUrl, thumbnail, savedScanId, o
     return { title, desc };
   };
 
+  // Normalize CV Data access
+  const cvData = result.hybridGrade?.cvAnalysis || result.cvAnalysis || {};
+  const goldenFrames = result.goldenFrames || [];
+  
+  // Extract images from nested structures
+  // Structure might be cvData.images.* or just cvData.* depending on backend version
+  const images = cvData.images || cvData;
+  const defectMask = images.defectMask || result.defectMask;
+  const varianceHeatmap = images.varianceMap || images.varianceHeatmap || result.varianceHeatmap;
+  const defectOverlay = images.defectOverlay || result.defectOverlay;
+  
+  const regionCrops = images.regionCrops || result.regionCrops || {};
+  const regionOverlays = images.regionOverlays || result.regionOverlays || {};
+  
+  const damageScore = cvData.damageScore ?? result.damageScore;
+  const regionScores = cvData.regionScores || result.regionScores || {};
+  const defectLabels = cvData.defectLabels || result.defectLabels || {};
+
   return (
     <div className={`w-full max-w-2xl flex flex-col items-center ${embedded ? '' : 'min-h-screen bg-gray-900 text-white p-4 overflow-y-auto'}`}>
       {/* Back to Dashboard Button - Only if NOT embedded */}
@@ -503,25 +521,40 @@ export default function ResultCard({ result, videoUrl, thumbnail, savedScanId, o
       )}
 
       {/* CV Analysis Section - Golden Frames & Defect Analysis */}
-      {(result.analysisImages || result.goldenFrames || result.defectMask) && (
-        <div className="bg-gray-800 p-4 rounded-xl border border-gray-700 max-w-2xl w-full mb-4">
-          <h3 className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-3 flex items-center gap-2">
-            <ScanLine className="w-4 h-4" />
-            Condition Analysis
-          </h3>
+      {(goldenFrames.length > 0 || defectMask || varianceHeatmap) && (
+        <div className="bg-gray-800 p-4 rounded-xl border border-gray-700 max-w-2xl w-full mb-4 shadow-lg overflow-hidden">
+          <div className="flex items-center justify-between mb-4 border-b border-gray-700 pb-2">
+            <h3 className="text-xs font-bold text-gray-500 uppercase tracking-widest flex items-center gap-2">
+              <ScanLine className="w-4 h-4 text-purple-400" />
+              Condition Analysis
+            </h3>
+            {damageScore !== undefined && (
+               <div className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                  damageScore < 20 ? 'bg-green-900/30 text-green-400' :
+                  damageScore < 40 ? 'bg-yellow-900/30 text-yellow-400' :
+                  damageScore < 65 ? 'bg-orange-900/30 text-orange-400' :
+                  'bg-red-900/30 text-red-400'
+               }`}>
+                 {damageScore.toFixed(0)}% Surface Dmg
+               </div>
+            )}
+          </div>
           
           {/* Golden Frames Grid */}
-          {result.goldenFrames && result.goldenFrames.length > 0 && (
-            <div className="mb-4">
-              <p className="text-gray-400 text-xs mb-2">Golden Frames (Tap to Enlarge)</p>
-              <div className="grid grid-cols-3 gap-2">
-                {result.goldenFrames.slice(0, 3).map((frame: string, idx: number) => {
+          {goldenFrames.length > 0 && (
+            <div className="mb-6">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-gray-400 text-xs font-medium">Golden Frames (Stable Captures)</p>
+                <span className="text-[10px] text-gray-600">{goldenFrames.length} frames</span>
+              </div>
+              <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
+                {goldenFrames.map((frame: string, idx: number) => {
                   const timestamp = result.frameTimestamps?.[idx] ?? 0;
                   const { title, desc } = getFrameDescription(idx);
                   return (
                     <button 
                       key={idx} 
-                      className="aspect-[3/4] rounded-lg overflow-hidden border border-gray-600 bg-gray-900 relative group hover:border-purple-500 transition-colors"
+                      className="aspect-[3/4] rounded-lg overflow-hidden border border-gray-600 bg-gray-900 relative group hover:border-purple-500 transition-all hover:scale-105 shadow-md"
                       onClick={() => openImageViewer(
                         frame, 
                         title,
@@ -531,264 +564,161 @@ export default function ResultCard({ result, videoUrl, thumbnail, savedScanId, o
                     >
                       <img src={frame} alt={`Golden Frame ${idx + 1}`} className="w-full h-full object-cover" />
                       <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
-                        <Maximize2 className="w-6 h-6 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-lg" />
+                        <Maximize2 className="w-4 h-4 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-lg" />
                       </div>
-                      <div className="absolute bottom-0 left-0 right-0 bg-black/70 text-[10px] text-center text-gray-300 py-0.5 font-mono">
-                        {timestamp.toFixed(2)}s
+                      <div className="absolute bottom-0 left-0 right-0 bg-black/70 text-[9px] text-center text-gray-300 py-0.5 font-mono backdrop-blur-sm">
+                        {timestamp.toFixed(1)}s
                       </div>
                     </button>
                   );
                 })}
               </div>
-              
-              {/* Show remaining frames in a second row if we have 5 */}
-              {result.goldenFrames.length > 3 && (
-                <div className="grid grid-cols-2 gap-2 mt-2">
-                  {result.goldenFrames.slice(3).map((frame: string, idx: number) => {
-                    const timestamp = result.frameTimestamps?.[idx + 3] ?? 0;
-                    const { title, desc } = getFrameDescription(idx + 3);
-                    return (
-                      <button 
-                        key={idx + 3} 
-                        className="relative aspect-[3/4] rounded-lg overflow-hidden border border-gray-600 bg-gray-900 group hover:border-purple-500 transition-colors"
-                        onClick={() => openImageViewer(
-                          frame, 
-                          title,
-                          desc,
-                          timestamp
-                        )}
-                      >
-                        <img src={frame} alt={`Golden Frame ${idx + 4}`} className="w-full h-full object-cover" />
-                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
-                          <Maximize2 className="w-6 h-6 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-lg" />
-                        </div>
-                        <div className="absolute bottom-0 left-0 right-0 bg-black/70 text-[10px] text-center text-gray-300 py-0.5 font-mono">
-                          {timestamp.toFixed(2)}s
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
             </div>
           )}
           
           {/* Deep Scan Results Summary */}
-          {(result.cvAnalysis?.damageScore !== undefined || result.damageScore !== undefined || result.defectPercentage !== undefined) && (
-            <div className="mb-4 p-3 bg-gray-900/50 rounded-lg border border-gray-700">
-              <div className="flex items-center justify-between mb-3">
-                <span className="text-gray-400 text-xs uppercase tracking-wide flex items-center gap-2">
-                  <span>🔬 Physical Condition Analysis</span>
-                  <span className="text-[10px] text-gray-500 normal-case">(CV defect detection)</span>
-                </span>
-                {(result.cvAnalysis?.damageScore !== undefined || result.damageScore !== undefined) ? (
-                  <div className="flex flex-col items-end">
-                    <span className={`text-sm font-bold ${
-                      (result.cvAnalysis?.damageScore || result.damageScore) < 20 ? 'text-green-400' : 
-                      (result.cvAnalysis?.damageScore || result.damageScore) < 40 ? 'text-yellow-400' : 
-                      (result.cvAnalysis?.damageScore || result.damageScore) < 65 ? 'text-orange-400' : 'text-red-400'
-                    }`}>
-                      {(result.cvAnalysis?.damageScore || result.damageScore) < 20 ? '✓ Excellent' : 
-                       (result.cvAnalysis?.damageScore || result.damageScore) < 40 ? '⚡ Minor Wear' : 
-                       (result.cvAnalysis?.damageScore || result.damageScore) < 65 ? '⚠ Moderate Damage' : '✕ Heavy Damage'}
-                    </span>
-                    <span className="text-xs text-gray-500">
-                      {(result.cvAnalysis?.damageScore || result.damageScore).toFixed(0)}% damage detected
-                    </span>
-                  </div>
-                ) : result.defectPercentage !== undefined && (
-                  <span className="text-gray-400 text-xs">
-                    Defect coverage: {result.defectPercentage.toFixed(1)}%
-                  </span>
-                )}
-              </div>
-              
-              {/* Grade Adjustment Message */}
-              {result.gradeAdjustment && (
-                <div className="mb-3 p-2 bg-blue-900/20 rounded border border-blue-700/30">
-                  <p className="text-xs text-blue-300">
-                    📊 <span className="font-medium">Grade Adjustment:</span> {result.gradeAdjustment}
-                  </p>
-                </div>
-              )}
-              
-              {/* Per-region scores with images */}
-              {(result.cvAnalysis?.regionScores || result.regionScores) && Object.keys(result.cvAnalysis?.regionScores || result.regionScores).length > 0 && (
-                <div>
-                  <p className="text-[10px] text-gray-500 mb-2">Region Damage (lower = better condition):</p>
-                  <div className="grid grid-cols-2 gap-2 text-xs">
-                    {Object.entries(result.cvAnalysis?.regionScores || result.regionScores).map(([region, score]) => {
-                      const scoreNum = score as number;
-                      const regionLabel = region === 'spine' ? 'Spine' : 
-                                         region === 'surface' ? 'Cover' :
-                                         region.replace('corner_', '').toUpperCase();
-                      const regionImage = result.cvAnalysis?.regionCrops?.[region] || result.regionCrops?.[region];
-                      
-                      return (
-                        <div 
-                          key={region} 
-                          className={`rounded border overflow-hidden ${
-                            scoreNum < 20 ? 'border-green-700/50 bg-green-900/20' :
-                            scoreNum < 40 ? 'border-yellow-700/50 bg-yellow-900/20' :
-                            scoreNum < 65 ? 'border-orange-700/50 bg-orange-900/20' :
-                            'border-red-700/50 bg-red-900/20'
-                          }`}
-                        >
-                          {/* Image */}
-                          {regionImage && (
-                            <button
-                              onClick={() => openImageViewer(
-                                regionImage,
-                                `${regionLabel} Region`,
-                                `Detailed view of ${regionLabel.toLowerCase()} region. Damage score: ${scoreNum.toFixed(0)}%`
-                              )}
-                              className="w-full aspect-square relative group"
-                            >
-                              <img 
-                                src={regionImage} 
-                                alt={regionLabel} 
-                                className="w-full h-full object-cover"
-                              />
-                              <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-center justify-center">
-                                <Maximize2 className="w-4 h-4 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-lg" />
-                              </div>
-                            </button>
-                          )}
-                          
-                          {/* Score badge */}
-                          <div className={`px-2 py-1.5 text-center ${
-                            scoreNum < 20 ? 'text-green-400' :
-                            scoreNum < 40 ? 'text-yellow-400' :
-                            scoreNum < 65 ? 'text-orange-400' :
-                            'text-red-400'
-                          }`}>
-                            <div className="font-mono font-bold text-sm">{scoreNum.toFixed(0)}%</div>
-                            <div className="text-[10px] opacity-75">{regionLabel}</div>
-                          </div>
+          {(damageScore !== undefined || result.defectPercentage !== undefined) && (
+            <div className="mb-4 p-4 bg-gray-900/50 rounded-lg border border-gray-700">
+              <div className="flex flex-col gap-4">
+                
+                {/* Score & Heatmaps Row */}
+                <div className="flex flex-col sm:flex-row gap-4">
+                    {/* Score Box */}
+                    <div className="flex-1 flex flex-col justify-center items-center p-3 bg-gray-800 rounded-lg border border-gray-600">
+                        <span className="text-gray-500 text-[10px] uppercase tracking-wider mb-1">Surface Integrity</span>
+                        <div className={`text-3xl font-black ${
+                            (damageScore || 0) < 20 ? 'text-green-500' : 
+                            (damageScore || 0) < 40 ? 'text-yellow-500' : 
+                            (damageScore || 0) < 65 ? 'text-orange-500' : 'text-red-500'
+                        }`}>
+                            {(100 - (damageScore || 0)).toFixed(0)}%
                         </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
+                        <div className="h-1.5 w-full bg-gray-700 rounded-full mt-2 overflow-hidden">
+                            <div 
+                                className={`h-full rounded-full ${
+                                    (damageScore || 0) < 20 ? 'bg-green-500' : 
+                                    (damageScore || 0) < 40 ? 'bg-yellow-500' : 
+                                    (damageScore || 0) < 65 ? 'bg-orange-500' : 'bg-red-500'
+                                }`} 
+                                style={{ width: `${Math.min(100, 100 - (damageScore || 0))}%` }}
+                            />
+                        </div>
+                    </div>
 
-          {/* Defect Overlay / Heatmaps */}
-          {(result.defectOverlay || result.defectMask || result.varianceHeatmap) && (
-            <div className="mb-4">
-              <p className="text-gray-400 text-xs mb-2">Defect Visualization</p>
-              
-              {/* Primary: Defect Overlay */}
-              {result.defectOverlay && (
-                <button 
-                  className="w-full mb-2 rounded-lg overflow-hidden border border-gray-600 bg-gray-900 relative group hover:border-purple-500 transition-colors"
-                  onClick={() => openImageViewer(
-                    result.defectOverlay,
-                    "Defect Analysis",
-                    "AI-detected defects highlighted in red. Shows creases, tears, scratches, and surface wear."
-                  )}
-                >
-                  <img src={result.defectOverlay} alt="Defect Analysis" className="w-full h-auto" />
-                  <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
-                    <Maximize2 className="w-8 h-8 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-lg" />
-                  </div>
-                  <div className="absolute bottom-0 left-0 right-0 bg-black/70 text-xs text-center text-gray-300 py-1.5 font-medium">
-                    🔍 Detected Defects (Tap to Enlarge)
-                  </div>
-                </button>
-              )}
-              
-              {/* Heatmaps */}
-              <div className="grid grid-cols-2 gap-2">
-                {result.varianceHeatmap && (
-                  <button 
-                    className="rounded-lg overflow-hidden border border-gray-600 bg-gray-900 relative group hover:border-purple-500 transition-colors"
-                    onClick={() => openImageViewer(
-                      result.varianceHeatmap,
-                      "Damage Intensity Heatmap",
-                      "Color-coded damage intensity. Red areas indicate higher defect concentration."
-                    )}
-                  >
-                    <img src={result.varianceHeatmap} alt="Damage Heatmap" className="w-full h-auto" />
-                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
-                      <Maximize2 className="w-6 h-6 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-lg" />
-                    </div>
-                    <div className="absolute bottom-0 left-0 right-0 bg-black/70 text-[10px] text-center text-gray-300 py-1">
-                      Intensity Heatmap
-                    </div>
-                  </button>
-                )}
-                {result.defectMask && (
-                  <button 
-                    className="rounded-lg overflow-hidden border border-gray-600 bg-gray-900 relative group hover:border-purple-500 transition-colors"
-                    onClick={() => openImageViewer(
-                      result.defectMask,
-                      "Defect Mask",
-                      "Binary mask showing all detected surface anomalies and damage areas."
-                    )}
-                  >
-                    <img src={result.defectMask} alt="Defect Mask" className="w-full h-auto" />
-                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
-                      <Maximize2 className="w-6 h-6 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-lg" />
-                    </div>
-                    <div className="absolute bottom-0 left-0 right-0 bg-black/70 text-[10px] text-center text-gray-300 py-1">
-                      Defect Mask
-                    </div>
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
-          
-          {/* Corner & Spine Crops */}
-          {result.regionCrops && Object.keys(result.regionCrops).length > 0 && (
-            <div>
-              <p className="text-gray-400 text-xs mb-2">Region Analysis</p>
-              <div className="grid grid-cols-5 gap-1">
-                {['corner_tl', 'corner_tr', 'spine', 'corner_bl', 'corner_br'].map((region) => {
-                  const regionName = region.replace('corner_', '').replace('_', '');
-                  const regionTitle = region === 'spine' ? 'Spine' : 
-                                     region === 'corner_tl' ? 'Top Left Corner' :
-                                     region === 'corner_tr' ? 'Top Right Corner' :
-                                     region === 'corner_bl' ? 'Bottom Left Corner' :
-                                     'Bottom Right Corner';
-                  
-                  return result.regionCrops[region] && (
-                    <button 
-                      key={region} 
-                      className="relative group w-full"
-                      onClick={() => openImageViewer(
-                        result.regionCrops[region],
-                        regionTitle,
-                        `High-resolution crop of the ${regionTitle.toLowerCase()} for detailed inspection.`
-                      )}
-                    >
-                      <div className="aspect-square rounded overflow-hidden border border-gray-600 bg-gray-900 group-hover:border-purple-500 transition-colors">
-                        <img 
-                          src={result.regionCrops[region]} 
-                          alt={regionTitle} 
-                          className="w-full h-full object-cover" 
-                        />
-                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
-                          <Maximize2 className="w-4 h-4 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-lg" />
+                    {/* Heatmaps Preview */}
+                    {(defectMask || varianceHeatmap) && (
+                        <div className="flex gap-2 flex-1 justify-center">
+                            {varianceHeatmap && (
+                                <button 
+                                    className="relative rounded-lg overflow-hidden border border-gray-600 hover:border-purple-500 transition-colors group aspect-[3/4] h-24"
+                                    onClick={() => openImageViewer(varianceHeatmap, "Variance Heatmap", "Shows areas of high visual variance (glare, damage, or changing reflection). Red = High Variance.")}
+                                >
+                                    <img src={varianceHeatmap} className="w-full h-full object-cover" alt="Variance" />
+                                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 flex items-center justify-center transition-colors">
+                                        <Maximize2 className="w-4 h-4 text-white opacity-0 group-hover:opacity-100" />
+                                    </div>
+                                    <div className="absolute bottom-0 w-full bg-black/70 text-[8px] text-center text-white py-0.5">Heatmap</div>
+                                </button>
+                            )}
+                            {defectMask && (
+                                <button 
+                                    className="relative rounded-lg overflow-hidden border border-gray-600 hover:border-purple-500 transition-colors group aspect-[3/4] h-24"
+                                    onClick={() => openImageViewer(defectMask, "Defect Mask", "Binary mask of detected surface anomalies. White areas indicate potential damage or heavy wear.")}
+                                >
+                                    <img src={defectMask} className="w-full h-full object-cover" alt="Mask" />
+                                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 flex items-center justify-center transition-colors">
+                                        <Maximize2 className="w-4 h-4 text-white opacity-0 group-hover:opacity-100" />
+                                    </div>
+                                    <div className="absolute bottom-0 w-full bg-black/70 text-[8px] text-center text-white py-0.5">Mask</div>
+                                </button>
+                            )}
                         </div>
-                      </div>
-                      <span className="absolute bottom-0 left-0 right-0 bg-black/70 text-[8px] text-center text-gray-300 py-0.5 uppercase">
-                        {regionName}
-                      </span>
-                    </button>
-                  );
-                })}
+                    )}
+                </div>
+
+                {/* Region Analysis Grid */}
+                {Object.keys(regionScores).length > 0 && (
+                  <div>
+                    <p className="text-[10px] text-gray-500 mb-2 uppercase tracking-wide">Region Analysis</p>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                      {Object.entries(regionScores).map(([region, score]) => {
+                        const scoreNum = score as number;
+                        const regionLabel = region === 'spine' ? 'Spine' : 
+                                           region === 'surface' ? 'Cover' :
+                                           region.replace('corner_', '').toUpperCase();
+                        const cropUrl = regionCrops[region];
+                        const overlayUrl = regionOverlays[region];
+                        const labels = defectLabels[region] || [];
+                        
+                        return (
+                          <div 
+                            key={region} 
+                            className={`rounded border overflow-hidden relative flex flex-col ${
+                              scoreNum < 20 ? 'border-green-700/30 bg-green-900/10' :
+                              scoreNum < 40 ? 'border-yellow-700/30 bg-yellow-900/10' :
+                              scoreNum < 65 ? 'border-orange-700/30 bg-orange-900/10' :
+                              'border-red-700/30 bg-red-900/10'
+                            }`}
+                          >
+                            {/* Region Image */}
+                            {cropUrl ? (
+                                <button
+                                    onClick={() => openImageViewer(
+                                        overlayUrl || cropUrl,
+                                        `${regionLabel} Analysis`,
+                                        `Damage Score: ${scoreNum.toFixed(1)}%. Detected: ${labels.join(', ') || 'None'}`
+                                    )}
+                                    className="w-full aspect-square relative group bg-black"
+                                >
+                                    <img 
+                                        src={overlayUrl || cropUrl} 
+                                        alt={regionLabel} 
+                                        className="w-full h-full object-contain"
+                                    />
+                                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-center justify-center">
+                                        <Maximize2 className="w-4 h-4 text-white opacity-0 group-hover:opacity-100" />
+                                    </div>
+                                </button>
+                            ) : (
+                                <div className="w-full aspect-video bg-gray-800 flex items-center justify-center text-gray-600 text-xs">No Image</div>
+                            )}
+
+                            {/* Region Stats */}
+                            <div className="p-2 bg-gray-900/80 border-t border-gray-700/50 flex-1 flex flex-col justify-between">
+                                <div className="flex justify-between items-center mb-1">
+                                    <span className="text-[10px] text-gray-400 font-medium">{regionLabel}</span>
+                                    <span className={`text-[10px] font-bold ${
+                                        scoreNum < 20 ? 'text-green-400' :
+                                        scoreNum < 40 ? 'text-yellow-400' :
+                                        scoreNum < 65 ? 'text-orange-400' :
+                                        'text-red-400'
+                                    }`}>{scoreNum.toFixed(0)}%</span>
+                                </div>
+                                {labels.length > 0 && (
+                                    <div className="flex flex-wrap gap-1 mt-1">
+                                        {labels.map((l: string, i: number) => (
+                                            <span key={i} className="text-[8px] px-1 rounded bg-gray-700 text-gray-300 border border-gray-600 truncate max-w-full">
+                                                {l.replace('_', ' ')}
+                                            </span>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           )}
           
           {/* Pixels per MM info */}
           {result.pixelsPerMm && (
-            <div className="mt-3 pt-3 border-t border-gray-700 text-xs text-gray-500 flex justify-between">
-              <span>Resolution: {result.pixelsPerMm.toFixed(1)} px/mm</span>
-              <span>≈ {(result.pixelsPerMm * 25.4).toFixed(0)} DPI</span>
+            <div className="mt-3 pt-3 border-t border-gray-700 text-[10px] text-gray-600 flex justify-between font-mono">
+              <span>RES: {result.pixelsPerMm.toFixed(2)} px/mm</span>
+              <span>DPI: {(result.pixelsPerMm * 25.4).toFixed(0)}</span>
             </div>
           )}
         </div>
