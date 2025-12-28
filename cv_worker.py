@@ -11,6 +11,7 @@ Deployment:
 Test locally:
     modal run cv_worker.py --video-url "https://..." --scan-id "video-123"
 """
+from __future__ import annotations  # Defer type hint evaluation for np.ndarray etc.
 
 import modal
 import os
