@@ -30,16 +30,50 @@ except ImportError:
 # Nyckel function ID (created during setup)
 FUNCTION_ID = "dk9p25arxhpsqexb"
 
-# Default labels for collectible defect classification
-# Works for comics, trading cards, toys, and other collectibles
-DEFAULT_LABELS = [
-    "pristine",      # No visible defects (Gem Mint / 10)
-    "near_mint",     # Minimal wear, nearly perfect (9-9.5)
-    "minor_wear",    # Light surface wear, minor edge wear (7-8.5)
-    "moderate_wear", # Visible wear, light creasing (5-6.5)
-    "heavy_wear",    # Significant damage, creases, tears (3-4.5)
-    "damaged",       # Major defects, missing pieces (1-2.5)
+# Defect labels for classification
+# These match the labels in lib/grading-config.ts
+# Each label corresponds to a specific defect type with an associated point deduction
+DEFECT_LABELS = [
+    # Structural (severe)
+    "spine_split",       # Spine paper separating (-3.0)
+    "detached_cover",    # Cover separated from staples (-4.0)
+    "missing_piece",     # Paper missing from cover/pages (-5.0)
+    "tear_major",        # Tear > 1/2" in length (-2.5)
+    
+    # Structural (moderate)
+    "spine_roll",        # Spine curves outward (-1.5)
+    "staple_rust",       # Oxidation on staples (-1.5)
+    "tear_minor",        # Tear < 1/4" in length (-1.0)
+    
+    # Surface defects
+    "stain",             # Visible staining (-1.0)
+    "foxing",            # Age spots/oxidation spots (-0.8)
+    "color_touch",       # Restoration/touch-up detected (-2.0)
+    "fingerprint",       # Visible oil marks (-0.3)
+    
+    # Wear defects
+    "corner_blunt",      # Rounded corners (-0.3)
+    "color_break",       # Crease that breaks ink (-0.5)
+    "crease_minor",      # Light crease, no color break (-0.4)
+    "spine_stress",      # Light stress marks (-0.3)
+    
+    # Clean
+    "pristine",          # No defects (0.0)
 ]
+
+# Legacy labels for backwards compatibility
+# Maps old generic labels to new specific defect labels
+LEGACY_LABEL_MAP = {
+    "pristine": "pristine",
+    "near_mint": "pristine",      # Map to pristine (minor defects undetected)
+    "minor_wear": "spine_stress", # Most common minor wear
+    "moderate_wear": "crease_minor",
+    "heavy_wear": "tear_minor",
+    "damaged": "tear_major",
+}
+
+# Default labels (use DEFECT_LABELS for new functions)
+DEFAULT_LABELS = DEFECT_LABELS
 
 # Region names to process (adaptable for different collectible types)
 # Comics: spine + 4 corners
@@ -106,10 +140,10 @@ def create_function(credentials: Credentials, name: str = "comic-defect-classifi
     func = ImageClassificationFunction.create(credentials=credentials, name=name)
     print(f"   ✅ Created function ID: {func.function_id}")
     
-    # Create default labels
-    print(f"   📌 Creating labels...")
-    func.create_labels(DEFAULT_LABELS)
-    for label in DEFAULT_LABELS:
+    # Create defect labels
+    print(f"   📌 Creating defect labels...")
+    func.create_labels(DEFECT_LABELS)
+    for label in DEFECT_LABELS:
         print(f"      • {label}")
     
     return func
@@ -297,9 +331,9 @@ def main():
             print(f"❌ File not found: {image_path}")
             sys.exit(1)
         
-        if label not in DEFAULT_LABELS:
+        if label not in DEFECT_LABELS:
             print(f"⚠️  Unknown label: {label}")
-            print(f"   Available: {', '.join(DEFAULT_LABELS)}")
+            print(f"   Available: {', '.join(DEFECT_LABELS)}")
         
         func = get_function(credentials)
         print(f"\n📚 Adding training sample: {image_path} → {label}")
@@ -362,7 +396,7 @@ def main():
         print("  classify [input_dir]     Classify all region crops")
         print()
         print(f"Function ID: {FUNCTION_ID}")
-        print(f"Labels: {', '.join(DEFAULT_LABELS)}")
+        print(f"Defect Labels: {', '.join(DEFECT_LABELS)}")
 
 
 if __name__ == "__main__":

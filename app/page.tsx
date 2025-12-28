@@ -78,6 +78,10 @@ export default function Dashboard() {
     setIsGradeBookOpen(true);
   };
 
+  const handleRules = () => {
+    router.push('/rules');
+  };
+
   // Format date for display
   const formatDate = (timestamp: number) => {
     const date = new Date(timestamp);
@@ -254,6 +258,7 @@ export default function Dashboard() {
         onRecord={handleRecord}
         onUpload={handleUpload}
         onTrain={handleTrain}
+        onRules={handleRules}
         isHidden={isGradeBookOpen}
       />
 

@@ -36,10 +36,19 @@ cv_image = (
         "numpy==1.26.4",
         "scipy==1.13.1",
         "pillow==10.4.0",
-        "requests>=2.31.0",  # For REST API calls to Supabase Storage
+        "requests>=2.31.0",  # For REST API calls to Supabase Storage and Nyckel
         "fastapi>=0.109.0",  # Required for web endpoints
     )
 )
+
+# Defect labels matching lib/grading-config.ts
+DEFECT_LABELS = [
+    "spine_split", "detached_cover", "missing_piece", "tear_major",
+    "spine_roll", "staple_rust", "tear_minor",
+    "stain", "foxing", "color_touch", "fingerprint",
+    "corner_blunt", "color_break", "crease_minor", "spine_stress",
+    "pristine"
+]
 
 
 @app.function(
@@ -195,7 +204,10 @@ def find_golden_frame_candidates(video_path: str, total_frames: int, fps: float)
 @app.function(
     image=cv_image,
     timeout=300,  # 5 minute timeout
-    secrets=[modal.Secret.from_name("supabase-secrets")],
+    secrets=[
+        modal.Secret.from_name("supabase-secrets"),
+        modal.Secret.from_name("nyckel-secrets"),  # For defect classification
+    ],
     volumes={"/video": video_volume},
 )
 def analyze_video(video_url: str, scan_id: str, item_type: str = "card") -> dict:
@@ -548,11 +560,110 @@ def run_cv_analysis(golden_frames: list, output_dir: Path, scan_id: str) -> dict
     print(f"   Uploading CV analysis images...")
     cv_images = upload_cv_images(scan_id, output_dir, region_analyses, defect_mask, var_heatmap)
     
+    # Classify defects with Nyckel (if credentials available)
+    defect_labels = {}
+    try:
+        defect_labels = classify_regions_with_nyckel(output_dir, REGIONS.keys())
+        print(f"   ✅ Nyckel classification complete")
+    except Exception as nyckel_error:
+        print(f"   ⚠️ Nyckel classification skipped: {nyckel_error}")
+        # Default to pristine for all regions if Nyckel unavailable
+        defect_labels = {region: ["pristine"] for region in REGIONS.keys()}
+    
     return {
         "damageScore": float(overall_defect_pct),
         "regionScores": region_scores,
+        "defectLabels": defect_labels,
         "images": cv_images
     }
+
+
+def classify_regions_with_nyckel(output_dir: Path, region_names) -> dict:
+    """
+    Classify defects in each region crop using Nyckel API.
+    
+    Sends each region crop to Nyckel for classification and returns
+    the detected defect labels per region.
+    
+    Args:
+        output_dir: Directory containing crop_{region}.png files
+        region_names: List of region names to classify
+    
+    Returns:
+        Dict mapping region name to list of detected defect labels
+        e.g., {"spine": ["spine_roll"], "corner_tl": ["pristine"]}
+    """
+    import requests
+    import base64
+    import os
+    
+    # Get Nyckel credentials from Modal secrets
+    nyckel_client_id = os.environ.get("NYCKEL_CLIENT_ID")
+    nyckel_client_secret = os.environ.get("NYCKEL_CLIENT_SECRET")
+    nyckel_function_id = os.environ.get("NYCKEL_DEFECT_FUNCTION_ID")
+    
+    if not all([nyckel_client_id, nyckel_client_secret, nyckel_function_id]):
+        raise ValueError("Nyckel credentials not configured in Modal secrets")
+    
+    # Get OAuth token
+    token_response = requests.post(
+        "https://www.nyckel.com/connect/token",
+        data={
+            "client_id": nyckel_client_id,
+            "client_secret": nyckel_client_secret,
+            "grant_type": "client_credentials"
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        timeout=30
+    )
+    token_response.raise_for_status()
+    access_token = token_response.json()["access_token"]
+    
+    defect_labels = {}
+    
+    for region_name in region_names:
+        crop_path = output_dir / f"crop_{region_name}.png"
+        
+        if not crop_path.exists():
+            print(f"      ⚠️ Missing crop for {region_name}")
+            defect_labels[region_name] = ["pristine"]
+            continue
+        
+        # Read and encode image as base64
+        with open(crop_path, "rb") as f:
+            image_data = base64.b64encode(f.read()).decode("utf-8")
+        
+        # Call Nyckel invoke API
+        try:
+            invoke_response = requests.post(
+                f"https://www.nyckel.com/v1/functions/{nyckel_function_id}/invoke",
+                json={"data": f"data:image/png;base64,{image_data}"},
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Content-Type": "application/json"
+                },
+                timeout=30
+            )
+            invoke_response.raise_for_status()
+            result = invoke_response.json()
+            
+            # Extract label from response
+            label_name = result.get("labelName", "pristine")
+            confidence = result.get("confidence", 0.0)
+            
+            # Only accept high-confidence predictions
+            if confidence >= 0.6:
+                defect_labels[region_name] = [label_name]
+            else:
+                defect_labels[region_name] = ["pristine"]
+            
+            print(f"      {region_name}: {label_name} ({confidence:.0%})")
+            
+        except Exception as e:
+            print(f"      ⚠️ Failed to classify {region_name}: {e}")
+            defect_labels[region_name] = ["pristine"]
+    
+    return defect_labels
 
 
 def upload_cv_images(scan_id: str, output_dir: Path, region_analyses: list, 

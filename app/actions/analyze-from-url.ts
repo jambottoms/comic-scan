@@ -373,6 +373,7 @@ Use appropriate grading scale: CGC for comics, PSA/BGS for cards. Be concise and
       let goldenFrames: string[] = [];
       let frameTimestamps: number[] = [];
       let cvAnalysis: any = null;
+      let defectLabels: Record<string, string[]> = {};
       
       try {
         const modalWebhookUrl = process.env.MODAL_CV_WEBHOOK_URL;
@@ -395,8 +396,9 @@ Use appropriate grading scale: CGC for comics, PSA/BGS for cards. Be concise and
           if (modalResponse.ok) {
             const modalResult = await modalResponse.json();
             goldenFrames = modalResult.goldenFrames || [];
-            const cvAnalysis = modalResult.cvAnalysis || null;
-            const frameTimestamps = modalResult.frameTimestamps || [];
+            cvAnalysis = modalResult.cvAnalysis || null;
+            frameTimestamps = modalResult.frameTimestamps || [];
+            defectLabels = modalResult.cvAnalysis?.defectLabels || {};
             
             console.log(`[Server Action] Got ${goldenFrames.length} golden frames from Modal`);
             if (cvAnalysis) {
@@ -489,7 +491,7 @@ RESPOND IN JSON:
         // Don't fail the whole analysis if Modal fails
       }
       
-      // Step 9: Fuse AI and CV grades if both available
+      // Step 9: Fuse AI, CV, and defect grades if available
       let hybridGrade = null;
       if (detailedAnalysis && cvAnalysis && cvAnalysis.damageScore !== undefined) {
         try {
@@ -498,16 +500,21 @@ RESPOND IN JSON:
           const aiGrade = parseFloat(parsedResult.estimatedGrade);
           const aiConfidence = detailedAnalysis.confidence || 'medium';
           
+          // Pass defect labels to fuseGrades for defect-based grading
           hybridGrade = fuseGrades(
             aiGrade,
             aiConfidence,
             cvAnalysis.damageScore,
             cvAnalysis.regionScores || {},
-            detailedAnalysis
+            detailedAnalysis,
+            defectLabels  // NEW: Pass Nyckel defect labels
           );
           
           console.log(`[Server Action] Hybrid Grade: ${hybridGrade.displayGrade} (confidence: ${hybridGrade.overallConfidence})`);
           console.log(`[Server Action] Agreement: ${hybridGrade.agreement}, AI: ${hybridGrade.aiGrade}, CV: ${hybridGrade.cvGrade}`);
+          if (hybridGrade.defectGrade) {
+            console.log(`[Server Action] Defect Grade: ${hybridGrade.defectGrade}, Summary: ${hybridGrade.defectSummary}`);
+          }
           
           // Update result with hybrid grade
           parsedResult.estimatedGrade = hybridGrade.finalGrade;

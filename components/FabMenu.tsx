@@ -1,16 +1,17 @@
 'use client';
 
 import { useState } from 'react';
-import { Plus, Upload, Video, BrainCircuit } from 'lucide-react';
+import { Plus, Upload, Video, BrainCircuit, BookOpen } from 'lucide-react';
 
 interface FabMenuProps {
   onRecord: () => void;
   onUpload: () => void;
   onTrain: () => void;
+  onRules: () => void;
   isHidden?: boolean;
 }
 
-export default function FabMenu({ onRecord, onUpload, onTrain, isHidden = false }: FabMenuProps) {
+export default function FabMenu({ onRecord, onUpload, onTrain, onRules, isHidden = false }: FabMenuProps) {
   const [isOpen, setIsOpen] = useState(false);
 
   // Hide the entire FAB when a modal is open
@@ -67,6 +68,19 @@ export default function FabMenu({ onRecord, onUpload, onTrain, isHidden = false 
           </span>
           <div className="bg-purple-600 hover:bg-purple-500 text-white p-3 rounded-full shadow-lg transition-colors">
             <BrainCircuit size={24} />
+          </div>
+        </button>
+
+        {/* Grading Rules Option */}
+        <button 
+          onClick={() => { onRules(); setIsOpen(false); }} 
+          className="group flex items-center gap-3"
+        >
+          <span className="bg-gray-900 text-white px-3 py-1.5 rounded-lg text-sm font-medium shadow-lg">
+            Rules
+          </span>
+          <div className="bg-amber-600 hover:bg-amber-500 text-white p-3 rounded-full shadow-lg transition-colors">
+            <BookOpen size={24} />
           </div>
         </button>
       </div>

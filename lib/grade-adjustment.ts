@@ -3,7 +3,126 @@
  * 
  * Adjusts AI-assigned grades based on CV analysis defect detection.
  * Ensures grades reflect actual physical condition detected by deep scan.
+ * 
+ * Uses configurable weights from grading-config.ts for defect-based grading.
  */
+
+import { 
+  DEFECT_DEDUCTIONS, 
+  REGION_WEIGHTS, 
+  getGradeTier,
+  type DefectLabel, 
+  type RegionName 
+} from './grading-config';
+
+/**
+ * Defect breakdown for a single defect finding
+ */
+export interface DefectBreakdown {
+  region: RegionName;
+  defect: DefectLabel;
+  baseDeduction: number;
+  regionWeight: number;
+  totalDeduction: number;
+}
+
+/**
+ * Result of defect-based grade calculation
+ */
+export interface DefectGradeResult {
+  grade: number;
+  totalDeduction: number;
+  defectBreakdown: DefectBreakdown[];
+  defectSummary: string;
+}
+
+/**
+ * Calculate grade from detected defects using configurable weights.
+ * 
+ * Formula: Grade = 10.0 - Σ(Defect Deduction × Region Weight)
+ * 
+ * @param defectLabels - Map of region name to list of detected defect labels
+ * @returns DefectGradeResult with grade and breakdown
+ */
+export function calculateGradeFromDefects(
+  defectLabels: Record<string, string[]>
+): DefectGradeResult {
+  let grade = 10.0;
+  let totalDeduction = 0;
+  const defectBreakdown: DefectBreakdown[] = [];
+  const defectCounts: Record<string, number> = {};
+  
+  for (const [region, defects] of Object.entries(defectLabels)) {
+    const regionWeight = REGION_WEIGHTS[region as RegionName] || 1.0;
+    
+    for (const defect of defects) {
+      // Skip pristine - no deduction
+      if (defect === 'pristine') continue;
+      
+      const baseDeduction = DEFECT_DEDUCTIONS[defect as DefectLabel] || 0;
+      const deduction = baseDeduction * regionWeight;
+      
+      grade -= deduction;
+      totalDeduction += deduction;
+      
+      defectBreakdown.push({
+        region: region as RegionName,
+        defect: defect as DefectLabel,
+        baseDeduction,
+        regionWeight,
+        totalDeduction: deduction
+      });
+      
+      // Count defects for summary
+      defectCounts[defect] = (defectCounts[defect] || 0) + 1;
+    }
+  }
+  
+  // Clamp grade to minimum 0.5
+  grade = Math.max(0.5, grade);
+  
+  // Generate summary string
+  const defectSummary = Object.entries(defectCounts)
+    .map(([defect, count]) => count > 1 ? `${defect} (×${count})` : defect)
+    .join(', ') || 'No defects detected';
+  
+  return {
+    grade,
+    totalDeduction,
+    defectBreakdown,
+    defectSummary
+  };
+}
+
+/**
+ * Calculate grade from defects and blend with CV damage score.
+ * 
+ * Uses 60% defect-based, 40% CV damage-based when both available.
+ * Falls back to single source when only one is available.
+ * 
+ * @param defectLabels - Map of region name to detected defect labels
+ * @param cvDamageScore - CV-detected damage percentage (0-100)
+ * @returns Blended grade
+ */
+export function calculateBlendedDefectGrade(
+  defectLabels: Record<string, string[]>,
+  cvDamageScore: number
+): { grade: number; breakdown: DefectGradeResult } {
+  const defectResult = calculateGradeFromDefects(defectLabels);
+  
+  // Convert CV damage score to grade equivalent
+  // 0% damage = 10.0, 100% damage = 0.5
+  const cvGrade = Math.max(0.5, 10.0 - (cvDamageScore / 10));
+  
+  // Blend: 60% defect-based, 40% CV-based
+  // Defect-based is more specific, CV provides overall context
+  const blendedGrade = (defectResult.grade * 0.6) + (cvGrade * 0.4);
+  
+  return {
+    grade: Math.max(0.5, blendedGrade),
+    breakdown: defectResult
+  };
+}
 
 export interface GradeAdjustment {
   originalGrade: string;
@@ -250,11 +369,12 @@ export function getDamageSeverity(damageScore: number): {
 }
 
 /**
- * Hybrid Grade Result - Combines AI and CV analysis
+ * Hybrid Grade Result - Combines AI, CV, and Nyckel defect analysis
  */
 export interface CVAnalysisData {
   damageScore: number;
   regionScores: Record<string, number>;
+  defectLabels?: Record<string, string[]>;  // Nyckel defect labels per region
   regionCrops?: Record<string, string>;
   regionOverlays?: Record<string, string>;
   defectMask?: string;
@@ -266,6 +386,7 @@ export interface HybridGradeResult {
   displayGrade: string;            // "Very Good+ 5.5" or "VG-FN (5.0-6.0)"
   aiGrade: string;
   cvGrade: string;
+  defectGrade?: string;            // Grade from Nyckel defect classification
   agreement: 'strong' | 'moderate' | 'weak' | 'conflict';
   gradeDifference: number;
   overallConfidence: 'very-high' | 'high' | 'medium' | 'low';
@@ -274,24 +395,43 @@ export interface HybridGradeResult {
   reasoning: string;
   aiReasoning: string;
   cvReasoning: string;
+  defectSummary?: string;          // Summary of detected defects
+  defectBreakdown?: DefectBreakdown[];  // Detailed defect breakdown
   detailedAnalysis: any;
   cvAnalysis: CVAnalysisData;
 }
 
 /**
- * Fuse AI and CV grades into a single hybrid assessment
+ * Fuse AI, CV, and Nyckel defect grades into a single hybrid assessment
+ * 
+ * @param aiGrade - Grade from AI vision analysis
+ * @param aiConfidence - AI confidence level
+ * @param cvDamageScore - CV damage percentage (0-100)
+ * @param regionScores - Per-region damage scores from CV
+ * @param detailedAnalysis - Detailed AI analysis data
+ * @param defectLabels - Optional Nyckel defect labels per region
  */
 export function fuseGrades(
   aiGrade: number,
   aiConfidence: 'high' | 'medium' | 'low',
   cvDamageScore: number,
   regionScores: Record<string, number>,
-  detailedAnalysis: any
+  detailedAnalysis: any,
+  defectLabels?: Record<string, string[]>
 ): HybridGradeResult {
   
   // Step 1: Convert CV damage score to implied grade
   const cvGrade = damageScoreToGrade(cvDamageScore, regionScores);
   const cvConfidence = calculateCVConfidence(cvDamageScore, regionScores);
+  
+  // Step 1.5: Calculate defect-based grade if labels available
+  let defectGradeResult: DefectGradeResult | null = null;
+  let defectGradeValue: number | null = null;
+  
+  if (defectLabels && Object.keys(defectLabels).length > 0) {
+    defectGradeResult = calculateGradeFromDefects(defectLabels);
+    defectGradeValue = defectGradeResult.grade;
+  }
   
   // Step 2: Calculate agreement level
   const gradeDiff = Math.abs(aiGrade - cvGrade);
@@ -315,14 +455,23 @@ export function fuseGrades(
   
   if (agreement === 'strong') {
     // AI and CV agree strongly - use weighted average
-    // Give AI slight preference (60/40) since it's context-aware
-    const weighted = (aiGrade * 0.6) + (cvGrade * 0.4);
+    // Include defect grade if available (AI 40%, CV 30%, Defect 30%)
+    // Otherwise use AI 60%, CV 40%
+    let weighted: number;
+    if (defectGradeValue !== null) {
+      weighted = (aiGrade * 0.4) + (cvGrade * 0.3) + (defectGradeValue * 0.3);
+    } else {
+      weighted = (aiGrade * 0.6) + (cvGrade * 0.4);
+    }
     finalGrade = weighted.toFixed(1);
     displayGrade = formatGrade(weighted);
     overallConfidence = aiConfidence === 'high' && cvConfidence === 'high' 
       ? 'very-high' 
       : 'high';
     reasoning = `AI and CV analysis agree (within ${gradeDiff.toFixed(1)} points). High confidence in grade ${finalGrade}.`;
+    if (defectGradeResult && defectGradeResult.defectBreakdown.length > 0) {
+      reasoning += ` Detected defects: ${defectGradeResult.defectSummary}.`;
+    }
     
   } else if (agreement === 'moderate') {
     // Moderate agreement - show range
@@ -363,6 +512,7 @@ export function fuseGrades(
     displayGrade,
     aiGrade: aiGrade.toFixed(1),
     cvGrade: cvGrade.toFixed(1),
+    defectGrade: defectGradeValue?.toFixed(1),
     agreement,
     gradeDifference: gradeDiff,
     overallConfidence,
@@ -371,10 +521,13 @@ export function fuseGrades(
     reasoning,
     aiReasoning: detailedAnalysis?.frameNotes?.[0] || 'AI analysis complete',
     cvReasoning: `CV detected ${cvDamageScore.toFixed(0)}% damage across key regions`,
+    defectSummary: defectGradeResult?.defectSummary,
+    defectBreakdown: defectGradeResult?.defectBreakdown,
     detailedAnalysis,
     cvAnalysis: {
       damageScore: cvDamageScore,
-      regionScores
+      regionScores,
+      defectLabels
     }
   };
 }
