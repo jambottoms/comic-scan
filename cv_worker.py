@@ -81,9 +81,23 @@ def analyze_frame_chunk(
     """
     import cv2
     import numpy as np
+    import time
     
     video_path = f"/video/{scan_id}/input.mp4"
     print(f"[Chunk {chunk_id}] Processing frames {start_frame}-{end_frame} from {video_path}")
+    
+    # CRITICAL: Reload volume to see files committed by parent function
+    # Modal Volumes are eventually consistent - workers may start before sync completes
+    video_volume.reload()
+    
+    # Retry logic for volume propagation delays
+    max_retries = 3
+    for attempt in range(max_retries):
+        if os.path.exists(video_path):
+            break
+        print(f"[Chunk {chunk_id}] Waiting for volume sync (attempt {attempt + 1}/{max_retries})...")
+        time.sleep(0.5)
+        video_volume.reload()
     
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
@@ -273,6 +287,11 @@ def analyze_video(video_url: str, scan_id: str, item_type: str = "card") -> dict
         
         file_size_mb = volume_video_path.stat().st_size / 1024 / 1024
         print(f"   Downloaded: {file_size_mb:.1f} MB to {volume_video_path}")
+        
+        # Small delay to allow volume sync to propagate before spawning workers
+        import time
+        time.sleep(0.5)
+        print("   Volume sync initiated...")
         
         # Get video metadata
         cap = cv2.VideoCapture(str(volume_video_path))
