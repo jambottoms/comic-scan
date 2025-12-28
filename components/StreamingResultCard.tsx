@@ -415,12 +415,13 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
               <div className={`${skeleton} h-4 w-5/6`}></div>
               <div className={`${skeleton} h-4 w-4/6`}></div>
             </div>
-          ) : result.reasoning ? (
-            <div className="text-gray-300 text-sm leading-relaxed">
-              {typeof result.reasoning === 'string' 
-                ? result.reasoning.split('\n').slice(0, 3).join(' ').substring(0, 200) + '...'
-                : JSON.stringify(result.reasoning).substring(0, 200) + '...'
-              }
+          ) : result.summary ? (
+            <div className="text-gray-300 text-sm leading-relaxed line-clamp-3">
+              {result.summary}
+            </div>
+          ) : result.reasoning && typeof result.reasoning === 'string' ? (
+            <div className="text-gray-300 text-sm leading-relaxed line-clamp-3">
+              {result.reasoning}
             </div>
           ) : (
             <p className="text-gray-500 text-sm italic">No summary available</p>
@@ -445,8 +446,25 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
             <ul className="space-y-2">
               {result.reasoning.map((item: any, index: number) => (
                 <li key={index} className="flex items-start text-gray-300 text-sm">
-                  <span className="text-purple-500 mr-2 mt-1">•</span>
-                  <span>{item.defect || item.text || item.description || JSON.stringify(item)}</span>
+                  {/* Timestamp if available */}
+                  {item.timestamp && (
+                    <span className="text-[10px] font-mono text-green-500 bg-green-900/20 px-1.5 rounded mr-2 mt-0.5">
+                      {item.timestamp}
+                    </span>
+                  )}
+                  
+                  <span className="flex-1">
+                    {/* Defect Name - Note format */}
+                    {item.defect ? (
+                      <>
+                        <strong className="text-white font-semibold">{item.defect}</strong>
+                        <span className="mx-1 text-gray-500">-</span>
+                        <span className="text-gray-300">{item.note || item.text}</span>
+                      </>
+                    ) : (
+                      <span>{item.text || item.description || JSON.stringify(item)}</span>
+                    )}
+                  </span>
                 </li>
               ))}
             </ul>
@@ -478,6 +496,7 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
           </p>
           <div className="grid grid-cols-3 gap-2">
             {/* Show extracted frames (client-side), or stored goldenFrames, or loading state */}
+            {/* Logic: 1. Client extracted frames, 2. Server golden frames (new array), 3. Server golden frames (old array) */}
             {extractedFrames.length > 0 ? (
               extractedFrames.slice(0, 3).map((frame, idx) => {
                 const { title, desc } = getFrameDescription(frame.timestamp);
@@ -497,9 +516,16 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
                   </button>
                 );
               })
-            ) : result.goldenFrames && result.goldenFrames.length > 0 ? (
-              result.goldenFrames.slice(0, 3).map((frame: string, idx: number) => {
-                const timestamp = result.frameTimestamps ? result.frameTimestamps[idx] : 0;
+            ) : (result.goldenFrames && result.goldenFrames.length > 0) || (result.cvAnalysis?.images?.goldenFrames && result.cvAnalysis.images.goldenFrames.length > 0) ? (
+              (result.goldenFrames || result.cvAnalysis?.images?.goldenFrames || []).slice(0, 3).map((frame: string, idx: number) => {
+                // Handle different timestamp locations
+                let timestamp = 0;
+                if (result.frameTimestamps && result.frameTimestamps[idx] !== undefined) {
+                    timestamp = result.frameTimestamps[idx];
+                } else if (result.cvAnalysis?.images?.frameTimestamps && result.cvAnalysis.images.frameTimestamps[idx] !== undefined) {
+                    timestamp = result.cvAnalysis.images.frameTimestamps[idx];
+                }
+
                 const { title, desc } = getFrameDescription(timestamp);
                 return (
                   <button 
@@ -534,7 +560,12 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
               <div className="col-span-3 text-red-400 text-xs text-center py-4">
                 {framesError}
               </div>
-            ) : null}
+            ) : (
+               /* Fallback if no frames extracted or returned yet */
+               <div className="col-span-3 text-gray-500 text-xs text-center py-4 italic">
+                 Processing video frames...
+               </div>
+            )}
           </div>
           
           {/* Show remaining frames in a second row if we have 5 */}

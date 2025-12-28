@@ -206,7 +206,14 @@ RESPONSE FORMAT (always use this JSON structure):
   "variant": "Variant info if applicable (foil, first edition, chase, etc.)",
   "estimatedGrade": "X.X on appropriate scale (see below)",
   "gradingScale": "CGC" | "PSA" | "BGS" | "Custom",
-  "reasoning": "Detailed condition notes with timestamps"
+  "reasoning": [
+    {
+      "defect": "Name of Defect (e.g. Spine Stress, Color Break)",
+      "timestamp": "MM:SS",
+      "note": "Specific details about this instance"
+    }
+  ],
+  "summary": "A concise executive summary of the item's overall condition and eye appeal."
 }
 
 GRADING SCALES BY TYPE:
@@ -214,7 +221,7 @@ GRADING SCALES BY TYPE:
 - Trading Cards: PSA 1-10 or BGS 1-10 scale. Terms: centering, corners, edges, surface, print lines, whitening
 - Toys: Custom 1-10 scale. Terms: paint wear, joint looseness, accessory completeness, package condition
 
-Include timestamps (MM:SS) for each defect observation. Be objective and clinical.`
+Be objective, clinical, and precise. Use industry standard terminology.`
     });
     
     // Add timeout wrapper - Vercel has 300s timeout, so use 280s to be safe
@@ -297,10 +304,17 @@ JSON format:
   "variant": "Variant info or null",
   "estimatedGrade": "X.X",
   "gradingScale": "CGC|PSA|BGS|Custom",
-  "reasoning": "Condition notes with MM:SS timestamps"
+  "reasoning": [
+    {
+      "defect": "Name of Defect",
+      "timestamp": "MM:SS",
+      "note": "Concise description of the defect"
+    }
+  ],
+  "summary": "Brief, 2-3 sentence overview of condition."
 }
 
-Use appropriate grading scale: CGC for comics, PSA/BGS for cards. Be concise and objective.` 
+Use appropriate grading scale: CGC for comics, PSA/BGS for cards. Be concise, objective, and follow industry standard grading terms.` 
     });
     
     console.log(`[Server Action] Sending to Gemini API...`);

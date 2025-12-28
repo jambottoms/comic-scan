@@ -57,14 +57,17 @@ export default function ResultSheet({
   if (!isOpen) return null;
 
   return (
-    <div className={`fixed inset-0 z-50 flex flex-col justify-end transition-all duration-200 ease-out ${isVisible && !isClosing ? 'bg-black/80 backdrop-blur-sm' : 'bg-black/0 pointer-events-none'}`}>
+    <div 
+        className={`fixed inset-0 z-50 flex flex-col justify-end transition-all duration-200 ease-out ${isVisible && !isClosing ? 'bg-black/80 backdrop-blur-sm' : 'bg-black/0 pointer-events-none'}`}
+        style={{ overscrollBehavior: 'contain' }}
+    >
       <div 
         className={`w-full bg-gray-900 border-t border-gray-800 rounded-t-3xl shadow-2xl overflow-hidden flex flex-col transition-transform duration-200 ease-out ${isVisible && !isClosing ? 'translate-y-0' : 'translate-y-full'}`}
-        style={{ height: '95vh' }}
+        style={{ height: '95vh', overscrollBehavior: 'contain' }}
       >
         
         {/* Header */}
-        <div className="p-4 flex items-center justify-between bg-gray-900 z-20 relative border-b border-gray-800">
+        <div className="p-4 flex items-center justify-between bg-gray-900 z-20 relative border-b border-gray-800 shrink-0">
             <h2 className="text-xl font-bold text-white pl-2">Grade Results</h2>
             <button onClick={handleClose} className="p-2 hover:bg-gray-800 rounded-full text-gray-400 hover:text-white transition-colors">
                 <ChevronDown size={28} />
@@ -72,7 +75,7 @@ export default function ResultSheet({
         </div>
 
         {/* Content Area - Scrollable */}
-        <div className="flex-1 overflow-y-auto bg-gray-900 pb-8">
+        <div className="flex-1 overflow-y-auto bg-gray-900 pb-8 overscroll-contain">
             <div className="p-4 flex justify-center w-full">
                 {isLoading ? (
                   <div className="w-full max-w-md animate-pulse space-y-4">

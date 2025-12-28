@@ -441,23 +441,52 @@ export default function ResultCard({ result, videoUrl, thumbnail, savedScanId, o
         </div>
 
         {/* Summary Section */}
-        {summary && (
-          <div className="mb-4 pb-4 border-b border-gray-700">
-            <h3 className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-2">Analysis Summary</h3>
+        <div className="mb-4 pb-4 border-b border-gray-700">
+          <h3 className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-2">Analysis Summary</h3>
+          {result.summary ? (
+            <div className="text-gray-300 text-sm leading-relaxed">
+              {result.summary}
+            </div>
+          ) : summary ? (
             <p className="text-gray-300 text-sm leading-relaxed">
               {summary}
             </p>
-          </div>
-        )}
+          ) : (
+            <p className="text-gray-500 text-sm italic">No summary available</p>
+          )}
+        </div>
 
         {/* Grading Details - Bullet Points */}
-        {bullets.length > 0 && (
+        {/* Support both new structured format (array of objects) and legacy parsed format */}
+        {(Array.isArray(result.reasoning) || bullets.length > 0) && (
           <div className="space-y-2">
             <h3 className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-2">
               Defects & Notes
             </h3>
             <ul className="space-y-2">
-              {bullets.map((bullet: { text: string; timestamp: number | null }, index: number) => {
+              {/* New Format: Array of objects from updated prompt */}
+              {Array.isArray(result.reasoning) ? result.reasoning.map((item: any, index: number) => (
+                <li key={index} className="flex items-start text-gray-300 text-sm group">
+                  {item.timestamp && (
+                    <button
+                      onClick={() => {
+                        const seconds = parseTimestamp(item.timestamp);
+                        if (seconds !== null) openInvestigator(seconds);
+                      }}
+                      className="text-[10px] font-mono text-green-500 bg-green-900/20 hover:bg-green-900/40 px-1.5 rounded mr-2 mt-0.5 transition-colors cursor-pointer"
+                    >
+                      {item.timestamp}
+                    </button>
+                  )}
+                  <span className="flex-1">
+                    <strong className="text-white font-semibold">{item.defect}</strong>
+                    <span className="mx-1 text-gray-500">-</span>
+                    <span className="text-gray-300">{item.note}</span>
+                  </span>
+                </li>
+              )) : 
+              /* Legacy Format: Parsed text bullets */
+              bullets.map((bullet: { text: string; timestamp: number | null }, index: number) => {
                 // Format timestamp for display
                 const formatTimestamp = (seconds: number): string => {
                   const mins = Math.floor(seconds / 60);
@@ -467,19 +496,19 @@ export default function ResultCard({ result, videoUrl, thumbnail, savedScanId, o
 
                 return (
                   <li key={index} className="flex items-start text-gray-300 text-sm group">
-                    <span className="text-purple-500 mr-2 mt-1">•</span>
-                    <span className="flex-1">
-                      {bullet.text}
-                      {bullet.timestamp !== null && (
+                    {bullet.timestamp !== null ? (
                         <button
                           onClick={() => openInvestigator(bullet.timestamp!)}
-                          className="ml-2 text-purple-400 hover:text-purple-300 bg-purple-900/20 hover:bg-purple-900/40 px-1.5 rounded text-xs font-mono transition-colors inline-flex items-center gap-1"
+                          className="text-[10px] font-mono text-green-500 bg-green-900/20 hover:bg-green-900/40 px-1.5 rounded mr-2 mt-0.5 transition-colors cursor-pointer"
                           title={`View frame at ${formatTimestamp(bullet.timestamp)}`}
                         >
-                          <span>▶</span>
                           {formatTimestamp(bullet.timestamp)}
                         </button>
+                      ) : (
+                        <span className="text-purple-500 mr-2 mt-1">•</span>
                       )}
+                    <span className="flex-1">
+                      {bullet.text}
                     </span>
                   </li>
                 );
