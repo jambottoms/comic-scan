@@ -183,25 +183,34 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
     
     extractFramesFromVideo(videoUrl, 5)
       .then((frames) => {
-        setExtractedFrames(frames);
         setFramesLoading(false);
         
-        // Save to history so they persist
-        const goldenFrameUrls = frames.map(f => f.dataUrl);
-        const frameTimestamps = frames.map(f => f.timestamp);
-        
-        updateHistoryEntry(historyId, {
-          result: {
-            ...entry?.result,
-            goldenFrames: goldenFrameUrls,
-            frameTimestamps: frameTimestamps,
-          }
-        });
+        // Only update if we got frames
+        if (frames.length > 0) {
+          setExtractedFrames(frames);
+          
+          // Save to history so they persist
+          const goldenFrameUrls = frames.map(f => f.dataUrl);
+          const frameTimestamps = frames.map(f => f.timestamp);
+          
+          updateHistoryEntry(historyId, {
+            result: {
+              ...entry?.result,
+              goldenFrames: goldenFrameUrls,
+              frameTimestamps: frameTimestamps,
+            }
+          });
+        } else {
+          // No frames extracted (CORS or other issue) - silently fail
+          // The video is still available for viewing
+          console.log('[StreamingResultCard] No frames extracted - video may have CORS restrictions');
+        }
       })
       .catch((err) => {
-        console.error('Frame extraction failed:', err);
-        setFramesError(err.message);
+        // Graceful degradation - don't show error to user
+        console.warn('[StreamingResultCard] Frame extraction failed:', err.message);
         setFramesLoading(false);
+        // Don't set framesError - we'll just show video thumbnail or placeholders
       });
   }, [entry?.videoUrl, extractedFrames.length, framesLoading, historyId, entry?.result]);
   
@@ -278,21 +287,6 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
   const defectLabels = cvData.defectLabels || {};
   const damageScore = cvData.damageScore;
   
-  // Debug logging for golden frames (temporary - remove after fix confirmed)
-  useEffect(() => {
-    if (result && Object.keys(result).length > 0) {
-      console.log('[StreamingResultCard] Golden Frames Debug:', {
-        'direct.goldenFrames': result.goldenFrames?.length ?? 0,
-        'cvAnalysis.goldenFrames': result.cvAnalysis?.goldenFrames?.length ?? 0,
-        'cvAnalysis.images.goldenFrames': result.cvAnalysis?.images?.goldenFrames?.length ?? 0,
-        'hybridGrade.cvAnalysis': !!result.hybridGrade?.cvAnalysis,
-        'normalized': normalizedGoldenFrames.length,
-        'status': status,
-        'hasHybridGrade': !!result.hybridGrade,
-        'hasCvAnalysis': !!result.cvAnalysis,
-      });
-    }
-  }, [result, status, normalizedGoldenFrames.length]);
 
   // Skeleton pulse animation class
   const skeleton = "animate-pulse bg-gray-700 rounded";
@@ -529,7 +523,7 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
         </div>
       )}
 
-      {/* Grading Scorecard - Full Breakdown */}
+      {/* Grading Scorecard - Full Breakdown (when CV data available) */}
       {(result.hybridGrade || Object.keys(regionScores).length > 0) && !isAnalyzing && (
         <GradeScorecard
           hybridGrade={result.hybridGrade}
@@ -538,6 +532,97 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
           defectLabels={defectLabels}
           defectBreakdown={result.hybridGrade?.defectBreakdown}
         />
+      )}
+      
+      {/* AI Grade Summary Card - Always show when we have AI data but no CV */}
+      {!result.hybridGrade && !isAnalyzing && result.estimatedGrade && (
+        <div className="bg-gray-800 p-4 rounded-xl border border-gray-700 max-w-2xl w-full mb-4">
+          <h3 className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-3 flex items-center gap-2">
+            <ScanLine className="w-4 h-4 text-purple-400" />
+            Grade Analysis
+          </h3>
+          
+          {/* Grade Breakdown */}
+          <div className="space-y-3">
+            {/* Main Grade */}
+            <div className="flex items-center justify-between p-3 bg-gray-900/50 rounded-lg">
+              <div>
+                <div className="text-xs text-gray-400 uppercase">Estimated Grade</div>
+                <div className="text-lg font-bold text-white">
+                  {result.gradingScale || 'CGC'} Scale
+                </div>
+              </div>
+              <div className={`text-3xl font-black font-mono ${
+                parseFloat(result.estimatedGrade) >= 9.0 ? 'text-green-400' :
+                parseFloat(result.estimatedGrade) >= 7.0 ? 'text-yellow-400' :
+                parseFloat(result.estimatedGrade) >= 5.0 ? 'text-orange-400' :
+                'text-red-400'
+              }`}>
+                {result.estimatedGrade}
+              </div>
+            </div>
+            
+            {/* Item Details */}
+            <div className="grid grid-cols-2 gap-2 text-sm">
+              {result.itemType && (
+                <div className="p-2 bg-gray-900/30 rounded">
+                  <span className="text-gray-500 text-xs">Type:</span>
+                  <span className="text-gray-300 ml-1 capitalize">{result.itemType}</span>
+                </div>
+              )}
+              {result.year && (
+                <div className="p-2 bg-gray-900/30 rounded">
+                  <span className="text-gray-500 text-xs">Year:</span>
+                  <span className="text-gray-300 ml-1">{result.year}</span>
+                </div>
+              )}
+              {result.variant && (
+                <div className="p-2 bg-gray-900/30 rounded col-span-2">
+                  <span className="text-gray-500 text-xs">Variant:</span>
+                  <span className="text-gray-300 ml-1">{result.variant}</span>
+                </div>
+              )}
+            </div>
+            
+            {/* Defect Count Summary */}
+            {Array.isArray(result.reasoning) && result.reasoning.length > 0 && (
+              <div className="p-3 bg-gray-900/30 rounded-lg">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs text-gray-400 uppercase">Defects Identified</span>
+                  <span className={`text-sm font-bold ${
+                    result.reasoning.length <= 2 ? 'text-green-400' :
+                    result.reasoning.length <= 5 ? 'text-yellow-400' :
+                    'text-red-400'
+                  }`}>
+                    {result.reasoning.length} found
+                  </span>
+                </div>
+                
+                {/* Defect tags */}
+                <div className="flex flex-wrap gap-1.5">
+                  {result.reasoning.slice(0, 6).map((item: any, idx: number) => (
+                    <span 
+                      key={idx}
+                      className="text-xs px-2 py-0.5 rounded bg-gray-700 text-gray-300"
+                    >
+                      {item.defect || item.text || 'Defect'}
+                    </span>
+                  ))}
+                  {result.reasoning.length > 6 && (
+                    <span className="text-xs px-2 py-0.5 rounded bg-gray-600 text-gray-400">
+                      +{result.reasoning.length - 6} more
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
+            
+            {/* Analysis Note */}
+            <div className="text-xs text-gray-500 italic text-center pt-2 border-t border-gray-700">
+              AI analysis complete • Deep CV scan available for enhanced accuracy
+            </div>
+          </div>
+        </div>
       )}
 
       {/* CV Analysis Section - Fast client-side extraction */}
@@ -608,15 +693,28 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
                   </div>
                 </div>
               ))
-            ) : framesError ? (
-              <div className="col-span-3 text-red-400 text-xs text-center py-4">
-                {framesError}
-              </div>
             ) : (
-               /* Fallback if no frames extracted or returned yet */
-               <div className="col-span-3 text-gray-500 text-xs text-center py-4 italic">
-                 Processing video frames...
-               </div>
+               /* Fallback if no frames extracted - show thumbnail or placeholder */
+               entry?.thumbnail ? (
+                 <div className="col-span-3">
+                   <button
+                     className="w-full aspect-video rounded-lg overflow-hidden border border-gray-600 bg-gray-900 relative group hover:border-purple-500 transition-colors"
+                     onClick={() => entry.thumbnail && openImageViewer(entry.thumbnail, 'Video Thumbnail', 'First frame captured from video', 0)}
+                   >
+                     <img src={entry.thumbnail} alt="Video thumbnail" className="w-full h-full object-cover" />
+                     <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
+                       <Maximize2 className="w-8 h-8 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-lg" />
+                     </div>
+                     <div className="absolute bottom-0 left-0 right-0 bg-black/70 text-xs text-center text-gray-300 py-1">
+                       Tap to view • Video available for playback
+                     </div>
+                   </button>
+                 </div>
+               ) : (
+                 <div className="col-span-3 text-gray-500 text-xs text-center py-4 italic">
+                   Video frames will appear here
+                 </div>
+               )
             )}
           </div>
           
