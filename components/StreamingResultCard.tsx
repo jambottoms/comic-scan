@@ -255,6 +255,23 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
   const isComplete = status === 'complete';
   const isError = status === 'error';
   
+  // DEBUG: Log what data we actually have
+  useEffect(() => {
+    if (isComplete && result) {
+      console.log('[StreamingResultCard] COMPLETE - Data check:', {
+        hasHybridGrade: !!result.hybridGrade,
+        hasGoldenFrames: !!result.goldenFrames,
+        goldenFramesCount: result.goldenFrames?.length || 0,
+        hasCvAnalysis: !!result.cvAnalysis,
+        cvDamageScore: result.cvAnalysis?.damageScore,
+        hasDetailedAnalysis: !!result.detailedAnalysis,
+        estimatedGrade: result.estimatedGrade,
+        regionScoresKeys: Object.keys(result.cvAnalysis?.regionScores || {}),
+        resultKeys: Object.keys(result),
+      });
+    }
+  }, [isComplete, result]);
+  
   // Note: We no longer switch to ResultCard on complete - StreamingResultCard
   // handles everything including frames and deep scan button
   
