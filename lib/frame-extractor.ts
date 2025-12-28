@@ -35,7 +35,7 @@ export async function extractFramesFromVideo(
     const timestamps: number[] = [];
     let corsAttempted = false;
     
-    const handleError = (errorEvent?: Event) => {
+    const handleError = () => {
       // If first attempt failed and we haven't tried with CORS, try with crossOrigin
       if (!corsAttempted && !video.crossOrigin) {
         console.log('[FrameExtractor] Retrying with crossOrigin=anonymous');
@@ -45,8 +45,7 @@ export async function extractFramesFromVideo(
         return;
       }
       
-      const error = errorEvent ? 'Video loading failed (CORS or network error)' : 'Failed to load video';
-      console.warn('[FrameExtractor]', error);
+      console.warn('[FrameExtractor] Video loading failed (CORS or network error)');
       // Resolve with empty array instead of rejecting - graceful degradation
       resolve([]);
     };
