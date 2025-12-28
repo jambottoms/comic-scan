@@ -8,6 +8,7 @@ import { extractFramesFromVideo, ExtractedFrame } from '@/lib/frame-extractor';
 import { saveScan, deleteSavedScan, isScanSaved } from '@/lib/saved-scans';
 import ImageViewerModal from './ImageViewerModal';
 import HybridGradeDisplay from './HybridGradeDisplay';
+import GradeScorecard from './GradeScorecard';
 
 interface StreamingResultCardProps {
   historyId: string;
@@ -167,8 +168,15 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
     
     // Skip if no video URL, already have frames, or already loading
     if (!videoUrl || extractedFrames.length > 0 || framesLoading) return;
-    // Skip if result already has golden frames
-    if (entry?.result?.goldenFrames?.length > 0) return;
+    // Skip if result already has golden frames (check all paths)
+    const existingFrames = 
+      entry?.result?.goldenFrames ||
+      entry?.result?.cvAnalysis?.goldenFrames ||
+      entry?.result?.cvAnalysis?.images?.goldenFrames ||
+      entry?.result?.hybridGrade?.cvAnalysis?.goldenFrames ||
+      entry?.result?.hybridGrade?.cvAnalysis?.images?.goldenFrames ||
+      [];
+    if (existingFrames.length > 0) return;
     
     setFramesLoading(true);
     setFramesError(null);
@@ -245,6 +253,46 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
   const title = result.title || (isAnalyzing ? 'Analyzing...' : 'Unknown Item');
   const issueNum = result.issue || '';
   const pageQuality = result.pageQuality || "Analyzing...";
+  
+  // Normalize golden frames data paths - check all possible locations
+  const normalizedGoldenFrames: string[] = 
+    result.goldenFrames || 
+    result.cvAnalysis?.goldenFrames ||
+    result.cvAnalysis?.images?.goldenFrames ||
+    result.hybridGrade?.cvAnalysis?.goldenFrames ||
+    result.hybridGrade?.cvAnalysis?.images?.goldenFrames ||
+    [];
+
+  const normalizedTimestamps: number[] =
+    result.frameTimestamps ||
+    result.cvAnalysis?.frameTimestamps ||
+    result.cvAnalysis?.images?.frameTimestamps ||
+    result.hybridGrade?.cvAnalysis?.frameTimestamps ||
+    result.hybridGrade?.cvAnalysis?.images?.frameTimestamps ||
+    [];
+  
+  // Normalize CV analysis data
+  const cvData = result.hybridGrade?.cvAnalysis || result.cvAnalysis || {};
+  const cvImages = cvData.images || cvData;
+  const regionScores = cvData.regionScores || {};
+  const defectLabels = cvData.defectLabels || {};
+  const damageScore = cvData.damageScore;
+  
+  // Debug logging for golden frames (temporary - remove after fix confirmed)
+  useEffect(() => {
+    if (result && Object.keys(result).length > 0) {
+      console.log('[StreamingResultCard] Golden Frames Debug:', {
+        'direct.goldenFrames': result.goldenFrames?.length ?? 0,
+        'cvAnalysis.goldenFrames': result.cvAnalysis?.goldenFrames?.length ?? 0,
+        'cvAnalysis.images.goldenFrames': result.cvAnalysis?.images?.goldenFrames?.length ?? 0,
+        'hybridGrade.cvAnalysis': !!result.hybridGrade?.cvAnalysis,
+        'normalized': normalizedGoldenFrames.length,
+        'status': status,
+        'hasHybridGrade': !!result.hybridGrade,
+        'hasCvAnalysis': !!result.cvAnalysis,
+      });
+    }
+  }, [result, status, normalizedGoldenFrames.length]);
 
   // Skeleton pulse animation class
   const skeleton = "animate-pulse bg-gray-700 rounded";
@@ -481,6 +529,17 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
         </div>
       )}
 
+      {/* Grading Scorecard - Full Breakdown */}
+      {(result.hybridGrade || Object.keys(regionScores).length > 0) && !isAnalyzing && (
+        <GradeScorecard
+          hybridGrade={result.hybridGrade}
+          cvAnalysis={cvData}
+          regionScores={regionScores}
+          defectLabels={defectLabels}
+          defectBreakdown={result.hybridGrade?.defectBreakdown}
+        />
+      )}
+
       {/* CV Analysis Section - Fast client-side extraction */}
       <div className="bg-gray-800 p-4 rounded-xl border border-gray-700 max-w-2xl w-full mb-4">
         <h3 className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-3 flex items-center gap-2">
@@ -516,16 +575,9 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
                   </button>
                 );
               })
-            ) : (result.goldenFrames && result.goldenFrames.length > 0) || (result.cvAnalysis?.images?.goldenFrames && result.cvAnalysis.images.goldenFrames.length > 0) ? (
-              (result.goldenFrames || result.cvAnalysis?.images?.goldenFrames || []).slice(0, 3).map((frame: string, idx: number) => {
-                // Handle different timestamp locations
-                let timestamp = 0;
-                if (result.frameTimestamps && result.frameTimestamps[idx] !== undefined) {
-                    timestamp = result.frameTimestamps[idx];
-                } else if (result.cvAnalysis?.images?.frameTimestamps && result.cvAnalysis.images.frameTimestamps[idx] !== undefined) {
-                    timestamp = result.cvAnalysis.images.frameTimestamps[idx];
-                }
-
+            ) : normalizedGoldenFrames.length > 0 ? (
+              normalizedGoldenFrames.slice(0, 3).map((frame: string, idx: number) => {
+                const timestamp = normalizedTimestamps[idx] ?? 0;
                 const { title, desc } = getFrameDescription(timestamp);
                 return (
                   <button 
@@ -593,10 +645,10 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
           )}
           
           {/* Show remaining server-side golden frames in a second row if we have more than 3 */}
-          {!extractedFrames.length && result.goldenFrames && result.goldenFrames.length > 3 && (
+          {!extractedFrames.length && normalizedGoldenFrames.length > 3 && (
             <div className="grid grid-cols-2 gap-2 mt-2">
-              {result.goldenFrames.slice(3).map((frame: string, idx: number) => {
-                const timestamp = result.frameTimestamps ? result.frameTimestamps[idx + 3] : 0;
+              {normalizedGoldenFrames.slice(3).map((frame: string, idx: number) => {
+                const timestamp = normalizedTimestamps[idx + 3] ?? 0;
                 const { title, desc } = getFrameDescription(timestamp);
                 return (
                   <button 

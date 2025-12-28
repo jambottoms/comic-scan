@@ -6,6 +6,7 @@ import { Bookmark, BookmarkCheck, Trash2, Loader2, ScanLine, Maximize2 } from 'l
 import VideoInvestigatorModal from './VideoInvestigatorModal';
 import ImageViewerModal from './ImageViewerModal';
 import HybridGradeDisplay from './HybridGradeDisplay';
+import GradeScorecard from './GradeScorecard';
 import { saveScan, deleteSavedScan, isScanSaved, updateSavedScan } from '@/lib/saved-scans';
 
 interface ResultCardProps {
@@ -324,7 +325,15 @@ export default function ResultCard({ result, videoUrl, thumbnail, savedScanId, o
     let title = `Golden Frame #${frameIdx + 1}`;
     let desc = "High-resolution capture selected by AI for clarity.";
 
-    const frameTimestamp = result.frameTimestamps ? result.frameTimestamps[frameIdx] : null;
+    // Note: frameTimestamps is normalized below, but this function may be called before
+    // So we check directly from result paths here
+    const rawTimestamps = 
+      result.frameTimestamps ||
+      result.cvAnalysis?.frameTimestamps ||
+      result.cvAnalysis?.images?.frameTimestamps ||
+      result.hybridGrade?.cvAnalysis?.frameTimestamps ||
+      [];
+    const frameTimestamp = rawTimestamps[frameIdx] ?? null;
     
     if (frameTimestamp !== null && bullets.length > 0) {
       // Find bullet with closest timestamp (within 2 seconds)
@@ -341,9 +350,26 @@ export default function ResultCard({ result, videoUrl, thumbnail, savedScanId, o
     return { title, desc };
   };
 
-  // Normalize CV Data access
+  // Normalize CV Data access - check all possible paths
   const cvData = result.hybridGrade?.cvAnalysis || result.cvAnalysis || {};
-  const goldenFrames = result.goldenFrames || [];
+  
+  // Golden frames can be at multiple locations depending on how data arrives
+  const goldenFrames: string[] = 
+    result.goldenFrames || 
+    result.cvAnalysis?.goldenFrames ||
+    result.cvAnalysis?.images?.goldenFrames ||
+    result.hybridGrade?.cvAnalysis?.goldenFrames ||
+    result.hybridGrade?.cvAnalysis?.images?.goldenFrames ||
+    [];
+  
+  // Frame timestamps similarly can be at multiple locations
+  const frameTimestamps: number[] =
+    result.frameTimestamps ||
+    result.cvAnalysis?.frameTimestamps ||
+    result.cvAnalysis?.images?.frameTimestamps ||
+    result.hybridGrade?.cvAnalysis?.frameTimestamps ||
+    result.hybridGrade?.cvAnalysis?.images?.frameTimestamps ||
+    [];
   
   // Extract images from nested structures
   // Structure might be cvData.images.* or just cvData.* depending on backend version
@@ -549,6 +575,17 @@ export default function ResultCard({ result, videoUrl, thumbnail, savedScanId, o
         </div>
       )}
 
+      {/* Grading Scorecard - Full Breakdown */}
+      {(result.hybridGrade || Object.keys(regionScores).length > 0) && (
+        <GradeScorecard
+          hybridGrade={result.hybridGrade}
+          cvAnalysis={cvData}
+          regionScores={regionScores}
+          defectLabels={defectLabels}
+          defectBreakdown={result.hybridGrade?.defectBreakdown}
+        />
+      )}
+
       {/* CV Analysis Section - Golden Frames & Defect Analysis */}
       {(goldenFrames.length > 0 || defectMask || varianceHeatmap) && (
         <div className="bg-gray-800 p-4 rounded-xl border border-gray-700 max-w-2xl w-full mb-4 shadow-lg overflow-hidden">
@@ -578,7 +615,7 @@ export default function ResultCard({ result, videoUrl, thumbnail, savedScanId, o
               </div>
               <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
                 {goldenFrames.map((frame: string, idx: number) => {
-                  const timestamp = result.frameTimestamps?.[idx] ?? 0;
+                  const timestamp = frameTimestamps[idx] ?? 0;
                   const { title, desc } = getFrameDescription(idx);
                   return (
                     <button 
