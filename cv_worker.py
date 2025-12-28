@@ -222,7 +222,7 @@ def find_golden_frame_candidates(video_path: str, total_frames: int, fps: float)
     timeout=300,  # 5 minute timeout
     secrets=[
         modal.Secret.from_name("supabase-secrets"),
-        modal.Secret.from_name("nyckel-secrets"),  # For defect classification
+        modal.Secret.from_name("nyckel-secret"),  # For defect classification
     ],
     volumes={"/video": video_volume},
 )
