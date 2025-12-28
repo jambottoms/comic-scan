@@ -45,7 +45,7 @@ cv_image = (
 DEFECT_LABELS = [
     "spine_split", "detached_cover", "missing_piece", "tear_major",
     "spine_roll", "staple_rust", "tear_minor",
-    "stain", "foxing", "color_touch", "fingerprint",
+    "stain", "foxing", "color_touch", "fingerprint", "date_stamp", "writing",
     "corner_blunt", "color_break", "crease_minor", "spine_stress",
     "pristine"
 ]

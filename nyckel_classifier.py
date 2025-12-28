@@ -50,6 +50,8 @@ DEFECT_LABELS = [
     "foxing",            # Age spots/oxidation spots (-0.8)
     "color_touch",       # Restoration/touch-up detected (-2.0)
     "fingerprint",       # Visible oil marks (-0.3)
+    "date_stamp",        # Date stamp on cover (-1.2)
+    "writing",           # Writing, names, or marks (-1.5)
     
     # Wear defects
     "corner_blunt",      # Rounded corners (-0.3)

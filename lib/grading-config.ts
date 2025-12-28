@@ -25,6 +25,8 @@ export type DefectLabel =
   | 'foxing'
   | 'color_touch'
   | 'fingerprint'
+  | 'date_stamp'
+  | 'writing'
   // Wear
   | 'corner_blunt'
   | 'color_break'
@@ -73,6 +75,8 @@ export const DEFECT_DEDUCTIONS: Record<DefectLabel, number> = {
   stain: 1.0,            // Visible staining
   foxing: 0.8,           // Age spots/oxidation spots
   fingerprint: 0.3,      // Visible oil marks
+  date_stamp: 1.2,       // Date stamp on cover (subscription/newsstand)
+  writing: 1.5,          // Writing, names, or marks on cover
   
   // Wear - General handling wear
   color_break: 0.5,      // Crease that breaks ink
@@ -154,6 +158,8 @@ export const ALL_DEFECT_LABELS: DefectLabel[] = [
   'foxing',
   'color_touch',
   'fingerprint',
+  'date_stamp',
+  'writing',
   // Wear
   'corner_blunt',
   'color_break',
@@ -190,6 +196,8 @@ export const DEFECT_DISPLAY_NAMES: Record<DefectLabel, string> = {
   foxing: 'Foxing',
   color_touch: 'Color Touch/Restoration',
   fingerprint: 'Fingerprints',
+  date_stamp: 'Date Stamp',
+  writing: 'Writing/Marks',
   corner_blunt: 'Corner Blunting',
   color_break: 'Color Breaking Crease',
   crease_minor: 'Minor Crease',

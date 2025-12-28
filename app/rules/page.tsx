@@ -124,7 +124,7 @@ export default function RulesPage() {
   // Organize defects by category
   const structuralSevere: DefectLabel[] = ['spine_split', 'detached_cover', 'missing_piece', 'tear_major'];
   const structuralModerate: DefectLabel[] = ['spine_roll', 'staple_rust', 'tear_minor'];
-  const surfaceDefects: DefectLabel[] = ['stain', 'foxing', 'color_touch', 'fingerprint'];
+  const surfaceDefects: DefectLabel[] = ['stain', 'foxing', 'color_touch', 'fingerprint', 'date_stamp', 'writing'];
   const wearDefects: DefectLabel[] = ['corner_blunt', 'color_break', 'crease_minor', 'spine_stress'];
   
   return (

@@ -298,6 +298,8 @@ Each defect type has a base point deduction. The actual deduction is multiplied 
 | Defect | Base Deduction | Description |
 |--------|----------------|-------------|
 | **Color Touch** | -2.0 | Restoration/touch-up detected |
+| **Writing** | -1.5 | Writing, names, or marks on cover |
+| **Date Stamp** | -1.2 | Date stamp (subscription/newsstand) |
 | **Stain** | -1.0 | Visible staining |
 | **Foxing** | -0.8 | Age spots/oxidation spots |
 | **Fingerprints** | -0.3 | Visible oil marks |
