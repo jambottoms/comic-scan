@@ -16,8 +16,9 @@ import modal
 import os
 import json
 import tempfile
-import numpy as np
 from pathlib import Path
+# Note: numpy, cv2, etc. are imported inside Modal functions where they're needed
+# This allows the deploy script to run without these dependencies installed locally
 
 # Create Modal app
 app = modal.App("gradevault-cv-worker")
