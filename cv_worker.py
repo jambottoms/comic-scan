@@ -513,8 +513,24 @@ def run_cv_analysis(golden_frames: list, output_dir: Path, scan_id: str) -> dict
     defect_mask = cv2.morphologyEx(defect_mask, cv2.MORPH_CLOSE, kernel)
     defect_mask = cv2.dilate(defect_mask, kernel, iterations=2)
     
-    # Calculate overall damage score
-    overall_defect_pct = (np.sum(defect_mask > 0) / defect_mask.size) * 100
+    # Calculate overall damage score using BOTH defect mask AND variance heatmap
+    # Variance map is more reliable for detecting subtle damage (creases, spine stress)
+    # Defect mask catches obvious anomalies (stains, tears)
+    
+    # Mask-based damage (binary: damaged or not)
+    mask_damage_pct = (np.sum(defect_mask > 0) / defect_mask.size) * 100
+    
+    # Variance-based damage (continuous: how much variance from mean)
+    # Normalize variance map to 0-1, then threshold high-variance areas
+    variance_normalized = variance_map / (variance_map.max() + 1e-6)
+    high_variance_mask = variance_normalized > 0.3  # Threshold for "damaged" variance
+    variance_damage_pct = (np.sum(high_variance_mask) / variance_map.size) * 100
+    
+    # Weighted blend: 40% defect mask, 60% variance map
+    # Variance map is prioritized as it's more accurate for detecting subtle issues
+    overall_defect_pct = (mask_damage_pct * 0.4) + (variance_damage_pct * 0.6)
+    
+    print(f"   Damage Analysis: Mask={mask_damage_pct:.1f}%, Variance={variance_damage_pct:.1f}%, Overall={overall_defect_pct:.1f}%")
     
     # Analyze each region
     region_scores = {}
@@ -526,6 +542,9 @@ def run_cv_analysis(golden_frames: list, output_dir: Path, scan_id: str) -> dict
         x2 = int(w * region_def["x_end"])
         y1 = int(h * region_def["y_start"])
         y2 = int(h * region_def["y_end"])
+        
+        # DEBUG: Log crop coordinates for alignment verification
+        print(f"   DEBUG {region_name}: image=({w}x{h}), crop=({x1},{y1})->({x2},{y2}), size=({x2-x1}x{y2-y1})")
         
         # Extract region crops
         crop = reference[y1:y2, x1:x2]
@@ -672,13 +691,15 @@ def classify_regions_with_nyckel(output_dir: Path, region_names) -> dict:
             label_name = result.get("labelName", "pristine")
             confidence = result.get("confidence", 0.0)
             
-            # Only accept high-confidence predictions
-            if confidence >= 0.6:
+            # Only accept high-confidence predictions (70%+ threshold)
+            # Below this, region crop alignment may be unreliable
+            if confidence >= 0.70:
                 defect_labels[region_name] = [label_name]
+                print(f"      {region_name}: {label_name} ({confidence:.0%}) ✓")
             else:
+                # Low confidence - likely misaligned crop or unclear defect
                 defect_labels[region_name] = ["pristine"]
-            
-            print(f"      {region_name}: {label_name} ({confidence:.0%})")
+                print(f"      {region_name}: {label_name} ({confidence:.0%}) - IGNORED (low confidence)")
             
         except Exception as e:
             print(f"      ⚠️ Failed to classify {region_name}: {e}")

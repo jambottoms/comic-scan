@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Loader2, ScanLine, Sparkles, Camera, Bookmark, Trash2, Maximize2 } from 'lucide-react';
 import { getVideoById, updateHistoryEntry } from '@/lib/history';
 import { subscribeToUpdates } from '@/lib/streaming-analysis';
@@ -31,6 +31,9 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
       setEntry(current);
       setStatus(current.result?._status || 'uploading');
     }
+    
+    // Reset extraction flag when historyId changes (new video)
+    extractionAttemptedRef.current = false;
     
     // Subscribe to updates
     const unsubscribe = subscribeToUpdates(historyId, (data) => {
@@ -70,6 +73,7 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
   const [extractedFrames, setExtractedFrames] = useState<ExtractedFrame[]>([]);
   const [framesLoading, setFramesLoading] = useState(false);
   const [framesError, setFramesError] = useState<string | null>(null);
+  const extractionAttemptedRef = useRef(false);
   
   
   // Save state
@@ -166,6 +170,9 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
   useEffect(() => {
     const videoUrl = entry?.videoUrl;
     
+    // Skip if already attempted extraction for this video
+    if (extractionAttemptedRef.current) return;
+    
     // Skip if no video URL, already have frames, or already loading
     if (!videoUrl || extractedFrames.length > 0 || framesLoading) return;
     // Skip if result already has golden frames (check all paths)
@@ -178,6 +185,8 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
       [];
     if (existingFrames.length > 0) return;
     
+    // Mark as attempted to prevent re-runs
+    extractionAttemptedRef.current = true;
     setFramesLoading(true);
     setFramesError(null);
     
@@ -212,7 +221,7 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
         setFramesLoading(false);
         // Don't set framesError - we'll just show video thumbnail or placeholders
       });
-  }, [entry?.videoUrl, extractedFrames.length, framesLoading, historyId, entry?.result]);
+  }, [entry?.videoUrl, extractedFrames.length, framesLoading, historyId]);
   
   // Simulated progress for loading states
   const [progress, setProgress] = useState(0);

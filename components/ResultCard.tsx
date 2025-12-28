@@ -671,31 +671,33 @@ export default function ResultCard({ result, videoUrl, thumbnail, savedScanId, o
                         </div>
                     </div>
 
-                    {/* Heatmaps Preview */}
+                    {/* Heatmaps Preview - Make Variance Map Prominent */}
                     {(defectMask || varianceHeatmap) && (
                         <div className="flex gap-2 flex-1 justify-center">
                             {varianceHeatmap && (
                                 <button 
-                                    className="relative rounded-lg overflow-hidden border border-gray-600 hover:border-purple-500 transition-colors group aspect-[3/4] h-24"
-                                    onClick={() => openImageViewer(varianceHeatmap, "Variance Heatmap", "Shows areas of high visual variance (glare, damage, or changing reflection). Red = High Variance.")}
+                                    className="relative rounded-lg overflow-hidden border-2 border-purple-500/50 hover:border-purple-400 transition-colors group aspect-[3/4] h-32"
+                                    onClick={() => openImageViewer(varianceHeatmap, "Surface Integrity Heatmap (Primary Damage Detector)", "🔥 This heatmap shows surface variance - the PRIMARY damage indicator. Red/orange = damage, creases, spine stress, or non-flat surfaces. Yellow = minor wear. Blue/green = pristine. More reliable than region crops.")}
                                 >
-                                    <img src={varianceHeatmap} className="w-full h-full object-cover" alt="Variance" />
-                                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 flex items-center justify-center transition-colors">
-                                        <Maximize2 className="w-4 h-4 text-white opacity-0 group-hover:opacity-100" />
+                                    <img src={varianceHeatmap} className="w-full h-full object-contain bg-black" alt="Variance Heatmap" />
+                                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 flex items-center justify-center transition-colors">
+                                        <Maximize2 className="w-5 h-5 text-white opacity-0 group-hover:opacity-100" />
                                     </div>
-                                    <div className="absolute bottom-0 w-full bg-black/70 text-[8px] text-center text-white py-0.5">Heatmap</div>
+                                    <div className="absolute bottom-0 w-full bg-gradient-to-t from-black/90 to-transparent text-[10px] text-center text-white py-1.5 font-medium">
+                                        🔥 Primary Damage Detector
+                                    </div>
                                 </button>
                             )}
                             {defectMask && (
                                 <button 
-                                    className="relative rounded-lg overflow-hidden border border-gray-600 hover:border-purple-500 transition-colors group aspect-[3/4] h-24"
-                                    onClick={() => openImageViewer(defectMask, "Defect Mask", "Binary mask of detected surface anomalies. White areas indicate potential damage or heavy wear.")}
+                                    className="relative rounded-lg overflow-hidden border border-gray-600 hover:border-purple-500 transition-colors group aspect-[3/4] h-32"
+                                    onClick={() => openImageViewer(defectMask, "Defect Mask (Secondary)", "Binary mask of detected surface anomalies. White areas indicate potential damage or heavy wear.")}
                                 >
                                     <img src={defectMask} className="w-full h-full object-cover" alt="Mask" />
                                     <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 flex items-center justify-center transition-colors">
                                         <Maximize2 className="w-4 h-4 text-white opacity-0 group-hover:opacity-100" />
                                     </div>
-                                    <div className="absolute bottom-0 w-full bg-black/70 text-[8px] text-center text-white py-0.5">Mask</div>
+                                    <div className="absolute bottom-0 w-full bg-black/70 text-[8px] text-center text-white py-0.5">Defect Mask</div>
                                 </button>
                             )}
                         </div>
