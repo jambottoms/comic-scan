@@ -19,8 +19,8 @@ jobs:
         with:
           python-version: '3.12'
           
-      - name: Install Modal
-        run: pip install modal
+      - name: Install Modal and dependencies
+        run: pip install modal pydantic
         
       - name: Deploy to Modal
         env:
