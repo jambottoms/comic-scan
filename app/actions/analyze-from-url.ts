@@ -412,6 +412,8 @@ Use appropriate grading scale: CGC for comics, PSA/BGS for cards. Be concise, ob
             
             // DEBUG: Log full Modal response
             console.log("[Server Action] Modal response:", JSON.stringify(modalResult, null, 2).substring(0, 2000));
+            console.log("[Server Action] Modal CV Analysis defectLabels:", JSON.stringify(modalResult.cvAnalysis?.defectLabels, null, 2));
+            console.log("[Server Action] Modal CV Analysis regionScores:", JSON.stringify(modalResult.cvAnalysis?.regionScores, null, 2));
             
             goldenFrames = modalResult.goldenFrames || [];
             cvAnalysis = modalResult.cvAnalysis || null;
@@ -541,7 +543,8 @@ RESPOND IN JSON:
           
           // Update result with hybrid grade
           parsedResult.estimatedGrade = hybridGrade.finalGrade;
-          parsedResult.reasoning = hybridGrade.reasoning;
+          // DON'T overwrite reasoning array - keep the structured format
+          // parsedResult.reasoning = hybridGrade.reasoning;
           
           // Add CV images to hybridGrade
           if (cvAnalysis.images) {
