@@ -271,6 +271,18 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
   // Real-time progress polling for Phase 2 (CV analysis)
   const cvProgress = useProgressPolling(historyId, isCVPending && !isFullyComplete);
   
+  // DEBUG: Log polling status
+  useEffect(() => {
+    console.log('[StreamingResultCard] Polling status:', {
+      historyId,
+      status,
+      isCVPending,
+      isFullyComplete,
+      pollingEnabled: isCVPending && !isFullyComplete,
+      cvProgress
+    });
+  }, [historyId, status, isCVPending, isFullyComplete, cvProgress]);
+  
   // DEBUG: Log what data we actually have
   useEffect(() => {
     if (isComplete && result) {

@@ -24,13 +24,19 @@ export function useProgressPolling(jobId: string, enabled: boolean = true) {
   });
   
   useEffect(() => {
-    if (!enabled || !jobId) return;
+    if (!enabled || !jobId) {
+      console.log('[Progress Poll] Hook disabled or no jobId', { enabled, jobId });
+      return;
+    }
     
+    console.log('[Progress Poll] Starting polling for job:', jobId);
     const supabase = createClient();
     
     // Poll every 2 seconds
     const pollInterval = setInterval(async () => {
       try {
+        console.log('[Progress Poll] Polling for job:', jobId);
+        
         const { data, error } = await supabase
           .from('analysis_jobs')
           .select('progress_percentage, progress_message, progress_step, cv_status')
@@ -43,6 +49,8 @@ export function useProgressPolling(jobId: string, enabled: boolean = true) {
         }
         
         if (data) {
+          console.log('[Progress Poll] Data received:', data);
+          
           const isComplete = data.cv_status === 'complete' || data.progress_percentage === 100;
           
           setProgress({
@@ -54,8 +62,11 @@ export function useProgressPolling(jobId: string, enabled: boolean = true) {
           
           // Stop polling when complete
           if (isComplete) {
+            console.log('[Progress Poll] Complete! Stopping polling.');
             clearInterval(pollInterval);
           }
+        } else {
+          console.warn('[Progress Poll] No data found for job:', jobId);
         }
       } catch (err) {
         console.error('[Progress Poll] Exception:', err);
