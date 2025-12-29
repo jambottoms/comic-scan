@@ -89,13 +89,13 @@ export default function ResultSheet({
                       <div className="h-4 bg-gray-800 rounded w-5/6"></div>
                     </div>
                   </div>
-                ) : (isStreaming || result?._pending) && historyId ? (
-                  // Use new progressive analysis view with error boundary fallback
+                ) : historyId ? (
+                  // Use new progressive analysis view for ALL states
                   <div className="w-full">
-                    {/* Try new view, if it fails safe-guarding logic should help */}
                     <GradingAnalysisView historyId={historyId} />
                   </div>
                 ) : result ? (
+                  // Legacy fallback for old saved scans without historyId
                   <ResultCard 
                       result={result} 
                       videoUrl={videoUrl} 
@@ -107,11 +107,6 @@ export default function ResultSheet({
                       }}
                       embedded={true}
                   />
-                ) : historyId ? (
-                  // Fallback: use progressive view if we have historyId
-                  <div className="w-full">
-                     <GradingAnalysisView historyId={historyId} />
-                  </div>
                 ) : (
                    <div className="text-gray-500 py-10">No result data available</div>
                 )}
