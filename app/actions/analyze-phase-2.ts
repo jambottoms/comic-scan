@@ -171,7 +171,7 @@ RESPOND IN JSON:
       }
     }
     
-    // Step 3: Fuse grades if we have the necessary data
+    // Step 3: Create hybrid grade summary (simplified for now)
     let hybridGrade: any = null;
     
     if (detailedAnalysis && cvAnalysis) {
@@ -183,36 +183,24 @@ RESPOND IN JSON:
         const hasNyckelAnalysis = cvAnalysis?.analysisType === 'nyckel-ml' && cvAnalysis?.regionGrades;
         
         if (hasNyckelAnalysis) {
-          // Use three-way fusion with Nyckel ML
-          console.log("[Phase 2] Using Nyckel ML three-way grade fusion...");
-          const { fuseThreeWayGrades } = await import('@/lib/grade-adjustment');
+          // Use Nyckel ML data directly
+          console.log("[Phase 2] Using Nyckel ML analysis...");
+          const nyckelAvg = cvAnalysis.averageGrade || aiGradeNum;
           
-          const threeWayResult = fuseThreeWayGrades(
-            aiGradeNum,
-            aiConfidence,
-            cvAnalysis,
-            detailedAnalysis
-          );
-          
-          console.log(`[Phase 2] Three-Way Grade: ${threeWayResult.displayGrade} (confidence: ${threeWayResult.overallConfidence})`);
-          console.log(`[Phase 2] Agreement: ${threeWayResult.agreement}, AI: ${threeWayResult.aiGrade.toFixed(1)}, Nyckel: ${threeWayResult.nyckelGrade.toFixed(1)}`);
-          
-          // Convert to hybridGrade format
           hybridGrade = {
-            finalGrade: threeWayResult.finalGrade,
-            displayGrade: threeWayResult.displayGrade,
-            aiGrade: threeWayResult.aiGrade.toFixed(1),
-            cvGrade: threeWayResult.nyckelGrade.toFixed(1),
-            nyckelGrade: threeWayResult.nyckelGrade.toFixed(1),
-            agreement: threeWayResult.agreement,
-            gradeDifference: threeWayResult.gradeDifference,
-            overallConfidence: threeWayResult.overallConfidence,
+            finalGrade: nyckelAvg.toFixed(1),
+            displayGrade: nyckelAvg.toFixed(1),
+            aiGrade: aiGradeNum.toFixed(1),
+            cvGrade: nyckelAvg.toFixed(1),
+            nyckelGrade: nyckelAvg.toFixed(1),
+            agreement: Math.abs(aiGradeNum - nyckelAvg) < 1.0 ? 'strong' : 'moderate',
+            gradeDifference: Math.abs(aiGradeNum - nyckelAvg),
+            overallConfidence: 'high',
             aiConfidence,
             cvConfidence: 'high',
-            reasoning: threeWayResult.reasoning,
-            nyckelRegions: threeWayResult.nyckelRegions,
-            lowestRegion: threeWayResult.lowestRegion,
-            criticalIssues: threeWayResult.criticalIssues,
+            reasoning: `AI grade: ${aiGradeNum.toFixed(1)}, Nyckel ML grade: ${nyckelAvg.toFixed(1)}`,
+            nyckelRegions: cvAnalysis.regionGrades,
+            lowestRegion: cvAnalysis.lowestRegion,
             detailedAnalysis,
             cvAnalysis: {
               damageScore: cvAnalysis.damageScore,
@@ -221,32 +209,39 @@ RESPOND IN JSON:
               ...cvAnalysis.images
             }
           };
+          
+          console.log(`[Phase 2] Hybrid Grade: ${hybridGrade.displayGrade} (AI: ${aiGradeNum.toFixed(1)}, Nyckel: ${nyckelAvg.toFixed(1)})`);
         } else if (cvAnalysis.damageScore !== undefined) {
-          // Fallback to two-way fusion (AI + CV variance)
-          console.log("[Phase 2] Using legacy two-way grade fusion (CV variance)...");
-          const { fuseGrades } = await import('@/lib/grade-adjustment');
+          // Simple adjustment based on damage score
+          console.log("[Phase 2] Using CV damage score for grade adjustment...");
           
-          hybridGrade = fuseGrades(
-            aiGradeNum,
+          // Simple heuristic: reduce grade based on damage score
+          const adjustment = (cvAnalysis.damageScore / 100) * 2; // Max 2 point reduction
+          const adjustedGrade = Math.max(0.5, aiGradeNum - adjustment);
+          
+          hybridGrade = {
+            finalGrade: adjustedGrade.toFixed(1),
+            displayGrade: adjustedGrade.toFixed(1),
+            aiGrade: aiGradeNum.toFixed(1),
+            cvGrade: adjustedGrade.toFixed(1),
+            agreement: adjustment < 0.5 ? 'strong' : 'moderate',
+            gradeDifference: adjustment,
+            overallConfidence: 'medium',
             aiConfidence,
-            cvAnalysis.damageScore,
-            cvAnalysis.regionScores || {},
+            cvConfidence: 'medium',
+            reasoning: `Grade adjusted by -${adjustment.toFixed(1)} based on ${cvAnalysis.damageScore.toFixed(1)}% damage detected`,
             detailedAnalysis,
-            cvAnalysis.defectLabels || {}
-          );
-          
-          console.log(`[Phase 2] Hybrid Grade: ${hybridGrade.displayGrade} (confidence: ${hybridGrade.overallConfidence})`);
-          
-          // Add CV images to hybridGrade
-          if (cvAnalysis.images) {
-            hybridGrade.cvAnalysis = {
-              ...hybridGrade.cvAnalysis,
+            cvAnalysis: {
+              damageScore: cvAnalysis.damageScore,
+              regionScores: cvAnalysis.regionScores,
               ...cvAnalysis.images
-            };
-          }
+            }
+          };
+          
+          console.log(`[Phase 2] Adjusted Grade: ${hybridGrade.displayGrade} (${adjustment.toFixed(1)} point reduction)`);
         }
       } catch (fusionError: any) {
-        console.warn("[Phase 2] Grade fusion failed:", fusionError.message);
+        console.warn("[Phase 2] Grade calculation failed:", fusionError.message);
       }
     }
     
