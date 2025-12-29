@@ -6,6 +6,7 @@ import { getVideoById, updateHistoryEntry } from '@/lib/history';
 import { subscribeToUpdates } from '@/lib/streaming-analysis';
 import { extractFramesFromVideo, ExtractedFrame } from '@/lib/frame-extractor';
 import { saveScan, deleteSavedScan, isScanSaved } from '@/lib/saved-scans';
+import { useProgressPolling } from '@/lib/use-progress-polling';
 import ImageViewerModal from './ImageViewerModal';
 import HybridGradeDisplay from './HybridGradeDisplay';
 import GradeScorecard from './GradeScorecard';
@@ -266,6 +267,9 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
   const isComplete = status === 'complete';
   const isFullyComplete = status === 'complete' && result._cvReady === true;
   const isError = status === 'error';
+  
+  // Real-time progress polling for Phase 2 (CV analysis)
+  const cvProgress = useProgressPolling(historyId, isCVPending && !isFullyComplete);
   
   // DEBUG: Log what data we actually have
   useEffect(() => {
@@ -702,15 +706,32 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
           {(framesLoading || isCVPending) && <Loader2 className="w-3 h-3 animate-spin text-blue-400 ml-2" />}
         </h3>
         
-        {/* CV Processing Status */}
+        {/* CV Processing Status with Real-Time Progress */}
         {isCVPending && !normalizedGoldenFrames.length && (
           <div className="mb-4 p-3 bg-blue-900/20 rounded-lg border border-blue-700/50">
             <div className="flex items-center gap-2 mb-2">
               <Loader2 className="w-4 h-4 animate-spin text-blue-400" />
-              <span className="text-sm text-blue-300 font-medium">Processing golden frames...</span>
+              <span className="text-sm text-blue-300 font-medium">{cvProgress.message || 'Processing golden frames...'}</span>
             </div>
-            <p className="text-xs text-gray-400">
-              Extracting high-quality frames, analyzing defects with computer vision, and verifying grade accuracy. This may take 30-60 seconds.
+            
+            {/* Progress Bar */}
+            {cvProgress.percentage > 0 && (
+              <div className="mt-2 mb-2">
+                <div className="flex justify-between text-xs text-gray-400 mb-1">
+                  <span>{cvProgress.step.replace(/_/g, ' ')}</span>
+                  <span>{cvProgress.percentage}%</span>
+                </div>
+                <div className="w-full bg-gray-700 rounded-full h-2 overflow-hidden">
+                  <div 
+                    className="bg-blue-500 h-full transition-all duration-500 ease-out"
+                    style={{ width: `${cvProgress.percentage}%` }}
+                  />
+                </div>
+              </div>
+            )}
+            
+            <p className="text-xs text-gray-400 mt-2">
+              Extracting high-quality frames, analyzing defects with computer vision, and verifying grade accuracy.
             </p>
           </div>
         )}

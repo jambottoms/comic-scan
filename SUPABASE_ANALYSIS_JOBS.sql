@@ -25,6 +25,12 @@ CREATE TABLE IF NOT EXISTS analysis_jobs (
   hybrid_grade JSONB,
   final_grade TEXT,
   
+  -- Progress Tracking (for real-time UI updates)
+  progress_percentage INTEGER DEFAULT 0,
+  progress_message TEXT,
+  progress_step TEXT,
+  progress_updated_at TIMESTAMPTZ,
+  
   -- Metadata
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW(),

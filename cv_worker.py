@@ -406,10 +406,11 @@ def analyze_frame_chunk(
     start_frame: int,
     end_frame: int,
     fps: float,
-    chunk_id: int
+    chunk_id: int,
+    sample_rate: int = 1
 ) -> list:
     """
-    Analyze a chunk of frames in parallel.
+    Analyze a chunk of frames in parallel (OPTIMIZED with frame sampling).
     
     Reads video from shared Volume (no re-download needed).
     Returns list of candidate frames with quality metrics.
@@ -420,6 +421,7 @@ def analyze_frame_chunk(
         end_frame: Ending frame number
         fps: Video FPS for timestamp calculation
         chunk_id: Chunk identifier for logging
+        sample_rate: Analyze every Nth frame (default 1 = all frames)
     
     Returns:
         List of candidate frames with quality metrics
@@ -429,7 +431,7 @@ def analyze_frame_chunk(
     import time
     
     video_path = f"/video/{scan_id}/input.mp4"
-    print(f"[Chunk {chunk_id}] Processing frames {start_frame}-{end_frame} from {video_path}")
+    print(f"[Chunk {chunk_id}] Processing frames {start_frame}-{end_frame} (sample rate: 1/{sample_rate}) from {video_path}")
     
     # CRITICAL: Reload volume to see files committed by parent function
     # Modal Volumes are eventually consistent - workers may start before sync completes
@@ -453,12 +455,16 @@ def analyze_frame_chunk(
     
     candidates = []
     prev_gray = None
+    frames_analyzed = 0
     
-    for frame_number in range(start_frame, end_frame):
+    for frame_number in range(start_frame, end_frame, sample_rate):
+        # Skip to the frame we want to analyze (3x faster with sample_rate=3)
+        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
         ret, frame = cap.read()
         if not ret:
             break
         
+        frames_analyzed += 1
         curr_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         
         # Calculate sharpness (Laplacian Variance)
@@ -489,7 +495,7 @@ def analyze_frame_chunk(
     
     cap.release()
     
-    print(f"[Chunk {chunk_id}] Found {len(candidates)} stable frames")
+    print(f"[Chunk {chunk_id}] Analyzed {frames_analyzed} frames, found {len(candidates)} stable frames")
     return candidates
 
 
@@ -608,6 +614,9 @@ def analyze_video(video_url: str, scan_id: str, item_type: str = "card") -> dict
     print(f"📹 Video URL: {video_url}")
     print(f"🏷️ Item type: {item_type}")
     
+    # Progress: 5% - Starting
+    update_progress(supabase_url, supabase_key, scan_id, 5, "Starting CV analysis...", "init")
+    
     # Create directories
     volume_dir = Path(f"/video/{scan_id}")
     volume_dir.mkdir(parents=True, exist_ok=True)
@@ -626,6 +635,9 @@ def analyze_video(video_url: str, scan_id: str, item_type: str = "card") -> dict
         with open(volume_video_path, 'wb') as f:
             for chunk in response.iter_content(chunk_size=8192):
                 f.write(chunk)
+        
+        # Progress: 15% - Video downloaded
+        update_progress(supabase_url, supabase_key, scan_id, 15, "Video downloaded, analyzing frames...", "download_complete")
         
         # Commit the volume so workers can see the file
         video_volume.commit()
@@ -646,28 +658,38 @@ def analyze_video(video_url: str, scan_id: str, item_type: str = "card") -> dict
         
         print(f"   Video: {total_frames} frames, {fps:.1f} fps, {total_frames/fps:.1f}s")
         
+        # OPTIMIZATION: Sample every 3rd frame instead of all frames (3x faster)
+        # For 5-10s videos (150-300 frames), analyzing 50-100 frames is sufficient
+        frame_sample_rate = 3  # Analyze every 3rd frame
+        sampled_frames = total_frames // frame_sample_rate
+        print(f"   🚀 OPTIMIZED: Analyzing every {frame_sample_rate}rd frame ({sampled_frames} frames instead of {total_frames})")
+        
         # Determine optimal number of parallel workers
         # Modal can handle 100+ concurrent containers easily
         min_frames_per_chunk = 5  # Minimum frames per worker for optical flow accuracy
         max_workers = 100
-        num_workers = min(max_workers, max(2, total_frames // min_frames_per_chunk))
-        chunk_size = total_frames // num_workers
+        num_workers = min(max_workers, max(2, sampled_frames // min_frames_per_chunk))
+        chunk_size = sampled_frames // num_workers
         
         print(f"🔀 Splitting into {num_workers} parallel workers...")
-        print(f"   Each worker analyzes ~{chunk_size} frames")
+        print(f"   Each worker analyzes ~{chunk_size} sampled frames")
         
-        # Prepare chunk parameters
+        # Prepare chunk parameters with frame sampling
         chunk_params = []
         for i in range(num_workers):
-            start = i * chunk_size
-            end = min((i + 1) * chunk_size, total_frames) if i < num_workers - 1 else total_frames
+            start = i * chunk_size * frame_sample_rate  # Account for sampling
+            end = min((i + 1) * chunk_size * frame_sample_rate, total_frames) if i < num_workers - 1 else total_frames
             chunk_params.append({
                 'scan_id': scan_id,
                 'start_frame': start,
                 'end_frame': end,
                 'fps': fps,
-                'chunk_id': i
+                'chunk_id': i,
+                'sample_rate': frame_sample_rate
             })
+        
+        # Progress: 25% - Starting frame analysis
+        update_progress(supabase_url, supabase_key, scan_id, 25, f"Analyzing {sampled_frames} frames for quality...", "frame_analysis")
         
         # Process chunks in parallel using Modal's .map()
         print(f"⚡ Processing {num_workers} chunks in parallel...")
@@ -679,11 +701,15 @@ def analyze_video(video_url: str, scan_id: str, item_type: str = "card") -> dict
             [p['end_frame'] for p in chunk_params],
             [p['fps'] for p in chunk_params],
             [p['chunk_id'] for p in chunk_params],
+            [p['sample_rate'] for p in chunk_params],
         ):
             all_candidates.extend(candidates)
         
-        print(f"✅ Analyzed ALL {total_frames} frames in parallel")
+        print(f"✅ Analyzed {sampled_frames} frames in parallel (sampled every {frame_sample_rate}rd frame)")
         print(f"   Found {len(all_candidates)} stable frames (motion <= 3.0)")
+        
+        # Progress: 50% - Frame analysis complete
+        update_progress(supabase_url, supabase_key, scan_id, 50, "Frame analysis complete, selecting best frames...", "frame_analysis_complete")
         
         # Sort by sharpness (highest first)
         all_candidates.sort(key=lambda x: x['sharpness'], reverse=True)
@@ -716,6 +742,9 @@ def analyze_video(video_url: str, scan_id: str, item_type: str = "card") -> dict
             print("\n📊 Using sharpness-based frame selection (Nyckel not configured)...")
             selected = select_by_sharpness_only(all_candidates, max_frames=5)
         
+        # Progress: 60% - Golden frames selected
+        update_progress(supabase_url, supabase_key, scan_id, 60, f"Selected {len(selected)} best frames, extracting regions...", "frames_selected")
+        
         # Now extract the actual golden frames (only 5 frames - fast!)
         print(f"\n🖼️  Extracting {len(selected)} golden frames...")
         cap = cv2.VideoCapture(str(volume_video_path))
@@ -740,6 +769,9 @@ def analyze_video(video_url: str, scan_id: str, item_type: str = "card") -> dict
         
         cap.release()
         
+        # Progress: 70% - Starting defect analysis
+        update_progress(supabase_url, supabase_key, scan_id, 70, "Analyzing defects with ML classifier...", "defect_analysis")
+        
         # Run analysis on golden frames
         # Try Nyckel ML analysis first, fall back to CV variance analysis
         print("\n🔬 Running defect analysis...")
@@ -754,6 +786,8 @@ def analyze_video(video_url: str, scan_id: str, item_type: str = "card") -> dict
                 print(f"      Critical Region Avg: {analysis_result['criticalRegionAvg']}")
                 if analysis_result.get('lowestRegion'):
                     print(f"      Lowest: {analysis_result['lowestRegion']['region']} ({analysis_result['lowestRegion']['grade']})")
+                # Progress: 85% - ML analysis complete
+                update_progress(supabase_url, supabase_key, scan_id, 85, "Defect analysis complete, uploading results...", "analysis_complete")
         except Exception as nyckel_error:
             print(f"   ⚠️ Nyckel analysis failed: {nyckel_error}")
         
@@ -781,6 +815,9 @@ def analyze_video(video_url: str, scan_id: str, item_type: str = "card") -> dict
             else:
                 result["cvAnalysis"] = analysis_result
         
+        # Progress: 95% - Upload complete
+        update_progress(supabase_url, supabase_key, scan_id, 95, "Upload complete, finalizing...", "upload_complete")
+        
         # Clean up the shared Volume to free space
         print("\n🧹 Cleaning up shared Volume...")
         try:
@@ -789,6 +826,9 @@ def analyze_video(video_url: str, scan_id: str, item_type: str = "card") -> dict
             print(f"   Removed {volume_dir}")
         except Exception as e:
             print(f"   Warning: Could not clean up volume: {e}")
+        
+        # Progress: 100% - Complete
+        update_progress(supabase_url, supabase_key, scan_id, 100, "CV analysis complete!", "complete")
         
         print("\n✅ Analysis complete!")
         return result
@@ -1275,6 +1315,55 @@ def upload_cv_images(scan_id: str, output_dir: Path, region_analyses: list,
             print(f"      ✅ Uploaded variance heatmap")
     
     return result
+
+
+def update_progress(supabase_url: str, supabase_key: str, job_id: str, percentage: int, message: str, step: str):
+    """
+    Update progress in Supabase analysis_jobs table for real-time UI updates.
+    
+    Args:
+        supabase_url: Supabase project URL
+        supabase_key: Service role key
+        job_id: The analysis job ID (scan_id)
+        percentage: Progress percentage (0-100)
+        message: Human-readable progress message
+        step: Current step name (for tracking)
+    """
+    import requests
+    from datetime import datetime
+    
+    try:
+        update_url = f"{supabase_url}/rest/v1/analysis_jobs"
+        headers = {
+            "apikey": supabase_key,
+            "Authorization": f"Bearer {supabase_key}",
+            "Content-Type": "application/json",
+            "Prefer": "return=minimal"
+        }
+        
+        payload = {
+            "progress_percentage": percentage,
+            "progress_message": message,
+            "progress_step": step,
+            "progress_updated_at": datetime.utcnow().isoformat() + "Z",
+            "updated_at": datetime.utcnow().isoformat() + "Z"
+        }
+        
+        response = requests.patch(
+            f"{update_url}?id=eq.{job_id}",
+            headers=headers,
+            json=payload,
+            timeout=5
+        )
+        
+        if response.status_code not in [200, 204]:
+            print(f"   ⚠️ Progress update failed ({response.status_code}): {response.text[:200]}")
+        else:
+            print(f"   📊 Progress: {percentage}% - {message}")
+            
+    except Exception as e:
+        # Don't fail the whole job if progress update fails
+        print(f"   ⚠️ Progress update error: {e}")
 
 
 def upload_to_supabase_storage(supabase_url: str, supabase_key: str, bucket: str, 
