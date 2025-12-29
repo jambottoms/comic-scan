@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { ChevronDown, Video, Upload, ScanLine } from 'lucide-react';
 import ResultCard from '@/components/ResultCard';
-import GradingAnalysisView from '@/components/GradingAnalysisView';
+import StreamingResultCard from '@/components/StreamingResultCard';
 
 interface ResultSheetProps {
   isOpen: boolean;
@@ -89,9 +89,10 @@ export default function ResultSheet({
                     </div>
                   </div>
                 ) : (isStreaming || result?._pending) && historyId ? (
-                  // Use new progressive analysis view
-                  <GradingAnalysisView 
+                  // Use streaming card for pending/streaming results
+                  <StreamingResultCard 
                       historyId={historyId}
+                      embedded={true}
                   />
                 ) : result ? (
                   <ResultCard 
@@ -106,9 +107,10 @@ export default function ResultSheet({
                       embedded={true}
                   />
                 ) : historyId ? (
-                  // Fallback: use progressive view if we have historyId
-                  <GradingAnalysisView 
+                  // Fallback: use streaming card if we have historyId but no result yet
+                  <StreamingResultCard 
                       historyId={historyId}
+                      embedded={true}
                   />
                 ) : (
                    <div className="text-gray-500 py-10">No result data available</div>
