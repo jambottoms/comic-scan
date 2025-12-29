@@ -43,7 +43,39 @@ cv_image = (
     )
 )
 
-# Defect labels matching lib/grading-config.ts
+# =============================================================================
+# NYCKEL CONFIGURATION
+# =============================================================================
+
+# Region definitions (same as glint_analyzer.py)
+REGIONS = {
+    "spine": {"x_start": 0.0, "x_end": 0.08, "y_start": 0.0, "y_end": 1.0},
+    "corner_tl": {"x_start": 0.0, "x_end": 0.15, "y_start": 0.0, "y_end": 0.12},
+    "corner_tr": {"x_start": 0.85, "x_end": 1.0, "y_start": 0.0, "y_end": 0.12},
+    "corner_bl": {"x_start": 0.0, "x_end": 0.15, "y_start": 0.88, "y_end": 1.0},
+    "corner_br": {"x_start": 0.85, "x_end": 1.0, "y_start": 0.88, "y_end": 1.0},
+    "surface": {"x_start": 0.20, "x_end": 0.80, "y_start": 0.20, "y_end": 0.80}
+}
+
+# Critical regions for grading (most important)
+CRITICAL_REGIONS = ["spine", "corner_tl", "corner_tr", "corner_bl", "corner_br"]
+
+# Visibility labels
+VISIBILITY_LABELS = ["clearly_visible", "partially_visible", "not_visible", "occluded"]
+
+# Grade labels with numeric mappings (CGC scale)
+GRADE_LABELS = ["pristine", "near_mint", "minor_wear", "moderate_wear", "heavy_wear", "damaged"]
+
+LABEL_TO_GRADE = {
+    "pristine": 10.0,
+    "near_mint": 9.2,
+    "minor_wear": 7.5,
+    "moderate_wear": 5.5,
+    "heavy_wear": 3.5,
+    "damaged": 2.0,
+}
+
+# Defect labels matching lib/grading-config.ts (legacy/detailed)
 DEFECT_LABELS = [
     "spine_split", "detached_cover", "missing_piece", "tear_major",
     "spine_roll", "staple_rust", "tear_minor",
@@ -51,6 +83,317 @@ DEFECT_LABELS = [
     "corner_blunt", "color_break", "crease_minor", "spine_stress",
     "pristine"
 ]
+
+
+# =============================================================================
+# NYCKEL HELPER FUNCTIONS
+# =============================================================================
+
+def extract_region_crops_for_frame(frame, frame_id: str, output_dir: Path) -> dict:
+    """
+    Extract 6 region crops from a single frame.
+    
+    Args:
+        frame: OpenCV BGR image (numpy array)
+        frame_id: Unique identifier for this frame (e.g., "f00123")
+        output_dir: Directory to save crop files
+    
+    Returns:
+        Dict mapping region name to crop file path
+        e.g., {"spine": "/tmp/analysis/f00123_crop_spine.png", ...}
+    """
+    import cv2
+    
+    h, w = frame.shape[:2]
+    crops = {}
+    
+    for region_name, region_def in REGIONS.items():
+        x1 = int(w * region_def["x_start"])
+        x2 = int(w * region_def["x_end"])
+        y1 = int(h * region_def["y_start"])
+        y2 = int(h * region_def["y_end"])
+        
+        # Extract crop
+        crop = frame[y1:y2, x1:x2]
+        
+        # Save to file
+        crop_filename = f"{frame_id}_crop_{region_name}.png"
+        crop_path = output_dir / crop_filename
+        cv2.imwrite(str(crop_path), crop, [cv2.IMWRITE_PNG_COMPRESSION, 9])
+        
+        crops[region_name] = str(crop_path)
+    
+    return crops
+
+
+def get_nyckel_token(client_id: str, client_secret: str) -> str:
+    """
+    Get OAuth token from Nyckel API.
+    
+    Args:
+        client_id: Nyckel client ID
+        client_secret: Nyckel client secret
+    
+    Returns:
+        Access token string
+    """
+    import requests
+    
+    token_response = requests.post(
+        "https://www.nyckel.com/connect/token",
+        data={
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "grant_type": "client_credentials"
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        timeout=30
+    )
+    token_response.raise_for_status()
+    return token_response.json()["access_token"]
+
+
+def classify_region_visibility(crop_paths: dict, access_token: str, function_id: str) -> dict:
+    """
+    Classify if each region is clearly visible using Nyckel.
+    
+    Args:
+        crop_paths: Dict mapping region name to crop file path
+        access_token: Nyckel OAuth token
+        function_id: Nyckel visibility function ID
+    
+    Returns:
+        Dict mapping region name to visibility result
+        e.g., {"spine": {"visibility": "clearly_visible", "confidence": 0.92}, ...}
+    """
+    import requests
+    import base64
+    
+    results = {}
+    
+    for region_name, crop_path in crop_paths.items():
+        try:
+            # Read and encode image as base64
+            with open(crop_path, "rb") as f:
+                image_data = base64.b64encode(f.read()).decode("utf-8")
+            
+            # Call Nyckel invoke API
+            invoke_response = requests.post(
+                f"https://www.nyckel.com/v1/functions/{function_id}/invoke",
+                json={"data": f"data:image/png;base64,{image_data}"},
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Content-Type": "application/json"
+                },
+                timeout=30
+            )
+            invoke_response.raise_for_status()
+            result = invoke_response.json()
+            
+            results[region_name] = {
+                "visibility": result.get("labelName", "not_visible"),
+                "confidence": result.get("confidence", 0.0)
+            }
+            
+        except Exception as e:
+            print(f"      ⚠️ Visibility check failed for {region_name}: {e}")
+            results[region_name] = {
+                "visibility": "not_visible",
+                "confidence": 0.0
+            }
+    
+    return results
+
+
+def classify_region_grades(crop_paths: dict, access_token: str, function_id: str) -> dict:
+    """
+    Classify the grade/condition of each region using Nyckel.
+    
+    Args:
+        crop_paths: Dict mapping region name to crop file path
+        access_token: Nyckel OAuth token
+        function_id: Nyckel defect/grade function ID
+    
+    Returns:
+        Dict mapping region name to grade result
+        e.g., {"spine": {"label": "near_mint", "grade": 9.2, "confidence": 0.88}, ...}
+    """
+    import requests
+    import base64
+    
+    results = {}
+    
+    for region_name, crop_path in crop_paths.items():
+        try:
+            # Read and encode image as base64
+            with open(crop_path, "rb") as f:
+                image_data = base64.b64encode(f.read()).decode("utf-8")
+            
+            # Call Nyckel invoke API
+            invoke_response = requests.post(
+                f"https://www.nyckel.com/v1/functions/{function_id}/invoke",
+                json={"data": f"data:image/png;base64,{image_data}"},
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Content-Type": "application/json"
+                },
+                timeout=30
+            )
+            invoke_response.raise_for_status()
+            result = invoke_response.json()
+            
+            label = result.get("labelName", "moderate_wear")
+            confidence = result.get("confidence", 0.0)
+            grade = LABEL_TO_GRADE.get(label, 5.5)
+            
+            results[region_name] = {
+                "label": label,
+                "grade": grade,
+                "confidence": confidence
+            }
+            
+        except Exception as e:
+            print(f"      ⚠️ Grade classification failed for {region_name}: {e}")
+            results[region_name] = {
+                "label": "moderate_wear",
+                "grade": 5.5,
+                "confidence": 0.0
+            }
+    
+    return results
+
+
+def select_golden_frames_by_coverage(
+    all_candidates: list,
+    video_path: str,
+    temp_dir: Path,
+    nyckel_token: str,
+    visibility_function_id: str,
+    max_candidates: int = 20,
+    max_frames: int = 5
+) -> list:
+    """
+    Select golden frames ensuring all critical regions are clearly visible.
+    
+    This is smarter than just picking the sharpest frames - it uses Nyckel
+    to verify that important regions (spine, corners) are visible in each frame.
+    
+    Args:
+        all_candidates: List of candidate frames sorted by sharpness
+        video_path: Path to video file
+        temp_dir: Temporary directory for crop files
+        nyckel_token: Nyckel OAuth token
+        visibility_function_id: Nyckel visibility function ID
+        max_candidates: Number of top candidates to evaluate
+        max_frames: Maximum golden frames to select
+    
+    Returns:
+        List of selected frame candidates with visibility scores
+    """
+    import cv2
+    
+    # Take top N candidates by sharpness
+    top_candidates = all_candidates[:max_candidates]
+    
+    if not visibility_function_id:
+        # Fallback to sharpness-only selection if no visibility function
+        print("   ⚠️ No visibility function configured, using sharpness-only selection")
+        return select_by_sharpness_only(top_candidates, max_frames)
+    
+    print(f"   🔍 Evaluating {len(top_candidates)} candidates for region visibility...")
+    
+    # Extract crops and classify visibility for each candidate
+    cap = cv2.VideoCapture(str(video_path))
+    visibility_scores = []
+    
+    for candidate in top_candidates:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, candidate['frame_number'])
+        ret, frame = cap.read()
+        
+        if not ret:
+            continue
+        
+        # Extract region crops for this frame
+        frame_id = f"f{candidate['frame_number']:05d}"
+        crops = extract_region_crops_for_frame(frame, frame_id, temp_dir)
+        
+        # Classify visibility of each region
+        visibility = classify_region_visibility(crops, nyckel_token, visibility_function_id)
+        
+        # Score based on critical region visibility
+        visible_count = sum(
+            1 for r in CRITICAL_REGIONS 
+            if visibility.get(r, {}).get("visibility") == "clearly_visible"
+        )
+        avg_confidence = sum(
+            visibility.get(r, {}).get("confidence", 0) 
+            for r in CRITICAL_REGIONS
+        ) / len(CRITICAL_REGIONS)
+        
+        visibility_scores.append({
+            **candidate,
+            'visibility_score': visible_count + avg_confidence,
+            'visible_regions': visible_count,
+            'visibility_details': visibility,
+            'crop_paths': crops
+        })
+    
+    cap.release()
+    
+    # Sort by visibility score (prioritize coverage) then sharpness
+    visibility_scores.sort(
+        key=lambda x: (x['visibility_score'], x['sharpness']), 
+        reverse=True
+    )
+    
+    # Select frames with temporal spacing
+    selected = []
+    min_gap = 15  # Minimum frames between selections
+    
+    for candidate in visibility_scores:
+        too_close = any(
+            abs(candidate['frame_number'] - s['frame_number']) < min_gap 
+            for s in selected
+        )
+        if not too_close:
+            selected.append(candidate)
+            regions_str = ", ".join(
+                r for r in CRITICAL_REGIONS 
+                if candidate['visibility_details'].get(r, {}).get("visibility") == "clearly_visible"
+            )
+            print(f"      ✅ Frame #{candidate['frame_number']}: {candidate['visible_regions']}/5 regions visible ({regions_str})")
+        
+        if len(selected) >= max_frames:
+            break
+    
+    return selected
+
+
+def select_by_sharpness_only(candidates: list, max_frames: int = 5) -> list:
+    """
+    Fallback selection using sharpness only (no Nyckel).
+    
+    Args:
+        candidates: List of candidates sorted by sharpness
+        max_frames: Maximum frames to select
+    
+    Returns:
+        List of selected candidates
+    """
+    selected = []
+    min_gap = 15
+    
+    for candidate in candidates:
+        too_close = any(
+            abs(candidate['frame_number'] - s['frame_number']) < min_gap 
+            for s in selected
+        )
+        if not too_close:
+            selected.append(candidate)
+        if len(selected) >= max_frames:
+            break
+    
+    return selected
 
 
 @app.function(
@@ -342,25 +685,36 @@ def analyze_video(video_url: str, scan_id: str, item_type: str = "card") -> dict
         print(f"✅ Analyzed ALL {total_frames} frames in parallel")
         print(f"   Found {len(all_candidates)} stable frames (motion <= 3.0)")
         
-        # Sort by sharpness (highest first) - SAME SELECTION LOGIC
+        # Sort by sharpness (highest first)
         all_candidates.sort(key=lambda x: x['sharpness'], reverse=True)
         
-        # Select top 5 with temporal spacing - SAME SELECTION LOGIC
-        selected = []
-        min_gap = 15  # Minimum frames between selections
+        # Check if Nyckel visibility classifier is available
+        nyckel_client_id = os.environ.get("NYCKEL_CLIENT_ID")
+        nyckel_client_secret = os.environ.get("NYCKEL_CLIENT_SECRET")
+        nyckel_visibility_id = os.environ.get("NYCKEL_VISIBILITY_FUNCTION_ID")
         
-        for candidate in all_candidates:
-            too_close = False
-            for s in selected:
-                if abs(candidate['frame_number'] - s['frame_number']) < min_gap:
-                    too_close = True
-                    break
-            
-            if not too_close:
-                selected.append(candidate)
-            
-            if len(selected) >= 5:
-                break
+        # Try smart frame selection with Nyckel visibility classifier
+        if all([nyckel_client_id, nyckel_client_secret, nyckel_visibility_id]):
+            print("\n🔬 Using Nyckel smart frame selection...")
+            try:
+                nyckel_token = get_nyckel_token(nyckel_client_id, nyckel_client_secret)
+                selected = select_golden_frames_by_coverage(
+                    all_candidates,
+                    str(volume_video_path),
+                    output_dir,
+                    nyckel_token,
+                    nyckel_visibility_id,
+                    max_candidates=20,
+                    max_frames=5
+                )
+            except Exception as e:
+                print(f"   ⚠️ Smart frame selection failed: {e}")
+                print("   Falling back to sharpness-only selection...")
+                selected = select_by_sharpness_only(all_candidates, max_frames=5)
+        else:
+            # Fallback: Select by sharpness with temporal spacing
+            print("\n📊 Using sharpness-based frame selection (Nyckel not configured)...")
+            selected = select_by_sharpness_only(all_candidates, max_frames=5)
         
         # Now extract the actual golden frames (only 5 frames - fast!)
         print(f"\n🖼️  Extracting {len(selected)} golden frames...")
@@ -386,23 +740,46 @@ def analyze_video(video_url: str, scan_id: str, item_type: str = "card") -> dict
         
         cap.release()
         
-        # Run CV defect analysis on golden frames
-        print("\n🔬 Running CV defect analysis...")
-        cv_analysis_result = None
+        # Run analysis on golden frames
+        # Try Nyckel ML analysis first, fall back to CV variance analysis
+        print("\n🔬 Running defect analysis...")
+        analysis_result = None
+        
+        # Try Nyckel ML analysis first
         try:
-            cv_analysis_result = run_cv_analysis(golden_frames, output_dir, scan_id)
-            print(f"   ✅ CV Analysis complete: {cv_analysis_result['damageScore']:.1f}% damage detected")
-        except Exception as cv_error:
-            print(f"   ⚠️ Warning: CV analysis failed: {cv_error}")
-            # Don't fail the whole analysis if CV fails
+            analysis_result = run_nyckel_analysis(golden_frames, output_dir, scan_id)
+            if analysis_result:
+                print(f"   ✅ Nyckel ML Analysis complete:")
+                print(f"      Average Grade: {analysis_result['averageGrade']}")
+                print(f"      Critical Region Avg: {analysis_result['criticalRegionAvg']}")
+                if analysis_result.get('lowestRegion'):
+                    print(f"      Lowest: {analysis_result['lowestRegion']['region']} ({analysis_result['lowestRegion']['grade']})")
+        except Exception as nyckel_error:
+            print(f"   ⚠️ Nyckel analysis failed: {nyckel_error}")
+        
+        # Fall back to CV analysis if Nyckel failed
+        if not analysis_result:
+            print("   📊 Falling back to CV variance analysis...")
+            try:
+                analysis_result = run_cv_analysis(golden_frames, output_dir, scan_id)
+                if analysis_result:
+                    print(f"   ✅ CV Analysis complete: {analysis_result['damageScore']:.1f}% damage detected")
+            except Exception as cv_error:
+                print(f"   ⚠️ CV analysis also failed: {cv_error}")
         
         # Upload golden frames to Supabase
         print("\n📤 Uploading golden frames to Supabase...")
         result = upload_golden_frames(scan_id, golden_frames)
         
-        # Add CV analysis to result if available
-        if cv_analysis_result:
-            result["cvAnalysis"] = cv_analysis_result
+        # Add analysis to result (either Nyckel or CV)
+        if analysis_result:
+            # Use "nyckelAnalysis" for ML-based, "cvAnalysis" for variance-based
+            if analysis_result.get("analysisType") == "nyckel-ml":
+                result["nyckelAnalysis"] = analysis_result
+                # Also include as cvAnalysis for backward compatibility
+                result["cvAnalysis"] = analysis_result
+            else:
+                result["cvAnalysis"] = analysis_result
         
         # Clean up the shared Volume to free space
         print("\n🧹 Cleaning up shared Volume...")
@@ -426,19 +803,14 @@ def run_cv_analysis(golden_frames: list, output_dir: Path, scan_id: str) -> dict
     - Variance calculation
     - Defect mask generation
     - Region-by-region analysis
+    
+    Note: This is the fallback analysis when Nyckel ML is not available.
+    Uses variance-based defect detection instead of ML classification.
     """
     import cv2
     import numpy as np
     
-    # Region definitions (same as glint_analyzer.py)
-    REGIONS = {
-        "spine": {"x_start": 0.0, "x_end": 0.08, "y_start": 0.0, "y_end": 1.0},
-        "corner_tl": {"x_start": 0.0, "x_end": 0.15, "y_start": 0.0, "y_end": 0.12},
-        "corner_tr": {"x_start": 0.85, "x_end": 1.0, "y_start": 0.0, "y_end": 0.12},
-        "corner_bl": {"x_start": 0.0, "x_end": 0.15, "y_start": 0.88, "y_end": 1.0},
-        "corner_br": {"x_start": 0.85, "x_end": 1.0, "y_start": 0.88, "y_end": 1.0},
-        "surface": {"x_start": 0.20, "x_end": 0.80, "y_start": 0.20, "y_end": 0.80}
-    }
+    # Use global REGIONS definition (defined at top of file)
     
     # Load frames
     frames = []
@@ -618,6 +990,142 @@ def run_cv_analysis(golden_frames: list, output_dir: Path, scan_id: str) -> dict
     }
 
 
+def run_nyckel_analysis(golden_frames: list, output_dir: Path, scan_id: str) -> dict:
+    """
+    Run ML-based region analysis using Nyckel classifiers.
+    
+    This replaces variance-based CV analysis with ML classification:
+    - Extracts region crops from golden frames
+    - Grades each region using Nyckel defect classifier
+    - Calculates aggregate scores
+    - Uploads crops and results to Supabase
+    
+    Args:
+        golden_frames: List of golden frame dicts with 'path' key
+        output_dir: Directory for output files
+        scan_id: Scan ID for Supabase paths
+    
+    Returns:
+        Dict with Nyckel analysis results
+    """
+    import cv2
+    import numpy as np
+    import os
+    
+    # Get Nyckel credentials
+    nyckel_client_id = os.environ.get("NYCKEL_CLIENT_ID")
+    nyckel_client_secret = os.environ.get("NYCKEL_CLIENT_SECRET")
+    nyckel_grade_function_id = os.environ.get("NYCKEL_DEFECT_FUNCTION_ID")
+    
+    if not all([nyckel_client_id, nyckel_client_secret, nyckel_grade_function_id]):
+        print("   ⚠️ Nyckel credentials not configured, falling back to CV analysis")
+        return None
+    
+    print("   🤖 Running Nyckel ML analysis...")
+    
+    # Get OAuth token
+    try:
+        access_token = get_nyckel_token(nyckel_client_id, nyckel_client_secret)
+    except Exception as e:
+        print(f"   ⚠️ Failed to get Nyckel token: {e}")
+        return None
+    
+    # Load reference frame (first golden frame)
+    if not golden_frames:
+        return None
+    
+    reference = cv2.imread(golden_frames[0]['path'])
+    if reference is None:
+        return None
+    
+    # Extract region crops from reference frame
+    print("   📐 Extracting region crops...")
+    h, w = reference.shape[:2]
+    region_crops = {}
+    region_analyses = []
+    
+    for region_name, region_def in REGIONS.items():
+        x1 = int(w * region_def["x_start"])
+        x2 = int(w * region_def["x_end"])
+        y1 = int(h * region_def["y_start"])
+        y2 = int(h * region_def["y_end"])
+        
+        crop = reference[y1:y2, x1:x2]
+        
+        crop_filename = f"crop_{region_name}.png"
+        crop_path = output_dir / crop_filename
+        cv2.imwrite(str(crop_path), crop, [cv2.IMWRITE_PNG_COMPRESSION, 9])
+        
+        region_crops[region_name] = str(crop_path)
+        region_analyses.append({
+            'region_name': region_name,
+            'crop_file': crop_filename,
+            'overlay_file': f"overlay_{region_name}.png",
+            'mask_file': f"mask_{region_name}.png"
+        })
+    
+    # Classify grades for each region
+    print("   🎯 Classifying regions with Nyckel...")
+    region_grades = classify_region_grades(region_crops, access_token, nyckel_grade_function_id)
+    
+    # Log results
+    for region_name, result in region_grades.items():
+        emoji = "✅" if result['grade'] >= 9.0 else "⚠️" if result['grade'] >= 7.0 else "❌"
+        print(f"      {emoji} {region_name}: {result['label']} ({result['grade']}) - {result['confidence']:.0%}")
+    
+    # Calculate aggregate scores
+    all_grades = [r['grade'] for r in region_grades.values()]
+    critical_grades = [region_grades[r]['grade'] for r in CRITICAL_REGIONS if r in region_grades]
+    
+    avg_grade = sum(all_grades) / len(all_grades) if all_grades else 5.5
+    critical_avg = sum(critical_grades) / len(critical_grades) if critical_grades else 5.5
+    
+    # Find lowest graded region
+    worst_region = min(region_grades.items(), key=lambda x: x[1]['grade']) if region_grades else None
+    
+    # Convert grade to damage score (inverse: 10.0 = 0%, 0.0 = 100%)
+    damage_score = max(0, (10.0 - avg_grade) * 10)
+    
+    # Create region scores dict (percentage-based for backward compatibility)
+    region_scores = {
+        region: max(0, (10.0 - data['grade']) * 10)
+        for region, data in region_grades.items()
+    }
+    
+    # Upload crops to Supabase
+    print("   📤 Uploading Nyckel analysis images...")
+    supabase_url = os.environ["SUPABASE_URL"]
+    supabase_key = os.environ["SUPABASE_KEY"]
+    bucket = "analysis-images"
+    
+    cv_images = {
+        "regionCrops": {},
+        "regionOverlays": {},
+    }
+    
+    for region_name, crop_path in region_crops.items():
+        remote_path = f"{scan_id}/regions/crop_{region_name}.png"
+        with open(crop_path, 'rb') as f:
+            url = upload_to_supabase_storage(supabase_url, supabase_key, bucket, remote_path, f.read())
+            cv_images["regionCrops"][region_name] = url
+    
+    return {
+        "analysisType": "nyckel-ml",
+        "damageScore": float(damage_score),
+        "regionScores": region_scores,
+        "regionGrades": region_grades,
+        "averageGrade": round(avg_grade, 1),
+        "criticalRegionAvg": round(critical_avg, 1),
+        "lowestRegion": {
+            "region": worst_region[0] if worst_region else None,
+            "grade": worst_region[1]['grade'] if worst_region else None,
+            "label": worst_region[1]['label'] if worst_region else None
+        } if worst_region else None,
+        "defectLabels": {r: [d['label']] for r, d in region_grades.items()},
+        "images": cv_images
+    }
+
+
 def classify_regions_with_nyckel(output_dir: Path, region_names) -> dict:
     """
     Classify defects in each region crop using Nyckel API.
@@ -709,7 +1217,7 @@ def classify_regions_with_nyckel(output_dir: Path, region_names) -> dict:
 
 
 def upload_cv_images(scan_id: str, output_dir: Path, region_analyses: list, 
-                      defect_mask: np.ndarray, variance_heatmap: np.ndarray) -> dict:
+                      defect_mask, variance_heatmap) -> dict:
     """
     Upload CV analysis images to Supabase Storage.
     """

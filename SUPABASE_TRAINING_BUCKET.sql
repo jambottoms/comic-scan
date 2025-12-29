@@ -12,3 +12,4 @@ create policy "Authenticated Upload Training"
   on storage.objects for insert
   with check ( bucket_id = 'training-data' );
 
+

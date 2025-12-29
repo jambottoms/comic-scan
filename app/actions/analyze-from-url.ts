@@ -516,55 +516,113 @@ RESPOND IN JSON:
         // Don't fail the whole analysis if Modal fails
       }
       
-      // Step 9: Fuse AI, CV, and defect grades if available
+      // Step 9: Fuse AI, CV, and Nyckel grades if available
       let hybridGrade = null;
-      if (detailedAnalysis && cvAnalysis && cvAnalysis.damageScore !== undefined) {
+      let nyckelAnalysis = null;
+      
+      // Check if we have Nyckel ML analysis (new format)
+      const hasNyckelAnalysis = cvAnalysis?.analysisType === 'nyckel-ml' && cvAnalysis?.regionGrades;
+      
+      if (detailedAnalysis && cvAnalysis) {
         try {
-          const { fuseGrades } = await import('@/lib/grade-adjustment');
-          
           const aiGrade = parseFloat(parsedResult.estimatedGrade);
           const aiConfidence = detailedAnalysis.confidence || 'medium';
           
-          // Pass defect labels to fuseGrades for defect-based grading
-          hybridGrade = fuseGrades(
-            aiGrade,
-            aiConfidence,
-            cvAnalysis.damageScore,
-            cvAnalysis.regionScores || {},
-            detailedAnalysis,
-            defectLabels  // NEW: Pass Nyckel defect labels
-          );
-          
-          console.log(`[Server Action] Hybrid Grade: ${hybridGrade.displayGrade} (confidence: ${hybridGrade.overallConfidence})`);
-          console.log(`[Server Action] Agreement: ${hybridGrade.agreement}, AI: ${hybridGrade.aiGrade}, CV: ${hybridGrade.cvGrade}`);
-          if (hybridGrade.defectGrade) {
-            console.log(`[Server Action] Defect Grade: ${hybridGrade.defectGrade}, Summary: ${hybridGrade.defectSummary}`);
-          }
-          
-          // Update result with hybrid grade
-          parsedResult.estimatedGrade = hybridGrade.finalGrade;
-          // DON'T overwrite reasoning array - keep the structured format
-          // parsedResult.reasoning = hybridGrade.reasoning;
-          
-          // Add CV images to hybridGrade
-          if (cvAnalysis.images) {
-            hybridGrade.cvAnalysis = {
-              ...hybridGrade.cvAnalysis,
-              ...cvAnalysis.images
+          if (hasNyckelAnalysis) {
+            // Use new three-way fusion with Nyckel ML
+            console.log("[Server Action] Using Nyckel ML three-way grade fusion...");
+            const { fuseThreeWayGrades } = await import('@/lib/grade-adjustment');
+            
+            nyckelAnalysis = cvAnalysis;  // Store Nyckel analysis separately
+            
+            const threeWayResult = fuseThreeWayGrades(
+              aiGrade,
+              aiConfidence,
+              nyckelAnalysis,
+              detailedAnalysis
+            );
+            
+            console.log(`[Server Action] Three-Way Grade: ${threeWayResult.displayGrade} (confidence: ${threeWayResult.overallConfidence})`);
+            console.log(`[Server Action] Agreement: ${threeWayResult.agreement}, AI: ${threeWayResult.aiGrade.toFixed(1)}, Nyckel: ${threeWayResult.nyckelGrade.toFixed(1)}`);
+            
+            // Log per-region grades
+            for (const [region, data] of Object.entries(threeWayResult.nyckelRegions)) {
+              console.log(`[Server Action]   ${region}: ${data.label} (${data.grade}) - ${(data.confidence * 100).toFixed(0)}%`);
+            }
+            
+            if (threeWayResult.lowestRegion) {
+              console.log(`[Server Action] Lowest Region: ${threeWayResult.lowestRegion.region} (${threeWayResult.lowestRegion.grade})`);
+            }
+            
+            // Convert to hybridGrade format for backward compatibility
+            hybridGrade = {
+              finalGrade: threeWayResult.finalGrade,
+              displayGrade: threeWayResult.displayGrade,
+              aiGrade: threeWayResult.aiGrade.toFixed(1),
+              cvGrade: threeWayResult.nyckelGrade.toFixed(1),  // Use nyckelGrade as cvGrade for compat
+              nyckelGrade: threeWayResult.nyckelGrade.toFixed(1),
+              agreement: threeWayResult.agreement,
+              gradeDifference: threeWayResult.gradeDifference,
+              overallConfidence: threeWayResult.overallConfidence,
+              aiConfidence,
+              cvConfidence: 'high',  // Nyckel is generally high confidence when available
+              reasoning: threeWayResult.reasoning,
+              nyckelRegions: threeWayResult.nyckelRegions,
+              lowestRegion: threeWayResult.lowestRegion,
+              criticalIssues: threeWayResult.criticalIssues,
+              detailedAnalysis,
+              cvAnalysis: {
+                damageScore: cvAnalysis.damageScore,
+                regionScores: cvAnalysis.regionScores,
+                regionGrades: cvAnalysis.regionGrades,
+                ...cvAnalysis.images
+              }
             };
+            
+            // Update result with hybrid grade
+            parsedResult.estimatedGrade = threeWayResult.finalGrade;
+            
+          } else if (cvAnalysis.damageScore !== undefined) {
+            // Fallback to legacy two-way fusion (AI + CV variance)
+            console.log("[Server Action] Using legacy two-way grade fusion (CV variance)...");
+            const { fuseGrades } = await import('@/lib/grade-adjustment');
+            
+            hybridGrade = fuseGrades(
+              aiGrade,
+              aiConfidence,
+              cvAnalysis.damageScore,
+              cvAnalysis.regionScores || {},
+              detailedAnalysis,
+              defectLabels
+            );
+            
+            console.log(`[Server Action] Hybrid Grade: ${hybridGrade.displayGrade} (confidence: ${hybridGrade.overallConfidence})`);
+            console.log(`[Server Action] Agreement: ${hybridGrade.agreement}, AI: ${hybridGrade.aiGrade}, CV: ${hybridGrade.cvGrade}`);
+            
+            // Update result with hybrid grade
+            parsedResult.estimatedGrade = hybridGrade.finalGrade;
+            
+            // Add CV images to hybridGrade
+            if (cvAnalysis.images) {
+              hybridGrade.cvAnalysis = {
+                ...hybridGrade.cvAnalysis,
+                ...cvAnalysis.images
+              };
+            }
           }
         } catch (fusionError) {
           console.warn("[Server Action] Grade fusion failed:", fusionError);
         }
       }
       
-      // Add golden frames, detailed analysis, CV analysis, and hybrid grade to result
+      // Add golden frames, detailed analysis, CV analysis, Nyckel analysis, and hybrid grade to result
       const enrichedResult = {
         ...parsedResult,
         goldenFrames,
         frameTimestamps,
         detailedAnalysis,
         cvAnalysis,
+        nyckelAnalysis,  // NEW: Include Nyckel analysis separately
         hybridGrade,
       };
       

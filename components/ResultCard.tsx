@@ -3,7 +3,6 @@
 import { useRef, useState, useEffect } from 'react';
 import Link from 'next/link';
 import { Bookmark, BookmarkCheck, Trash2, Loader2, ScanLine, Maximize2 } from 'lucide-react';
-import VideoInvestigatorModal from './VideoInvestigatorModal';
 import ImageViewerModal from './ImageViewerModal';
 import HybridGradeDisplay from './HybridGradeDisplay';
 import GradeScorecard from './GradeScorecard';
@@ -20,8 +19,6 @@ interface ResultCardProps {
 
 export default function ResultCard({ result, videoUrl, thumbnail, savedScanId, onDelete, embedded = false }: ResultCardProps) {
   const previewVideoRef = useRef<HTMLVideoElement>(null);
-  const [investigatorOpen, setInvestigatorOpen] = useState(false);
-  const [selectedTimestamp, setSelectedTimestamp] = useState<number>(0);
   
   // Image Viewer State
   const [imageViewerOpen, setImageViewerOpen] = useState(false);
@@ -144,12 +141,6 @@ export default function ResultCard({ result, videoUrl, thumbnail, savedScanId, o
     } finally {
       setIsDeleting(false);
     }
-  };
-
-  // Function to open Video Investigator modal at timestamp
-  const openInvestigator = (seconds: number) => {
-    setSelectedTimestamp(seconds);
-    setInvestigatorOpen(true);
   };
 
   // Parse timestamp from text (supports formats like "0:15", "15s", "1:30", etc.)
@@ -494,15 +485,9 @@ export default function ResultCard({ result, videoUrl, thumbnail, savedScanId, o
               {Array.isArray(result.reasoning) ? result.reasoning.map((item: any, index: number) => (
                 <li key={index} className="flex items-start text-gray-300 text-sm group">
                   {item.timestamp && (
-                    <button
-                      onClick={() => {
-                        const seconds = parseTimestamp(item.timestamp);
-                        if (seconds !== null) openInvestigator(seconds);
-                      }}
-                      className="text-[10px] font-mono text-green-500 bg-green-900/20 hover:bg-green-900/40 px-1.5 rounded mr-2 mt-0.5 transition-colors cursor-pointer"
-                    >
+                    <span className="text-[10px] font-mono text-green-500 bg-green-900/20 px-1.5 rounded mr-2 mt-0.5">
                       {item.timestamp}
-                    </button>
+                    </span>
                   )}
                   <span className="flex-1">
                     <strong className="text-white font-semibold">{item.defect}</strong>
@@ -523,13 +508,9 @@ export default function ResultCard({ result, videoUrl, thumbnail, savedScanId, o
                 return (
                   <li key={index} className="flex items-start text-gray-300 text-sm group">
                     {bullet.timestamp !== null ? (
-                        <button
-                          onClick={() => openInvestigator(bullet.timestamp!)}
-                          className="text-[10px] font-mono text-green-500 bg-green-900/20 hover:bg-green-900/40 px-1.5 rounded mr-2 mt-0.5 transition-colors cursor-pointer"
-                          title={`View frame at ${formatTimestamp(bullet.timestamp)}`}
-                        >
+                        <span className="text-[10px] font-mono text-green-500 bg-green-900/20 px-1.5 rounded mr-2 mt-0.5">
                           {formatTimestamp(bullet.timestamp)}
-                        </button>
+                        </span>
                       ) : (
                         <span className="text-purple-500 mr-2 mt-1">•</span>
                       )}
@@ -576,13 +557,15 @@ export default function ResultCard({ result, videoUrl, thumbnail, savedScanId, o
       )}
 
       {/* Grading Scorecard - Full Breakdown */}
-      {(result.hybridGrade || Object.keys(regionScores).length > 0) && (
+      {(result.hybridGrade || Object.keys(regionScores).length > 0 || result.nyckelAnalysis) && (
         <GradeScorecard
           hybridGrade={result.hybridGrade}
           cvAnalysis={cvData}
+          nyckelAnalysis={result.nyckelAnalysis}
           regionScores={regionScores}
           defectLabels={defectLabels}
           defectBreakdown={result.hybridGrade?.defectBreakdown}
+          nyckelRegions={result.hybridGrade?.nyckelRegions || result.nyckelAnalysis?.regionGrades}
         />
       )}
 
@@ -811,16 +794,6 @@ export default function ResultCard({ result, videoUrl, thumbnail, savedScanId, o
             </video>
           </div>
         </div>
-      )}
-
-      {/* Video Investigator Modal */}
-      {videoUrl && (
-        <VideoInvestigatorModal
-          open={investigatorOpen}
-          onOpenChange={setInvestigatorOpen}
-          videoUrl={videoUrl}
-          timestamp={selectedTimestamp}
-        />
       )}
       
       {/* Image Viewer Modal */}

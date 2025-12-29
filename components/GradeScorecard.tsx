@@ -11,14 +11,22 @@ import {
   type DefectLabel,
   type RegionName 
 } from '@/lib/grading-config';
-import { type DefectBreakdown, type HybridGradeResult, type CVAnalysisData } from '@/lib/grade-adjustment';
+import { 
+  type DefectBreakdown, 
+  type HybridGradeResult, 
+  type CVAnalysisData,
+  type NyckelRegionGrade,
+  type NyckelAnalysisData
+} from '@/lib/grade-adjustment';
 
 interface GradeScorecardProps {
   hybridGrade: HybridGradeResult | null;
   cvAnalysis: CVAnalysisData | null;
+  nyckelAnalysis?: NyckelAnalysisData | null;
   regionScores?: Record<string, number>;
   defectLabels?: Record<string, string[]>;
   defectBreakdown?: DefectBreakdown[];
+  nyckelRegions?: Record<string, NyckelRegionGrade>;
 }
 
 type TabId = 'regions' | 'ledger' | 'fusion';
@@ -88,9 +96,11 @@ function getAgreementStyle(agreement: string): { bg: string; text: string; label
 export default function GradeScorecard({ 
   hybridGrade, 
   cvAnalysis,
+  nyckelAnalysis,
   regionScores,
   defectLabels,
-  defectBreakdown 
+  defectBreakdown,
+  nyckelRegions 
 }: GradeScorecardProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [activeTab, setActiveTab] = useState<TabId>('regions');
@@ -100,8 +110,18 @@ export default function GradeScorecard({
   const labels = defectLabels || hybridGrade?.cvAnalysis?.defectLabels || cvAnalysis?.defectLabels || {};
   const breakdown = defectBreakdown || hybridGrade?.defectBreakdown || [];
   
+  // Nyckel ML region grades (new format with labels and confidence)
+  const nyckelGrades = nyckelRegions || 
+    (hybridGrade as any)?.nyckelRegions || 
+    nyckelAnalysis?.regionGrades || 
+    cvAnalysis?.regionGrades ||
+    null;
+  
+  // Check if we have Nyckel ML data
+  const hasNyckelData = nyckelGrades !== null && Object.keys(nyckelGrades || {}).length > 0;
+  
   // Check if we have any data to show
-  const hasRegionData = Object.keys(scores).length > 0;
+  const hasRegionData = Object.keys(scores).length > 0 || hasNyckelData;
   const hasDefectData = breakdown.length > 0 || Object.values(labels).some(arr => arr.length > 0 && arr[0] !== 'pristine');
   const hasFusionData = hybridGrade !== null;
   
@@ -191,6 +211,7 @@ export default function GradeScorecard({
                 labels={labels} 
                 regionGrades={regionGrades}
                 compositeGrade={compositeGrade}
+                nyckelGrades={nyckelGrades}
               />
             )}
             
@@ -219,36 +240,101 @@ function RegionScoresPanel({
   scores, 
   labels, 
   regionGrades,
-  compositeGrade 
+  compositeGrade,
+  nyckelGrades
 }: { 
   scores: Record<string, number>;
   labels: Record<string, string[]>;
   regionGrades: Record<string, number>;
   compositeGrade: number;
+  nyckelGrades?: Record<string, NyckelRegionGrade> | null;
 }) {
+  // Use Nyckel grades if available, otherwise fall back to damage-based grades
+  const hasNyckel = nyckelGrades && Object.keys(nyckelGrades).length > 0;
+  
+  // Get grade for a region (prefer Nyckel, fall back to damage-based)
+  const getRegionGrade = (region: string): number => {
+    if (hasNyckel && nyckelGrades?.[region]) {
+      return nyckelGrades[region].grade;
+    }
+    return regionGrades[region] ?? 10.0;
+  };
+  
+  // Get label for a region (from Nyckel or defect labels)
+  const getRegionLabel = (region: string): string | null => {
+    if (hasNyckel && nyckelGrades?.[region]) {
+      return nyckelGrades[region].label;
+    }
+    const defects = labels[region];
+    if (defects && defects.length > 0 && defects[0] !== 'pristine') {
+      return defects[0];
+    }
+    return null;
+  };
+  
+  // Get confidence for a region (from Nyckel)
+  const getRegionConfidence = (region: string): number | null => {
+    if (hasNyckel && nyckelGrades?.[region]) {
+      return nyckelGrades[region].confidence;
+    }
+    return null;
+  };
+  
+  // Determine which regions have data
+  const regionsWithData = hasNyckel 
+    ? Object.keys(nyckelGrades || {})
+    : Object.keys(regionGrades);
+  
   // Group corners together
   const cornerRegions = ['corner_tl', 'corner_tr', 'corner_bl', 'corner_br'];
-  const cornerGrades = cornerRegions
-    .filter(r => regionGrades[r] !== undefined)
-    .map(r => regionGrades[r]);
+  const availableCorners = cornerRegions.filter(r => regionsWithData.includes(r));
+  const cornerGrades = availableCorners.map(r => getRegionGrade(r));
   const avgCornerGrade = cornerGrades.length > 0 
     ? cornerGrades.reduce((a, b) => a + b, 0) / cornerGrades.length 
     : 10.0;
 
+  // Calculate composite from Nyckel grades if available
+  let displayComposite = compositeGrade;
+  if (hasNyckel) {
+    let totalWeight = 0;
+    let weightedSum = 0;
+    for (const region of regionsWithData) {
+      const grade = getRegionGrade(region);
+      const weight = REGION_WEIGHTS[region as RegionName] || 1.0;
+      weightedSum += grade * weight;
+      totalWeight += weight;
+    }
+    displayComposite = totalWeight > 0 ? weightedSum / totalWeight : 10.0;
+  }
+
   return (
     <div className="space-y-3">
+      {/* Nyckel ML indicator */}
+      {hasNyckel && (
+        <div className="flex items-center gap-2 mb-2 pb-2 border-b border-gray-700">
+          <span className="text-[10px] px-2 py-0.5 rounded bg-purple-900/30 text-purple-400 font-medium">
+            ML-Powered
+          </span>
+          <span className="text-[10px] text-gray-500">
+            Grades from Nyckel region classifier
+          </span>
+        </div>
+      )}
+      
       {/* Spine */}
-      {regionGrades['spine'] !== undefined && (
+      {regionsWithData.includes('spine') && (
         <RegionRow 
           name="Spine" 
-          grade={regionGrades['spine']} 
+          grade={getRegionGrade('spine')} 
           weight={REGION_WEIGHTS['spine']}
           defects={labels['spine']}
+          gradeLabel={getRegionLabel('spine')}
+          confidence={getRegionConfidence('spine')}
         />
       )}
       
       {/* Corners (grouped) */}
-      {cornerGrades.length > 0 && (
+      {availableCorners.length > 0 && (
         <div className="space-y-1">
           <RegionRow 
             name="Corners" 
@@ -257,29 +343,31 @@ function RegionScoresPanel({
             isGroup
           />
           <div className="pl-4 space-y-1">
-            {cornerRegions.map(region => (
-              regionGrades[region] !== undefined && (
-                <RegionRow 
-                  key={region}
-                  name={REGION_DISPLAY_NAMES[region as RegionName] || region} 
-                  grade={regionGrades[region]} 
-                  weight={REGION_WEIGHTS[region as RegionName]}
-                  defects={labels[region]}
-                  isSubItem
-                />
-              )
+            {availableCorners.map(region => (
+              <RegionRow 
+                key={region}
+                name={REGION_DISPLAY_NAMES[region as RegionName] || region} 
+                grade={getRegionGrade(region)} 
+                weight={REGION_WEIGHTS[region as RegionName]}
+                defects={labels[region]}
+                gradeLabel={getRegionLabel(region)}
+                confidence={getRegionConfidence(region)}
+                isSubItem
+              />
             ))}
           </div>
         </div>
       )}
       
       {/* Surface */}
-      {regionGrades['surface'] !== undefined && (
+      {regionsWithData.includes('surface') && (
         <RegionRow 
           name="Surface" 
-          grade={regionGrades['surface']} 
+          grade={getRegionGrade('surface')} 
           weight={REGION_WEIGHTS['surface']}
           defects={labels['surface']}
+          gradeLabel={getRegionLabel('surface')}
+          confidence={getRegionConfidence('surface')}
         />
       )}
       
@@ -287,8 +375,8 @@ function RegionScoresPanel({
       <div className="border-t border-gray-600 pt-3 mt-3">
         <div className="flex items-center justify-between">
           <span className="text-sm font-bold text-white">Weighted Composite</span>
-          <span className={`text-lg font-black font-mono ${getGradeColor(compositeGrade)}`}>
-            {compositeGrade.toFixed(1)}
+          <span className={`text-lg font-black font-mono ${getGradeColor(displayComposite)}`}>
+            {displayComposite.toFixed(1)}
           </span>
         </div>
       </div>
@@ -301,6 +389,8 @@ function RegionRow({
   grade, 
   weight,
   defects,
+  gradeLabel,
+  confidence,
   isGroup = false,
   isSubItem = false
 }: { 
@@ -308,11 +398,27 @@ function RegionRow({
   grade: number; 
   weight: number;
   defects?: string[];
+  gradeLabel?: string | null;
+  confidence?: number | null;
   isGroup?: boolean;
   isSubItem?: boolean;
 }) {
   const barWidth = (grade / 10) * 100;
   const hasDefects = defects && defects.length > 0 && defects[0] !== 'pristine';
+  
+  // Format grade label for display
+  const formatLabel = (label: string): string => {
+    return label.replace(/_/g, ' ').split(' ')
+      .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+      .join(' ');
+  };
+  
+  // Get confidence badge color
+  const getConfidenceBadgeColor = (conf: number): string => {
+    if (conf >= 0.85) return 'bg-green-900/30 text-green-400';
+    if (conf >= 0.7) return 'bg-yellow-900/30 text-yellow-400';
+    return 'bg-red-900/30 text-red-400';
+  };
   
   return (
     <div className={`flex items-center gap-3 ${isSubItem ? 'text-xs' : 'text-sm'}`}>
@@ -334,15 +440,32 @@ function RegionRow({
         {grade.toFixed(1)}
       </div>
       
-      {/* Weight indicator */}
-      {!isSubItem && (
+      {/* Weight indicator (when not sub-item) */}
+      {!isSubItem && !gradeLabel && (
         <div className="w-8 text-right text-[10px] text-gray-500 font-mono">
           ×{weight}
         </div>
       )}
       
-      {/* Defect indicator */}
-      {hasDefects && !isGroup && (
+      {/* Grade label from Nyckel (e.g., "Near Mint") */}
+      {gradeLabel && !isGroup && (
+        <div className="text-[10px] text-gray-400 truncate max-w-[70px]" title={gradeLabel}>
+          {formatLabel(gradeLabel)}
+        </div>
+      )}
+      
+      {/* Confidence badge from Nyckel */}
+      {confidence !== null && confidence !== undefined && !isGroup && (
+        <div 
+          className={`text-[9px] px-1 py-0.5 rounded font-mono ${getConfidenceBadgeColor(confidence)}`}
+          title={`Confidence: ${(confidence * 100).toFixed(0)}%`}
+        >
+          {(confidence * 100).toFixed(0)}%
+        </div>
+      )}
+      
+      {/* Defect indicator (fallback when no gradeLabel) */}
+      {hasDefects && !gradeLabel && !isGroup && (
         <div className="text-[10px] text-red-400 truncate max-w-[60px]" title={defects?.join(', ')}>
           {defects?.[0]}
         </div>

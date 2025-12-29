@@ -32,3 +32,4 @@ ON storage.objects FOR UPDATE
 TO authenticated, service_role
 USING (bucket_id = 'analysis-images');
 
+
