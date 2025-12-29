@@ -260,8 +260,11 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
   const result = entry?.result || {};
   const isPending = result._pending === true;
   const isAnalyzing = status === 'analyzing' || status === 'uploading';
+  const isAIComplete = result._aiReady === true || status === 'ai_complete';
+  const isCVPending = status === 'ai_complete' || status === 'frames_ready';
   const isCVProcessing = status === 'cv_processing';
   const isComplete = status === 'complete';
+  const isFullyComplete = status === 'complete' && result._cvReady === true;
   const isError = status === 'error';
   
   // DEBUG: Log what data we actually have
@@ -540,6 +543,21 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
             <p className="text-gray-500 text-sm italic">Details will appear here...</p>
           )}
         </div>
+        
+        {/* CV Processing Indicator - Show when AI is complete but CV is pending */}
+        {isAIComplete && isCVPending && !isComplete && (
+          <div className="mt-4 p-3 bg-purple-900/20 rounded-lg border border-purple-700 animate-pulse">
+            <div className="flex items-center gap-2">
+              <Loader2 className="w-4 h-4 animate-spin text-purple-400" />
+              <span className="text-sm text-purple-300 font-medium">
+                AI analysis complete • Running computer vision verification...
+              </span>
+            </div>
+            <div className="mt-2 text-xs text-gray-400">
+              Analyzing golden frames, detecting defects, and verifying grade accuracy...
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Hybrid Grade Display - AI + CV Analysis */}

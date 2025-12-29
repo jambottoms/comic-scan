@@ -6,6 +6,8 @@ import { X, Upload, Video, Camera, Search, ScanLine, ChevronDown, Loader2, Check
 import { uploadToSupabaseWithProgress } from '@/lib/supabase/upload-with-progress';
 import { createClient } from '@/lib/supabase/client';
 import { analyzeComicFromUrl } from '@/app/actions/analyze-from-url';
+import { analyzePhase1 } from '@/app/actions/analyze-phase-1';
+import { analyzePhase2 } from '@/app/actions/analyze-phase-2';
 import { addToHistory, generateThumbnail, updateHistoryEntry, getVideoById } from '@/lib/history';
 import { useCamera } from '@/lib/hooks/useCamera';
 import { useViewportHeight } from '@/lib/hooks/useViewportHeight';
@@ -18,7 +20,8 @@ import UploadProgressModal from '@/components/UploadProgressModal';
 import { 
   createPendingResult, 
   updateWithVideoUrl, 
-  updateWithAIResult, 
+  updateWithAIResult,
+  updateWithDetailedResult,
   updateWithError 
 } from '@/lib/streaming-analysis';
 
@@ -397,17 +400,50 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
           // Update entry with video URL
           updateWithVideoUrl(historyId, videoUpload.url);
           
-          // Analyze with AI (passing all URLs)
-          const result = await analyzeComicFromUrl({
+          // Create job record in Supabase
+          const supabase = createClient();
+          await supabase.from('analysis_jobs').insert({
+            id: historyId,
+            video_url: videoUpload.url,
+            status: 'processing',
+            ai_status: 'pending',
+            frames_status: 'pending',
+            cv_status: 'pending'
+          });
+          
+          // Start both phases in parallel
+          const phase1Promise = analyzePhase1({
             videoUrl: videoUpload.url,
+            jobId: historyId,
             frontPhotoUrl: frontUpload?.url,
             backPhotoUrl: backUpload?.url,
           });
-
-          if (result.success) {
-            updateWithAIResult(historyId, result.data);
+          
+          const phase2Promise = analyzePhase2({
+            videoUrl: videoUpload.url,
+            jobId: historyId,
+            aiGrade: '0.0', // Placeholder, will be updated by phase1
+            itemType: 'comic',
+          });
+          
+          // Wait for Phase 1 (AI results) - shows to user first
+          const phase1Result = await phase1Promise;
+          if (phase1Result.success) {
+            updateWithAIResult(historyId, phase1Result.data);
+            console.log(`✅ Phase 1 complete: ${phase1Result.data.title} - Grade ${phase1Result.data.estimatedGrade}`);
           } else {
-            updateWithError(historyId, result.error || "Analysis failed");
+            updateWithError(historyId, phase1Result.error || "AI analysis failed");
+            return; // Don't wait for phase2 if phase1 failed
+          }
+          
+          // Wait for Phase 2 (CV results) - shows final grade
+          const phase2Result = await phase2Promise;
+          if (phase2Result.success) {
+            updateWithDetailedResult(historyId, phase2Result.data);
+            console.log(`✅ Phase 2 complete: Final grade ${phase2Result.data.finalGrade}`);
+          } else {
+            console.warn("Phase 2 failed, but AI results are available:", phase2Result.error);
+            // Don't fail the whole flow if CV analysis fails - AI results are still shown
           }
         } catch (err: any) {
           console.error("Background processing error:", err);
@@ -498,16 +534,50 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
           
           updateWithVideoUrl(historyId, videoUpload.url);
           
-          const result = await analyzeComicFromUrl({
+          // Create job record in Supabase
+          const supabase = createClient();
+          await supabase.from('analysis_jobs').insert({
+            id: historyId,
+            video_url: videoUpload.url,
+            status: 'processing',
+            ai_status: 'pending',
+            frames_status: 'pending',
+            cv_status: 'pending'
+          });
+          
+          // Start both phases in parallel
+          const phase1Promise = analyzePhase1({
             videoUrl: videoUpload.url,
+            jobId: historyId,
             frontPhotoUrl: frontUpload?.url,
             backPhotoUrl: backUpload?.url,
           });
-
-          if (result.success) {
-            updateWithAIResult(historyId, result.data);
+          
+          const phase2Promise = analyzePhase2({
+            videoUrl: videoUpload.url,
+            jobId: historyId,
+            aiGrade: '0.0', // Placeholder, will be updated by phase1
+            itemType: 'comic',
+          });
+          
+          // Wait for Phase 1 (AI results) - shows to user first
+          const phase1Result = await phase1Promise;
+          if (phase1Result.success) {
+            updateWithAIResult(historyId, phase1Result.data);
+            console.log(`✅ Phase 1 complete: ${phase1Result.data.title} - Grade ${phase1Result.data.estimatedGrade}`);
           } else {
-            updateWithError(historyId, result.error || "Analysis failed");
+            updateWithError(historyId, phase1Result.error || "AI analysis failed");
+            return; // Don't wait for phase2 if phase1 failed
+          }
+          
+          // Wait for Phase 2 (CV results) - shows final grade
+          const phase2Result = await phase2Promise;
+          if (phase2Result.success) {
+            updateWithDetailedResult(historyId, phase2Result.data);
+            console.log(`✅ Phase 2 complete: Final grade ${phase2Result.data.finalGrade}`);
+          } else {
+            console.warn("Phase 2 failed, but AI results are available:", phase2Result.error);
+            // Don't fail the whole flow if CV analysis fails - AI results are still shown
           }
         } catch (err: any) {
           console.error("Background processing error:", err);

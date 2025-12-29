@@ -68,7 +68,7 @@ export function updateWithVideoUrl(historyId: string, videoUrl: string): void {
 
 /**
  * Update the pending result with AI analysis results.
- * Marks as complete since frame extraction happens client-side (fast).
+ * Marks as ai_complete (not fully complete) since CV analysis is still running.
  */
 export function updateWithAIResult(historyId: string, aiResult: any): void {
   const entry = getVideoById(historyId);
@@ -82,13 +82,14 @@ export function updateWithAIResult(historyId: string, aiResult: any): void {
       ...entry.result,
       ...aiResult,
       _pending: false,
-      _status: 'complete', // Mark complete - frame extraction is fast & client-side
+      _status: 'ai_complete', // CHANGED: AI is done, but CV is still running
+      _aiReady: true,         // NEW: Flag that AI results are available
     },
   });
   
   // Dispatch event for UI update
   dispatchUpdate(historyId, { 
-    status: 'complete', 
+    status: 'ai_complete',  // CHANGED: Signal that AI is complete but CV is pending
     title: aiResult.title,
     issue: aiResult.issue,
     grade: aiResult.estimatedGrade,
@@ -99,33 +100,43 @@ export function updateWithAIResult(historyId: string, aiResult: any): void {
 
 /**
  * Update the result with golden frames and detailed analysis from server.
- * Grade adjustment is now handled by Gemini directly.
+ * This is called after CV analysis completes and marks the job as fully complete.
  */
 export function updateWithDetailedResult(historyId: string, detailedResult: any): void {
   const entry = getVideoById(historyId);
   if (!entry) return;
   
   updateHistoryEntry(historyId, {
-    grade: detailedResult.estimatedGrade || entry.grade,
+    grade: detailedResult.finalGrade || detailedResult.estimatedGrade || entry.grade,
     result: {
       ...entry.result,
       // Golden frames from Modal
       goldenFrames: detailedResult.goldenFrames,
       frameTimestamps: detailedResult.frameTimestamps,
       
+      // CV analysis results
+      cvAnalysis: detailedResult.cvAnalysis,
+      nyckelAnalysis: detailedResult.nyckelAnalysis,
+      
       // Detailed analysis from Gemini multi-frame
       detailedAnalysis: detailedResult.detailedAnalysis,
       
-      _status: 'complete',
+      // Hybrid grade (fusion of AI + CV + Nyckel)
+      hybridGrade: detailedResult.hybridGrade,
+      
+      _status: 'complete',  // Now fully complete with CV results
+      _cvReady: true,       // Flag that CV results are available
     },
   });
   
   // Dispatch event for UI update
   dispatchUpdate(historyId, { 
     status: 'complete',
-    grade: detailedResult.estimatedGrade || entry.grade,
+    grade: detailedResult.finalGrade || detailedResult.estimatedGrade || entry.grade,
     goldenFrames: detailedResult.goldenFrames,
+    cvAnalysis: detailedResult.cvAnalysis,
     detailedAnalysis: detailedResult.detailedAnalysis,
+    hybridGrade: detailedResult.hybridGrade,
   });
 }
 
