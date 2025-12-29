@@ -271,17 +271,22 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
   // Real-time progress polling for Phase 2 (CV analysis)
   const cvProgress = useProgressPolling(historyId, isCVPending && !isFullyComplete);
   
-  // DEBUG: Log polling status
+  // DEBUG: Log status changes
   useEffect(() => {
-    console.log('[StreamingResultCard] Polling status:', {
+    console.log('[StreamingResultCard] Status:', {
       historyId,
       status,
+      isAIComplete,
       isCVPending,
+      isCVProcessing,
+      isComplete,
       isFullyComplete,
+      hasHybridGrade: !!result.hybridGrade,
+      hasGoldenFrames: !!result.goldenFrames,
       pollingEnabled: isCVPending && !isFullyComplete,
       cvProgress
     });
-  }, [historyId, status, isCVPending, isFullyComplete, cvProgress]);
+  }, [historyId, status, isAIComplete, isCVPending, isComplete, isFullyComplete, cvProgress]);
   
   // DEBUG: Log what data we actually have
   useEffect(() => {
@@ -561,7 +566,7 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
         </div>
         
         {/* CV Processing Indicator - Show when AI is complete but CV is pending */}
-        {isAIComplete && isCVPending && !isComplete && (
+        {isAIComplete && !isComplete && (
           <div className="mt-4 p-3 bg-purple-900/20 rounded-lg border border-purple-700 animate-pulse">
             <div className="flex items-center gap-2">
               <Loader2 className="w-4 h-4 animate-spin text-purple-400" />
@@ -576,36 +581,43 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
         )}
       </div>
 
-      {/* Hybrid Grade Display - AI + CV Analysis */}
+      {/* Hybrid Grade Display - AI + CV Analysis (only when complete) */}
       {result.hybridGrade && (
         <div className="max-w-2xl w-full mb-4">
           <HybridGradeDisplay hybridGrade={result.hybridGrade} />
         </div>
       )}
 
-      {/* Grading Scorecard - Full Breakdown (when CV data available) */}
-      {isCVPending && !result.hybridGrade && (
+      {/* Grading Scorecard - Show skeleton while CV is processing OR actual data when complete */}
+      {isAIComplete && (
         <div className="bg-gray-800 p-4 rounded-xl border border-gray-700 max-w-2xl w-full mb-4">
           <h3 className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-3 flex items-center gap-2">
             <ScanLine className="w-4 h-4 text-purple-400" />
             Computer Vision Analysis
-            <Loader2 className="w-3 h-3 animate-spin text-purple-400 ml-auto" />
+            {!result.hybridGrade && <Loader2 className="w-3 h-3 animate-spin text-purple-400 ml-auto" />}
           </h3>
           
-          {/* Skeleton for region analysis */}
-          <div className="space-y-3">
-            {[1, 2, 3, 4, 5].map((i) => (
-              <div key={i} className="flex items-center gap-3">
-                <div className={`${skeleton} w-24 h-4`}></div>
-                <div className={`${skeleton} flex-1 h-3`}></div>
-                <div className={`${skeleton} w-12 h-4`}></div>
+          {!result.hybridGrade ? (
+            /* Skeleton while processing */
+            <>
+              <div className="space-y-3">
+                {[1, 2, 3, 4, 5].map((i) => (
+                  <div key={i} className="flex items-center gap-3">
+                    <div className={`${skeleton} w-24 h-4`}></div>
+                    <div className={`${skeleton} flex-1 h-3`}></div>
+                    <div className={`${skeleton} w-12 h-4`}></div>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-          
-          <p className="text-xs text-gray-500 italic text-center mt-4">
-            Analyzing spine, corners, and surface for defects...
-          </p>
+              
+              <p className="text-xs text-gray-500 italic text-center mt-4">
+                Analyzing spine, corners, and surface for defects...
+              </p>
+            </>
+          ) : (
+            /* Actual results */
+            <p className="text-sm text-gray-400">Analysis complete</p>
+          )}
         </div>
       )}
       
@@ -710,54 +722,55 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
         </div>
       )}
 
-      {/* CV Analysis Section - Fast client-side extraction */}
-      <div className="bg-gray-800 p-4 rounded-xl border border-gray-700 max-w-2xl w-full mb-4">
-        <h3 className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-3 flex items-center gap-2">
-          <Camera className="w-4 h-4" />
-          Key Frames
-          {(framesLoading || isCVPending) && <Loader2 className="w-3 h-3 animate-spin text-blue-400 ml-2" />}
-        </h3>
-        
-        {/* CV Processing Status with Real-Time Progress */}
-        {isCVPending && !normalizedGoldenFrames.length && (
-          <div className="mb-4 p-3 bg-blue-900/20 rounded-lg border border-blue-700/50">
-            <div className="flex items-center gap-2 mb-2">
-              <Loader2 className="w-4 h-4 animate-spin text-blue-400" />
-              <span className="text-sm text-blue-300 font-medium">{cvProgress.message || 'Processing golden frames...'}</span>
-            </div>
-            
-            {/* Progress Bar */}
-            {cvProgress.percentage > 0 && (
-              <div className="mt-2 mb-2">
-                <div className="flex justify-between text-xs text-gray-400 mb-1">
-                  <span>{cvProgress.step.replace(/_/g, ' ')}</span>
-                  <span>{cvProgress.percentage}%</span>
-                </div>
-                <div className="w-full bg-gray-700 rounded-full h-2 overflow-hidden">
-                  <div 
-                    className="bg-blue-500 h-full transition-all duration-500 ease-out"
-                    style={{ width: `${cvProgress.percentage}%` }}
-                  />
-                </div>
+      {/* CV Analysis Section - Always show after AI completes */}
+      {isAIComplete && (
+        <div className="bg-gray-800 p-4 rounded-xl border border-gray-700 max-w-2xl w-full mb-4">
+          <h3 className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-3 flex items-center gap-2">
+            <Camera className="w-4 h-4" />
+            Key Frames
+            {(framesLoading || (!normalizedGoldenFrames.length && !isComplete)) && <Loader2 className="w-3 h-3 animate-spin text-blue-400 ml-2" />}
+          </h3>
+          
+          {/* CV Processing Status with Real-Time Progress - Show while CV is running */}
+          {!normalizedGoldenFrames.length && !isComplete && (
+            <div className="mb-4 p-3 bg-blue-900/20 rounded-lg border border-blue-700/50">
+              <div className="flex items-center gap-2 mb-2">
+                <Loader2 className="w-4 h-4 animate-spin text-blue-400" />
+                <span className="text-sm text-blue-300 font-medium">{cvProgress.message || 'Processing golden frames...'}</span>
               </div>
-            )}
-            
-            <p className="text-xs text-gray-400 mt-2">
-              Extracting high-quality frames, analyzing defects with computer vision, and verifying grade accuracy.
-            </p>
-          </div>
-        )}
+              
+              {/* Progress Bar */}
+              {cvProgress.percentage > 0 && (
+                <div className="mt-2 mb-2">
+                  <div className="flex justify-between text-xs text-gray-400 mb-1">
+                    <span>{cvProgress.step.replace(/_/g, ' ')}</span>
+                    <span>{cvProgress.percentage}%</span>
+                  </div>
+                  <div className="w-full bg-gray-700 rounded-full h-2 overflow-hidden">
+                    <div 
+                      className="bg-blue-500 h-full transition-all duration-500 ease-out"
+                      style={{ width: `${cvProgress.percentage}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+              
+              <p className="text-xs text-gray-400 mt-2">
+                Extracting high-quality frames, analyzing defects with computer vision, and verifying grade accuracy.
+              </p>
+            </div>
+          )}
         
-        {/* Golden Frames Grid - Fast client-side extraction */}
-        <div className="mb-4">
-          <p className="text-gray-400 text-xs mb-2">
-            {isCVPending && !normalizedGoldenFrames.length ? 'Extracting frames from video...' : 
-             framesLoading ? 'Extracting frames...' : 'Video Captures (Tap to Enlarge)'}
-          </p>
-          <div className="grid grid-cols-3 gap-2">
-            {/* Show extracted frames (client-side), or stored goldenFrames, or loading state */}
-            {/* Logic: 1. Client extracted frames, 2. Server golden frames (new array), 3. Server golden frames (old array) */}
-            {extractedFrames.length > 0 ? (
+          {/* Golden Frames Grid - Fast client-side extraction */}
+          <div className="mb-4">
+            <p className="text-gray-400 text-xs mb-2">
+              {!normalizedGoldenFrames.length && !isComplete ? 'Extracting frames from video...' : 
+               framesLoading ? 'Extracting frames...' : 'Video Captures (Tap to Enlarge)'}
+            </p>
+            <div className="grid grid-cols-3 gap-2">
+              {/* Show extracted frames (client-side), or stored goldenFrames, or loading state */}
+              {/* Logic: 1. Client extracted frames, 2. Server golden frames (new array), 3. Server golden frames (old array) */}
+              {extractedFrames.length > 0 ? (
               extractedFrames.slice(0, 3).map((frame, idx) => {
                 const { title, desc } = getFrameDescription(frame.timestamp);
                 return (
@@ -796,7 +809,7 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
                   </button>
                 );
               })
-            ) : (framesLoading || isCVPending) ? (
+            ) : (framesLoading || (!normalizedGoldenFrames.length && !isComplete)) ? (
               [1, 2, 3].map((i) => (
                 <div key={i} className={`aspect-[3/4] rounded-lg border border-gray-600 ${skeleton} relative`}>
                   <div className="absolute inset-0 flex items-center justify-center">
@@ -995,14 +1008,15 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
           </div>
         )}
         
-        {/* Pixels per MM info if available */}
-        {result.pixelsPerMm && (
-          <div className="mt-3 pt-3 border-t border-gray-700 text-xs text-gray-500 flex justify-between">
-            <span>Resolution: {result.pixelsPerMm.toFixed(1)} px/mm</span>
-            <span>≈ {(result.pixelsPerMm * 25.4).toFixed(0)} DPI</span>
-          </div>
-        )}
-      </div>
+          {/* Pixels per MM info if available */}
+          {result.pixelsPerMm && (
+            <div className="mt-3 pt-3 border-t border-gray-700 text-xs text-gray-500 flex justify-between">
+              <span>Resolution: {result.pixelsPerMm.toFixed(1)} px/mm</span>
+              <span>≈ {(result.pixelsPerMm * 25.4).toFixed(0)} DPI</span>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Video Preview */}
       {entry?.videoUrl && (
