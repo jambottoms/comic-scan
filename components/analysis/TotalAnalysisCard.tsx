@@ -25,13 +25,37 @@ export default function TotalAnalysisCard({
   let badgeColor = 'text-gray-400';
   let label = 'Estimated Grade';
   let icon = <Loader2 className="w-5 h-5 animate-spin text-purple-400" />;
+  let gradeLabel = 'Unknown';
+  let agreementInfo = '';
   
   if (isCVComplete) {
     displayGrade = hybridGrade.finalGrade || hybridGrade.displayGrade;
-    confidence = 'Verified';
-    confidenceColor = 'text-green-400';
-    label = 'Verified Grade';
+    const overallConfidence = hybridGrade.overallConfidence || 'medium';
+    
+    // Map confidence to display
+    if (overallConfidence === 'very-high' || overallConfidence === 'high') {
+      confidence = 'High Confidence';
+      confidenceColor = 'text-green-400';
+    } else if (overallConfidence === 'medium') {
+      confidence = 'Medium Confidence';
+      confidenceColor = 'text-yellow-400';
+    } else {
+      confidence = 'Low Confidence';
+      confidenceColor = 'text-orange-400';
+    }
+    
+    label = 'Final Grade (AI + CV Fusion)';
     icon = <ShieldCheck className="w-5 h-5 text-green-400" />;
+    
+    // Show AI vs CV agreement
+    const aiVal = parseFloat(hybridGrade.aiGrade || aiGrade || '0');
+    const cvVal = parseFloat(hybridGrade.cvGrade || displayGrade);
+    if (!isNaN(aiVal) && !isNaN(cvVal)) {
+      const diff = Math.abs(aiVal - cvVal);
+      if (diff < 0.5) agreementInfo = `Strong Agreement (Δ${diff.toFixed(1)})`;
+      else if (diff < 1.0) agreementInfo = `Good Agreement (Δ${diff.toFixed(1)})`;
+      else agreementInfo = `Moderate Variance (Δ${diff.toFixed(1)})`;
+    }
   } else if (aiGrade) {
     displayGrade = aiGrade;
     confidence = 'AI Estimate';
@@ -40,13 +64,55 @@ export default function TotalAnalysisCard({
     icon = <Sparkles className="w-5 h-5 text-purple-400" />;
   }
 
-  // Determine grade color
+  // Determine grade color & CGC label
   const gradeNum = parseFloat(displayGrade);
   if (!isNaN(gradeNum)) {
-    if (gradeNum >= 9.0) badgeColor = 'text-green-400';
-    else if (gradeNum >= 7.0) badgeColor = 'text-yellow-400';
-    else if (gradeNum >= 5.0) badgeColor = 'text-orange-400';
-    else badgeColor = 'text-red-400';
+    if (gradeNum >= 9.8) {
+      badgeColor = 'text-green-400';
+      gradeLabel = 'Gem Mint';
+    } else if (gradeNum >= 9.6) {
+      badgeColor = 'text-green-400';
+      gradeLabel = 'Near Mint+';
+    } else if (gradeNum >= 9.2) {
+      badgeColor = 'text-green-400';
+      gradeLabel = 'Near Mint';
+    } else if (gradeNum >= 9.0) {
+      badgeColor = 'text-green-400';
+      gradeLabel = 'Near Mint-';
+    } else if (gradeNum >= 8.5) {
+      badgeColor = 'text-yellow-400';
+      gradeLabel = 'Very Fine+';
+    } else if (gradeNum >= 8.0) {
+      badgeColor = 'text-yellow-400';
+      gradeLabel = 'Very Fine';
+    } else if (gradeNum >= 7.5) {
+      badgeColor = 'text-yellow-400';
+      gradeLabel = 'Very Fine-';
+    } else if (gradeNum >= 6.5) {
+      badgeColor = 'text-orange-400';
+      gradeLabel = 'Fine+';
+    } else if (gradeNum >= 6.0) {
+      badgeColor = 'text-orange-400';
+      gradeLabel = 'Fine';
+    } else if (gradeNum >= 5.5) {
+      badgeColor = 'text-orange-400';
+      gradeLabel = 'Fine-';
+    } else if (gradeNum >= 4.5) {
+      badgeColor = 'text-red-400';
+      gradeLabel = 'Very Good+';
+    } else if (gradeNum >= 4.0) {
+      badgeColor = 'text-red-400';
+      gradeLabel = 'Very Good';
+    } else if (gradeNum >= 3.5) {
+      badgeColor = 'text-red-400';
+      gradeLabel = 'Very Good-';
+    } else if (gradeNum >= 3.0) {
+      badgeColor = 'text-red-400';
+      gradeLabel = 'Good+';
+    } else {
+      badgeColor = 'text-red-400';
+      gradeLabel = 'Good or Below';
+    }
   }
 
   if (status === 'uploading' || (status === 'analyzing' && !aiGrade)) {
@@ -93,11 +159,14 @@ export default function TotalAnalysisCard({
           </div>
 
           <div className="flex flex-col">
-            <h2 className="text-sm font-bold text-gray-400 uppercase tracking-widest flex items-center gap-2">
+            <h2 className="text-[10px] font-bold text-gray-500 uppercase tracking-widest flex items-center gap-2 mb-1">
                {icon}
                {label}
             </h2>
-            <div className={`text-xs font-medium mt-1 ${confidenceColor} px-2 py-0.5 bg-gray-900/50 rounded-full w-fit flex items-center gap-1`}>
+            <div className="text-lg font-bold text-white mb-1">
+              {gradeLabel}
+            </div>
+            <div className={`text-xs font-medium ${confidenceColor} px-2 py-0.5 bg-gray-900/50 rounded-full w-fit flex items-center gap-1`}>
               {status === 'analyzing' && !isCVComplete && <Loader2 className="w-3 h-3 animate-spin" />}
               {confidence}
             </div>
@@ -105,6 +174,12 @@ export default function TotalAnalysisCard({
             {!isCVComplete && (
                <p className="text-xs text-gray-500 mt-2 italic">
                  Final verification pending...
+               </p>
+            )}
+            
+            {isCVComplete && agreementInfo && (
+               <p className="text-[10px] text-gray-400 mt-1">
+                 {agreementInfo}
                </p>
             )}
           </div>
