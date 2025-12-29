@@ -13,7 +13,7 @@
  */
 
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import { createClient } from '@/lib/supabase/client';
+import { createServerClient } from '@/lib/supabase/server';
 
 export type AnalyzePhase2Result = 
   | { success: true; data: any }
@@ -27,7 +27,7 @@ export async function analyzePhase2(input: {
 }): Promise<AnalyzePhase2Result> {
   const { videoUrl, jobId, aiGrade, itemType = 'comic' } = input;
   
-  const supabase = createClient();
+  const supabase = createServerClient();
   const apiKey = process.env.GOOGLE_API_KEY;
 
   try {

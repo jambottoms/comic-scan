@@ -22,7 +22,7 @@ import { GoogleAIFileManager } from '@google/generative-ai/server';
 import { spawnSync } from 'child_process';
 import { writeFile, unlink, stat, access } from 'fs/promises';
 import path from 'path';
-import { createClient } from '@/lib/supabase/client';
+import { createServerClient } from '@/lib/supabase/server';
 
 // Load ffmpeg-static at module level
 const ffmpegStatic = require('ffmpeg-static');
@@ -59,7 +59,7 @@ export async function analyzePhase1(input: {
     return { success: false, error: errorMsg };
   }
 
-  const supabase = createClient();
+  const supabase = createServerClient();
   
   // File paths
   const inputPath = `/tmp/phase1-input-${jobId}.mov`;
@@ -68,11 +68,32 @@ export async function analyzePhase1(input: {
   try {
     console.log(`[Phase 1] Starting AI analysis for job: ${jobId}`);
     
-    // Update job status to processing
-    await supabase.from('analysis_jobs').update({
-      ai_status: 'processing',
-      updated_at: new Date().toISOString()
-    }).eq('id', jobId);
+    // Create job record if it doesn't exist, or update if it does
+    const { data: existingJob } = await supabase
+      .from('analysis_jobs')
+      .select('id')
+      .eq('id', jobId)
+      .single();
+    
+    if (!existingJob) {
+      // Create new job record
+      await supabase.from('analysis_jobs').insert({
+        id: jobId,
+        video_url: videoUrl,
+        status: 'processing',
+        ai_status: 'processing',
+        frames_status: 'pending',
+        cv_status: 'pending'
+      });
+      console.log(`[Phase 1] Created job record for ${jobId}`);
+    } else {
+      // Update existing job to processing
+      await supabase.from('analysis_jobs').update({
+        ai_status: 'processing',
+        updated_at: new Date().toISOString()
+      }).eq('id', jobId);
+      console.log(`[Phase 1] Updated job record for ${jobId}`);
+    }
     
     // Step 1: Download video
     console.log(`[Phase 1] Downloading video...`);

@@ -400,18 +400,7 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
           // Update entry with video URL
           updateWithVideoUrl(historyId, videoUpload.url);
           
-          // Create job record in Supabase
-          const supabase = createClient();
-          await supabase.from('analysis_jobs').insert({
-            id: historyId,
-            video_url: videoUpload.url,
-            status: 'processing',
-            ai_status: 'pending',
-            frames_status: 'pending',
-            cv_status: 'pending'
-          });
-          
-          // Start both phases in parallel
+          // Start both phases in parallel (job record will be created by Phase 1)
           const phase1Promise = analyzePhase1({
             videoUrl: videoUpload.url,
             jobId: historyId,
@@ -534,18 +523,7 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
           
           updateWithVideoUrl(historyId, videoUpload.url);
           
-          // Create job record in Supabase
-          const supabase = createClient();
-          await supabase.from('analysis_jobs').insert({
-            id: historyId,
-            video_url: videoUpload.url,
-            status: 'processing',
-            ai_status: 'pending',
-            frames_status: 'pending',
-            cv_status: 'pending'
-          });
-          
-          // Start both phases in parallel
+          // Start both phases in parallel (job record will be created by Phase 1)
           const phase1Promise = analyzePhase1({
             videoUrl: videoUpload.url,
             jobId: historyId,
