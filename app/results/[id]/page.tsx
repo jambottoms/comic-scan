@@ -75,6 +75,7 @@ export default function ResultPage() {
         <ResultSheet 
             isOpen={true} 
             onClose={handleClose}
+            historyId={id}
             result={videoItem.result} 
             videoUrl={videoItem.videoUrl} 
             thumbnail={videoItem.thumbnail} 
