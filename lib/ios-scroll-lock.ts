@@ -16,7 +16,7 @@ interface TouchPosition {
  * @param scrollContainerRef - Ref to the scrollable container element
  * @returns Object with touchStart and touchMove handlers
  */
-export function createScrollLock(scrollContainerRef: React.RefObject<HTMLElement>) {
+export function createScrollLock(scrollContainerRef: React.RefObject<HTMLElement | null>) {
   let touchPosition: TouchPosition | null = null;
   
   const handleTouchStart = (e: React.TouchEvent) => {
