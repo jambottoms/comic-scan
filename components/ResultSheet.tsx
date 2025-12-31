@@ -64,7 +64,7 @@ export default function ResultSheet({
     >
       <div 
         className={`w-full bg-gray-900 border-t border-gray-800 rounded-t-3xl shadow-2xl overflow-hidden flex flex-col transition-transform duration-200 ease-out ${isVisible && !isClosing ? 'translate-y-0' : 'translate-y-full'}`}
-        style={{ height: '95vh', overscrollBehavior: 'contain' }}
+        style={{ height: '95vh', overscrollBehavior: 'contain', willChange: 'transform' }}
       >
         
         {/* Header */}
@@ -76,7 +76,7 @@ export default function ResultSheet({
         </div>
 
         {/* Content Area - Scrollable */}
-        <div className="flex-1 overflow-y-auto bg-gray-900 pb-8 overscroll-contain">
+        <div className="flex-1 overflow-y-auto bg-gray-900 pb-8 overscroll-contain" style={{ WebkitOverflowScrolling: 'touch' }}>
             <div className="p-4 flex justify-center w-full">
                 {isLoading ? (
                   <div className="w-full max-w-md animate-pulse space-y-4">

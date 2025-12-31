@@ -52,21 +52,27 @@ export default function GradingAnalysisView({ historyId }: GradingAnalysisViewPr
     return unsubscribe;
   }, [historyId]);
 
-  // Polling fallback
+  // Polling fallback - only when actively processing
   useEffect(() => {
+    // Stop polling if analysis is complete or errored
     if (status === 'complete' || status === 'error') return;
     
     const interval = setInterval(() => {
       const current = getVideoById(historyId);
       if (current) {
-        setEntry(current);
         const newStatus = current.result?._status;
-        if (newStatus) setStatus(newStatus);
-        if (newStatus === 'complete' || newStatus === 'error') {
-          clearInterval(interval);
+        // Only update state if status actually changed to avoid unnecessary re-renders
+        if (newStatus && newStatus !== status) {
+          setStatus(newStatus);
+          setEntry(current);
+          
+          // Clear interval when complete
+          if (newStatus === 'complete' || newStatus === 'error') {
+            clearInterval(interval);
+          }
         }
       }
-    }, 1000);
+    }, 2000); // Increased from 1000ms to 2000ms to reduce render frequency
     
     return () => clearInterval(interval);
   }, [historyId, status]);
@@ -90,15 +96,6 @@ export default function GradingAnalysisView({ historyId }: GradingAnalysisViewPr
     const cvDefects = result.hybridGrade?.defectBreakdown || [];
     const defects = cvDefects.length > 0 ? cvDefects : aiDefects;
 
-    // DEBUG: Log what we're passing to MathComponentCard
-    console.log('[GradingAnalysisView] Passing to MathComponentCard:', {
-      displayDefects: defects,
-      regionGrades: result.hybridGrade?.cvAnalysis?.regionGrades || result.hybridGrade?.nyckelRegions,
-      finalGrade: result.hybridGrade?.displayGrade || result.estimatedGrade,
-      fullHybridGrade: result.hybridGrade,
-      status
-    });
-
     return {
       showAI: ai,
       showCV: cv,
@@ -108,7 +105,7 @@ export default function GradingAnalysisView({ historyId }: GradingAnalysisViewPr
   }, [status, result.reasoning, result.hybridGrade?.defectBreakdown, result.hybridGrade, result.estimatedGrade]);
 
   return (
-    <div className="w-full max-w-2xl mx-auto flex flex-col items-center min-h-screen bg-gray-900 text-white p-4 pb-20">
+    <div className="w-full max-w-2xl mx-auto flex flex-col items-center bg-gray-900 text-white p-4 pb-20">
       
       {/* 1. Top Summary Card */}
       <TotalAnalysisCard 

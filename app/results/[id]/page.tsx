@@ -28,6 +28,9 @@ export default function ResultPage() {
 
       // Listen for analysis updates (including multi-frame Gemini analysis)
       const handleAnalysisUpdate = (e: CustomEvent) => {
+        // #region agent log
+        fetch('http://127.0.0.1:7243/ingest/687f9f08-c30c-4c86-ad3f-6622e9cc4b71',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'page.tsx:30',message:'Analysis update event',data:{eventHistoryId:e.detail?.historyId,pageId:id,matches:e.detail?.historyId===id},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H5'})}).catch(()=>{});
+        // #endregion
         if (e.detail?.historyId === id) {
           console.log('[ResultPage] Analysis update received, reloading item');
           loadItem();
@@ -37,6 +40,9 @@ export default function ResultPage() {
       window.addEventListener('analysis-update' as any, handleAnalysisUpdate);
       
       return () => {
+        // #region agent log
+        fetch('http://127.0.0.1:7243/ingest/687f9f08-c30c-4c86-ad3f-6622e9cc4b71',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'page.tsx:39',message:'Cleaning up event listener',data:{id},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H5'})}).catch(()=>{});
+        // #endregion
         window.removeEventListener('analysis-update' as any, handleAnalysisUpdate);
       };
     }
