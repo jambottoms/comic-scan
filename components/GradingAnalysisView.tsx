@@ -57,6 +57,7 @@ export default function GradingAnalysisView({ historyId }: GradingAnalysisViewPr
     // Stop polling if analysis is complete or errored
     if (status === 'complete' || status === 'error') return;
     
+    // Faster polling during active processing (1 second instead of 2)
     const interval = setInterval(() => {
       const current = getVideoById(historyId);
       if (current) {
@@ -72,7 +73,7 @@ export default function GradingAnalysisView({ historyId }: GradingAnalysisViewPr
           }
         }
       }
-    }, 2000); // Increased from 1000ms to 2000ms to reduce render frequency
+    }, 1000); // Reduced from 2000ms to 1000ms for faster mobile updates
     
     return () => clearInterval(interval);
   }, [historyId, status]);

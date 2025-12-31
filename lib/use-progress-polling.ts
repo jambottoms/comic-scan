@@ -37,26 +37,42 @@ export function useProgressPolling(jobId: string, enabled: boolean = true) {
       return;
     }
     
-    // Poll every 2 seconds
-    const pollInterval = setInterval(async () => {
+    let pollInterval: NodeJS.Timeout | null = null;
+    let retryCount = 0;
+    const MAX_RETRIES = 3;
+    
+    // Query function with retry logic
+    const queryProgress = async () => {
       try {
         console.log('[Progress Poll] Polling for job:', jobId);
         
         const { data, error } = await supabase
           .from('analysis_jobs')
-          .select('progress_percentage, progress_message, progress_step, cv_status')
+          .select('progress_percentage, progress_message, progress_step, cv_status, status')
           .eq('id', jobId)
           .single();
         
         if (error) {
           console.warn('[Progress Poll] Error:', error.message);
+          retryCount++;
+          if (retryCount >= MAX_RETRIES) {
+            console.error('[Progress Poll] Max retries reached, stopping polling');
+            if (pollInterval) clearInterval(pollInterval);
+          }
           return;
         }
+        
+        // Reset retry count on success
+        retryCount = 0;
         
         if (data) {
           console.log('[Progress Poll] Data received:', data);
           
-          const isComplete = data.cv_status === 'complete' || data.progress_percentage === 100;
+          // Check multiple completion signals
+          const isComplete = 
+            data.cv_status === 'complete' || 
+            data.status === 'complete' ||
+            data.progress_percentage === 100;
           
           setProgress({
             percentage: data.progress_percentage || 0,
@@ -68,18 +84,42 @@ export function useProgressPolling(jobId: string, enabled: boolean = true) {
           // Stop polling when complete
           if (isComplete) {
             console.log('[Progress Poll] Complete! Stopping polling.');
-            clearInterval(pollInterval);
+            if (pollInterval) clearInterval(pollInterval);
           }
         } else {
           console.warn('[Progress Poll] No data found for job:', jobId);
         }
       } catch (err) {
         console.error('[Progress Poll] Exception:', err);
+        retryCount++;
+        if (retryCount >= MAX_RETRIES) {
+          console.error('[Progress Poll] Max retries reached, stopping polling');
+          if (pollInterval) clearInterval(pollInterval);
+        }
       }
-    }, 2000);
+    };
+    
+    // Immediate query on mount (don't wait for interval)
+    queryProgress();
+    
+    // Poll every 1 second for faster updates on mobile
+    pollInterval = setInterval(queryProgress, 1000);
+    
+    // Add visibility change listener to resume polling when tab refocuses (iOS Safari optimization)
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        console.log('[Progress Poll] Tab visible, querying immediately');
+        queryProgress();
+      }
+    };
+    
+    document.addEventListener('visibilitychange', handleVisibilityChange);
     
     // Cleanup on unmount
-    return () => clearInterval(pollInterval);
+    return () => {
+      if (pollInterval) clearInterval(pollInterval);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
   }, [jobId, enabled]);
   
   return progress;

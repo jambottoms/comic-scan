@@ -269,7 +269,15 @@ export default function StreamingResultCard({ historyId, embedded = false }: Str
   const isError = status === 'error';
   
   // Real-time progress polling for Phase 2 (CV analysis)
-  const cvProgress = useProgressPolling(historyId, isCVPending && !isFullyComplete);
+  // Broadened condition: Enable polling when status is ai_complete, frames_ready, OR cv_processing
+  // Don't disable until we actually have CV results in the data
+  const shouldPollProgress = (
+    status === 'ai_complete' || 
+    status === 'frames_ready' || 
+    status === 'cv_processing'
+  ) && !result._cvReady; // Only stop when we have CV results
+  
+  const cvProgress = useProgressPolling(historyId, shouldPollProgress);
   
   // DEBUG: Log status changes
   useEffect(() => {
