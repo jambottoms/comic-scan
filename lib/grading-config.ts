@@ -8,6 +8,61 @@
  */
 
 /**
+ * Valid CGC grade points
+ * CGC only uses specific increments, not arbitrary decimals
+ */
+export const VALID_CGC_GRADES = [
+  10.0,
+  9.8, 9.6, 9.4, 9.2, 9.0,
+  8.5, 8.0,
+  7.5, 7.0,
+  6.5, 6.0,
+  5.5, 5.0,
+  4.5, 4.0,
+  3.5, 3.0,
+  2.5, 2.0,
+  1.8, 1.5, 1.0,
+  0.5
+] as const;
+
+/**
+ * Round a grade to the nearest valid CGC grade point
+ * When in doubt, rounds DOWN (conservative grading)
+ * 
+ * @param grade - Raw calculated grade (0.0 - 10.0)
+ * @returns Valid CGC grade point
+ * 
+ * @example
+ * roundToCGCGrade(7.9) => 7.5  // Rounds down
+ * roundToCGCGrade(9.1) => 9.0  // Rounds down
+ * roundToCGCGrade(9.7) => 9.6  // Rounds down
+ */
+export function roundToCGCGrade(grade: number): number {
+  // Handle NaN - return middle-of-road grade instead of falling through to 0.5
+  if (isNaN(grade)) {
+    console.warn('[roundToCGCGrade] Received NaN, returning 5.0 as fallback');
+    return 5.0;
+  }
+  
+  // Clamp to valid range
+  const clamped = Math.max(0.5, Math.min(10.0, grade));
+  
+  // Find the nearest valid grade, rounding DOWN when between two values
+  // Array is in descending order, so find first value <= input
+  for (let i = 0; i < VALID_CGC_GRADES.length; i++) {
+    const current = VALID_CGC_GRADES[i];
+    
+    // If the input is at or above this grade point, return it
+    if (clamped >= current) {
+      return current;
+    }
+  }
+  
+  // Fallback to lowest grade (should never reach here due to clamp)
+  return 0.5;
+}
+
+/**
  * Defect type labels used by Nyckel classification
  */
 export type DefectLabel = 

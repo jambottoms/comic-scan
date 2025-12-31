@@ -49,6 +49,16 @@ const REGION_TYPES = [
   "Bottom Right Corner"
 ];
 
+// Nyckel ML Grade Labels (for region condition training)
+const GRADE_LABELS = [
+  "pristine",
+  "near_mint",
+  "minor_wear",
+  "moderate_wear",
+  "heavy_wear",
+  "damaged"
+];
+
 interface GradeBookModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -296,7 +306,8 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
       
       // Determine prefix based on selected label
       const isDefect = DEFECT_TYPES.includes(selectedLabel);
-      const prefix = isDefect ? 'defect' : 'region';
+      const isGradeLabel = GRADE_LABELS.includes(selectedLabel);
+      const prefix = isDefect ? 'defect' : isGradeLabel ? 'grade' : 'region';
       
       const filename = `${prefix}-${Date.now()}.jpg`;
       const { error: uploadError } = await supabase.storage
@@ -310,9 +321,24 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
         .getPublicUrl(filename);
 
       // Send to appropriate Nyckel function
+      // Defects → trainDefect (NYCKEL_DEFECT_FUNCTION_ID)
+      // Grades → trainRegion (NYCKEL_REGION_FUNCTION_ID) 
+      // Regions → trainRegion (for now, legacy)
+      
+      // Prepare metadata for database logging
+      const metadata = {
+        imagePath: filename,
+        cropData: trainingCroppedAreaPixels ? {
+          x: trainingCroppedAreaPixels.x,
+          y: trainingCroppedAreaPixels.y,
+          width: trainingCroppedAreaPixels.width,
+          height: trainingCroppedAreaPixels.height
+        } : null
+      };
+      
       const result = isDefect 
-        ? await trainDefect(publicUrl, selectedLabel)
-        : await trainRegion(publicUrl, selectedLabel);
+        ? await trainDefect(publicUrl, selectedLabel, metadata)
+        : await trainRegion(publicUrl, selectedLabel, metadata);
       
       if (!result.success) {
         throw new Error(result.error || 'Failed to train model');
@@ -824,6 +850,34 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
                                             ))}
                                         </div>
                                     </div>
+
+                                    {/* Grade/Condition Section - NEW */}
+                                    <div>
+                                        <h3 className="text-blue-400 text-sm font-bold uppercase tracking-wider mb-3 px-1">
+                                            Grade/Condition
+                                            <span className="text-xs text-gray-500 ml-2 normal-case font-normal">
+                                                (for ML training)
+                                            </span>
+                                        </h3>
+                                        <div className="grid grid-cols-2 gap-2">
+                                            {GRADE_LABELS.map(label => (
+                                                <button
+                                                    key={label}
+                                                    onClick={() => selectTrainingLabel(label)}
+                                                    className={`p-3 rounded-xl text-left font-medium text-sm transition-all ${
+                                                        selectedLabel === label
+                                                            ? 'bg-blue-600 text-white shadow-lg ring-2 ring-blue-400' 
+                                                            : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+                                                    }`}
+                                                >
+                                                    {label.replace(/_/g, ' ')}
+                                                </button>
+                                            ))}
+                                        </div>
+                                        <p className="text-xs text-gray-500 mt-2 px-1">
+                                            💡 Crop to a specific region (spine, corner, surface) and tag its condition for better ML accuracy
+                                        </p>
+                                    </div>
                                 </div>
                             </div>
                         )}
@@ -944,13 +998,15 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
                                                 ? 'bg-purple-600'
                                                 : REGION_TYPES.includes(selectedLabel)
                                                     ? 'bg-emerald-600'
-                                                    : 'bg-gray-700'
+                                                    : GRADE_LABELS.includes(selectedLabel)
+                                                        ? 'bg-blue-600'
+                                                        : 'bg-gray-700'
                                         }`}
                                     >
                                         {isSubmittingTraining ? (
                                             <Loader2 className="animate-spin" />
                                         ) : (
-                                            `Submit: ${selectedLabel || 'Select a tag'}`
+                                            `Submit: ${selectedLabel ? selectedLabel.replace(/_/g, ' ') : 'Select a tag'}`
                                         )}
                                     </button>
                                 )}

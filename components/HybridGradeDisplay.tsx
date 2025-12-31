@@ -78,7 +78,7 @@ export default function HybridGradeDisplay({ hybridGrade }: HybridGradeDisplayPr
             {hybridGrade.cvGrade}
           </div>
           <div className="text-[10px] text-gray-400">
-            {hybridGrade.cvAnalysis.damageScore.toFixed(0)}% damage
+            {hybridGrade.cvAnalysis?.damageScore?.toFixed(0) ?? 'N/A'}% damage
           </div>
         </div>
       </div>

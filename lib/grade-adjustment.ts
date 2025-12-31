@@ -5,6 +5,70 @@
  * Ensures grades reflect actual physical condition detected by deep scan.
  */
 
+// Type exports for components
+import type { RegionName, DefectLabel } from './grading-config';
+
+export interface DefectBreakdown {
+  region: RegionName;
+  defect: DefectLabel;
+  baseDeduction: number;
+  regionWeight: number;
+  totalDeduction: number;
+}
+
+export interface NyckelRegionGrade {
+  grade: number;
+  label: string;
+  confidence: number;
+}
+
+export interface CVAnalysisData {
+  damageScore?: number;
+  regionScores?: Record<string, number>;
+  regionGrades?: Record<string, NyckelRegionGrade>;
+  regionCrops?: Record<string, string>;
+  regionOverlays?: Record<string, string>;
+  defectMask?: string;
+  varianceMap?: string;
+  defectLabels?: Record<string, string[]>;
+}
+
+export interface NyckelAnalysisData {
+  analysisType?: string;
+  averageGrade?: number;
+  criticalRegionAvg?: number;
+  regionGrades?: Record<string, NyckelRegionGrade>;
+  lowestRegion?: { region: string; grade: number; label: string };
+  damageScore?: number;
+  regionScores?: Record<string, number>;
+  defectLabels?: Record<string, string[]>;
+  images?: CVAnalysisData;
+}
+
+export interface HybridGradeResult {
+  finalGrade: string;
+  displayGrade: string;
+  aiGrade: string;
+  cvGrade: string;
+  nyckelGrade?: string;
+  defectGrade?: string;
+  agreement: 'strong' | 'moderate' | 'weak';
+  gradeDifference: number;
+  overallConfidence: string;
+  aiConfidence?: string;
+  cvConfidence?: string;
+  reasoning: string;
+  aiReasoning?: string;
+  cvReasoning?: string;
+  nyckelRegions?: Record<string, NyckelRegionGrade>;
+  lowestRegion?: { region: string; grade: number; label: string } | null;
+  criticalIssues?: string[];
+  cvAnalysis?: CVAnalysisData;
+  defectLabels?: Record<string, string[]>;
+  detailedAnalysis?: any;
+  defectBreakdown?: DefectBreakdown[];
+}
+
 export interface GradeAdjustment {
   originalGrade: string;
   adjustedGrade: string;
@@ -206,6 +270,190 @@ function formatGrade(numeric: number): string {
   if (numeric >= 3.5) return `Good+ ${numeric.toFixed(1)}`;
   if (numeric >= 3.0) return `Good ${numeric.toFixed(1)}`;
   return `Fair ${numeric.toFixed(1)}`;
+}
+
+/**
+ * Legacy two-way grade fusion: combines AI grade with CV variance-based analysis.
+ * Used when Nyckel ML is not available.
+ * 
+ * @param aiGrade - AI estimated grade (numeric)
+ * @param aiConfidence - AI confidence level
+ * @param damageScore - CV damage score (0-100)
+ * @param regionScores - Per-region damage scores
+ * @param detailedAnalysis - Gemini multi-frame analysis
+ * @param defectLabels - Detected defect labels per region
+ * @returns Fused grade result
+ */
+export function fuseGrades(
+  aiGrade: number,
+  aiConfidence: string,
+  damageScore: number,
+  regionScores: Record<string, number>,
+  detailedAnalysis: any,
+  defectLabels: Record<string, string[]>
+): {
+  finalGrade: string;
+  displayGrade: string;
+  aiGrade: string;
+  cvGrade: string;
+  agreement: 'strong' | 'moderate' | 'weak';
+  gradeDifference: number;
+  overallConfidence: string;
+  reasoning: string;
+  cvAnalysis: { damageScore: number; regionScores: Record<string, number> };
+  defectLabels: Record<string, string[]>;
+} {
+  // Import roundToCGCGrade
+  const { roundToCGCGrade } = require('./grading-config');
+  
+  // Convert damage score to grade (inverse: 0% damage = 10.0, 100% damage = 0.5)
+  // Use a curve that's more realistic for comic grading
+  const cvGradeNum = Math.max(0.5, 10.0 - (damageScore / 10));
+  
+  // Calculate agreement
+  const gradeDifference = Math.abs(aiGrade - cvGradeNum);
+  let agreement: 'strong' | 'moderate' | 'weak' = 'moderate';
+  if (gradeDifference < 0.5) agreement = 'strong';
+  else if (gradeDifference > 2.0) agreement = 'weak';
+  
+  // Determine final grade - weight AI higher when CV damage-based (less reliable)
+  // 60% AI, 40% CV variance
+  let finalGradeNum = (aiGrade * 0.6) + (cvGradeNum * 0.4);
+  
+  // If Gemini multi-frame analysis provided a grade, factor it in
+  if (detailedAnalysis?.finalGrade) {
+    const geminiGrade = parseFloat(detailedAnalysis.finalGrade);
+    if (!isNaN(geminiGrade)) {
+      // Reweight: 40% AI, 30% CV, 30% Gemini
+      finalGradeNum = (aiGrade * 0.4) + (cvGradeNum * 0.3) + (geminiGrade * 0.3);
+    }
+  }
+  
+  // Round to valid CGC grade
+  finalGradeNum = roundToCGCGrade(finalGradeNum);
+  
+  // Determine confidence
+  let overallConfidence = 'medium';
+  if (agreement === 'strong' && aiConfidence === 'high') {
+    overallConfidence = 'high';
+  } else if (agreement === 'weak') {
+    overallConfidence = 'low';
+  }
+  
+  const reasoning = `AI grade: ${aiGrade.toFixed(1)}, CV damage: ${damageScore.toFixed(0)}%`;
+  
+  return {
+    finalGrade: finalGradeNum.toFixed(1),
+    displayGrade: finalGradeNum.toFixed(1),
+    aiGrade: aiGrade.toFixed(1),
+    cvGrade: cvGradeNum.toFixed(1),
+    agreement,
+    gradeDifference,
+    overallConfidence,
+    reasoning,
+    cvAnalysis: { damageScore, regionScores },
+    defectLabels
+  };
+}
+
+/**
+ * Three-way grade fusion: combines AI grade, Nyckel ML regions, and Gemini multi-frame analysis.
+ * 
+ * @param aiGrade - AI estimated grade (numeric)
+ * @param aiConfidence - AI confidence level ('low', 'medium', 'high')
+ * @param nyckelAnalysis - Nyckel ML region analysis with regionGrades
+ * @param detailedAnalysis - Gemini multi-frame analysis with confirmedDefects
+ * @returns Fused grade result
+ */
+export function fuseThreeWayGrades(
+  aiGrade: number,
+  aiConfidence: string,
+  nyckelAnalysis: {
+    averageGrade?: number;
+    criticalRegionAvg?: number;
+    regionGrades?: Record<string, { grade: number; label: string; confidence: number }>;
+    lowestRegion?: { region: string; grade: number; label: string };
+  },
+  detailedAnalysis: {
+    finalGrade?: string;
+    confidence?: string;
+    confirmedDefects?: Array<{ type: string; severity: string; framesVisible: number }>;
+  }
+): {
+  finalGrade: string;
+  displayGrade: string;
+  aiGrade: number;
+  nyckelGrade: number;
+  agreement: 'strong' | 'moderate' | 'weak';
+  gradeDifference: number;
+  overallConfidence: string;
+  reasoning: string;
+  nyckelRegions: Record<string, { grade: number; label: string; confidence: number }>;
+  lowestRegion: { region: string; grade: number; label: string } | null;
+  criticalIssues: string[];
+} {
+  // Get Nyckel weighted average grade
+  const nyckelGrade = nyckelAnalysis.averageGrade ?? 5.0;
+  
+  // Get Gemini multi-frame grade if available
+  const geminiGrade = detailedAnalysis.finalGrade ? parseFloat(detailedAnalysis.finalGrade) : null;
+  
+  // Calculate agreement between AI and Nyckel
+  const gradeDifference = Math.abs(aiGrade - nyckelGrade);
+  let agreement: 'strong' | 'moderate' | 'weak' = 'moderate';
+  if (gradeDifference < 0.5) agreement = 'strong';
+  else if (gradeDifference > 1.5) agreement = 'weak';
+  
+  // Determine final grade using weighted average
+  // Weights: Nyckel ML (highest - region-based), Gemini multi-frame, AI estimate (lowest)
+  let finalGradeNum: number;
+  let reasoning: string;
+  
+  if (geminiGrade && !isNaN(geminiGrade)) {
+    // Three-way fusion: 50% Nyckel, 30% Gemini, 20% AI
+    finalGradeNum = (nyckelGrade * 0.5) + (geminiGrade * 0.3) + (aiGrade * 0.2);
+    reasoning = `Fused: Nyckel ${nyckelGrade.toFixed(1)} (50%), Gemini ${geminiGrade.toFixed(1)} (30%), AI ${aiGrade.toFixed(1)} (20%)`;
+  } else {
+    // Two-way fusion: 70% Nyckel, 30% AI
+    finalGradeNum = (nyckelGrade * 0.7) + (aiGrade * 0.3);
+    reasoning = `Fused: Nyckel ${nyckelGrade.toFixed(1)} (70%), AI ${aiGrade.toFixed(1)} (30%)`;
+  }
+  
+  // Round to valid CGC grade
+  const { roundToCGCGrade } = require('./grading-config');
+  finalGradeNum = roundToCGCGrade(finalGradeNum);
+  
+  // Determine overall confidence
+  let overallConfidence = 'medium';
+  if (agreement === 'strong' && aiConfidence === 'high') {
+    overallConfidence = 'high';
+  } else if (agreement === 'weak') {
+    overallConfidence = 'low';
+  }
+  
+  // Check for critical issues from defects
+  const criticalIssues: string[] = [];
+  if (detailedAnalysis.confirmedDefects) {
+    for (const defect of detailedAnalysis.confirmedDefects) {
+      if (defect.severity === 'severe' && defect.framesVisible >= 3) {
+        criticalIssues.push(`${defect.type} (severe, visible in ${defect.framesVisible} frames)`);
+      }
+    }
+  }
+  
+  return {
+    finalGrade: finalGradeNum.toFixed(1),
+    displayGrade: finalGradeNum.toFixed(1),
+    aiGrade,
+    nyckelGrade,
+    agreement,
+    gradeDifference,
+    overallConfidence,
+    reasoning,
+    nyckelRegions: nyckelAnalysis.regionGrades || {},
+    lowestRegion: nyckelAnalysis.lowestRegion || null,
+    criticalIssues
+  };
 }
 
 /**

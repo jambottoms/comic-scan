@@ -14,6 +14,7 @@
 
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { createServerClient } from '@/lib/supabase/server';
+import { roundToCGCGrade } from '@/lib/grading-config';
 
 export type AnalyzePhase2Result = 
   | { success: true; data: any }
@@ -22,16 +23,35 @@ export type AnalyzePhase2Result =
 export async function analyzePhase2(input: {
   videoUrl: string;
   jobId: string;
-  aiGrade: string;
+  aiGrade?: string; // Made optional - we'll read from DB if not provided
   itemType?: string;
 }): Promise<AnalyzePhase2Result> {
-  const { videoUrl, jobId, aiGrade, itemType = 'comic' } = input;
+  const { videoUrl, jobId, itemType = 'comic' } = input;
+  // Use empty string as sentinel instead of "0.0" to distinguish "not provided" from "actually zero"
+  let aiGrade = input.aiGrade || '';
   
   const supabase = createServerClient();
   const apiKey = process.env.GOOGLE_API_KEY;
 
   try {
     console.log(`[Phase 2] Starting CV analysis for job: ${jobId}`);
+    
+    // If aiGrade is not provided, try to get it from the database
+    if (!aiGrade) {
+      console.log(`[Phase 2] AI grade not provided, fetching from database...`);
+      const { data: jobData } = await supabase
+        .from('analysis_jobs')
+        .select('ai_results')
+        .eq('id', jobId)
+        .single();
+      
+      if (jobData?.ai_results?.estimatedGrade) {
+        aiGrade = jobData.ai_results.estimatedGrade;
+        console.log(`[Phase 2] Retrieved AI grade from DB: ${aiGrade}`);
+      } else {
+        console.warn(`[Phase 2] No AI grade found in DB, using fallback`);
+      }
+    }
     
     // Update frames status to processing
     await supabase.from('analysis_jobs').update({
@@ -176,29 +196,43 @@ RESPOND IN JSON:
     
     if (detailedAnalysis && cvAnalysis) {
       try {
-        const aiGradeNum = parseFloat(aiGrade);
+        const aiGradeNumRaw = parseFloat(aiGrade);
+        // Guard against NaN or 0 (broken fallback) - use detailedAnalysis.finalGrade or 5.0
+        let aiGradeNum = isNaN(aiGradeNumRaw) || aiGradeNumRaw === 0 ? 5.0 : aiGradeNumRaw;
+        
+        // If AI grade is still invalid but we have a Gemini multi-frame grade, use that
+        if (aiGradeNum === 5.0 && detailedAnalysis.finalGrade) {
+          const geminiGrade = parseFloat(detailedAnalysis.finalGrade);
+          if (!isNaN(geminiGrade) && geminiGrade > 0) {
+            console.log(`[Phase 2] Using Gemini multi-frame grade: ${geminiGrade} (aiGrade was invalid: ${aiGrade})`);
+            aiGradeNum = geminiGrade;
+          }
+        }
+        
         const aiConfidence = detailedAnalysis.confidence || 'medium';
         
         // Check if we have Nyckel ML analysis
         const hasNyckelAnalysis = cvAnalysis?.analysisType === 'nyckel-ml' && cvAnalysis?.regionGrades;
         
         if (hasNyckelAnalysis) {
-          // Use Nyckel ML data directly
+          // Use Nyckel ML data directly (already rounded to CGC in Python)
           console.log("[Phase 2] Using Nyckel ML analysis...");
-          const nyckelAvg = cvAnalysis.averageGrade || aiGradeNum;
+          // Use nullish coalescing (??) instead of || so 0 isn't treated as falsy
+          const nyckelAvg = cvAnalysis.averageGrade ?? roundToCGCGrade(aiGradeNum);
+          const aiGradeRounded = roundToCGCGrade(aiGradeNum);
           
           hybridGrade = {
             finalGrade: nyckelAvg.toFixed(1),
             displayGrade: nyckelAvg.toFixed(1),
-            aiGrade: aiGradeNum.toFixed(1),
+            aiGrade: aiGradeRounded.toFixed(1),
             cvGrade: nyckelAvg.toFixed(1),
             nyckelGrade: nyckelAvg.toFixed(1),
-            agreement: Math.abs(aiGradeNum - nyckelAvg) < 1.0 ? 'strong' : 'moderate',
-            gradeDifference: Math.abs(aiGradeNum - nyckelAvg),
+            agreement: Math.abs(aiGradeRounded - nyckelAvg) < 1.0 ? 'strong' : 'moderate',
+            gradeDifference: Math.abs(aiGradeRounded - nyckelAvg),
             overallConfidence: 'high',
             aiConfidence,
             cvConfidence: 'high',
-            reasoning: `AI grade: ${aiGradeNum.toFixed(1)}, Nyckel ML grade: ${nyckelAvg.toFixed(1)}`,
+            reasoning: `AI grade: ${aiGradeRounded.toFixed(1)}, Nyckel ML grade: ${nyckelAvg.toFixed(1)}`,
             nyckelRegions: cvAnalysis.regionGrades,
             lowestRegion: cvAnalysis.lowestRegion,
             detailedAnalysis,
@@ -210,19 +244,26 @@ RESPOND IN JSON:
             }
           };
           
-          console.log(`[Phase 2] Hybrid Grade: ${hybridGrade.displayGrade} (AI: ${aiGradeNum.toFixed(1)}, Nyckel: ${nyckelAvg.toFixed(1)})`);
+          console.log(`[Phase 2] Hybrid Grade: ${hybridGrade.displayGrade} (AI: ${aiGradeRounded.toFixed(1)}, Nyckel: ${nyckelAvg.toFixed(1)})`);
         } else if (cvAnalysis.damageScore !== undefined) {
           // Simple adjustment based on damage score
           console.log("[Phase 2] Using CV damage score for grade adjustment...");
+          console.log("[Phase 2] DEBUG - aiGrade:", aiGrade, "aiGradeNum:", aiGradeNum, "damageScore:", cvAnalysis.damageScore);
           
           // Simple heuristic: reduce grade based on damage score
           const adjustment = (cvAnalysis.damageScore / 100) * 2; // Max 2 point reduction
-          const adjustedGrade = Math.max(0.5, aiGradeNum - adjustment);
+          const rawGrade = aiGradeNum - adjustment;
+          console.log("[Phase 2] DEBUG - adjustment:", adjustment, "rawGrade:", rawGrade, "isNaN:", isNaN(rawGrade));
+          
+          const adjustedGrade = roundToCGCGrade(Math.max(0.5, rawGrade));
+          const aiGradeRounded = roundToCGCGrade(aiGradeNum);
+          
+          console.log("[Phase 2] DEBUG - adjustedGrade after rounding:", adjustedGrade, "aiGradeRounded:", aiGradeRounded);
           
           hybridGrade = {
             finalGrade: adjustedGrade.toFixed(1),
             displayGrade: adjustedGrade.toFixed(1),
-            aiGrade: aiGradeNum.toFixed(1),
+            aiGrade: aiGradeRounded.toFixed(1),
             cvGrade: adjustedGrade.toFixed(1),
             agreement: adjustment < 0.5 ? 'strong' : 'moderate',
             gradeDifference: adjustment,

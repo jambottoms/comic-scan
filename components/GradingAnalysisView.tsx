@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { getVideoById } from '@/lib/history';
 import { subscribeToUpdates } from '@/lib/streaming-analysis';
 import VideoPreviewCard from './analysis/VideoPreviewCard';
@@ -78,16 +78,34 @@ export default function GradingAnalysisView({ historyId }: GradingAnalysisViewPr
   const result = entry.result || {};
   const isAnalyzing = status === 'analyzing' || status === 'uploading';
   
-  // Phase Logic
-  const showAI = status !== 'uploading'; // Show AI card once uploading finishes (analyzing starts)
-  const showCV = status === 'ai_complete' || status === 'frames_ready' || status === 'cv_processing' || status === 'complete';
-  const showMath = showAI; // Show math card with AI results, update with CV later
+  // MEMOIZE expensive computations to prevent recalculating on every render
+  const { showAI, showCV, showMath, displayDefects } = useMemo(() => {
+    // Phase Logic
+    const ai = status !== 'uploading'; // Show AI card once uploading finishes (analyzing starts)
+    const cv = status === 'ai_complete' || status === 'frames_ready' || status === 'cv_processing' || status === 'complete';
+    const math = ai; // Show math card with AI results, update with CV later
 
-  // Construct defects list for Math card
-  const aiDefects = result.reasoning && Array.isArray(result.reasoning) ? result.reasoning : [];
-  const cvDefects = result.hybridGrade?.defectBreakdown || []; // Assuming this structure, or derive from CV analysis
-  // If CV defects exist, use them. Otherwise use AI.
-  const displayDefects = cvDefects.length > 0 ? cvDefects : aiDefects;
+    // Construct defects list for Math card
+    const aiDefects = result.reasoning && Array.isArray(result.reasoning) ? result.reasoning : [];
+    const cvDefects = result.hybridGrade?.defectBreakdown || [];
+    const defects = cvDefects.length > 0 ? cvDefects : aiDefects;
+
+    // DEBUG: Log what we're passing to MathComponentCard
+    console.log('[GradingAnalysisView] Passing to MathComponentCard:', {
+      displayDefects: defects,
+      regionGrades: result.hybridGrade?.cvAnalysis?.regionGrades || result.hybridGrade?.nyckelRegions,
+      finalGrade: result.hybridGrade?.displayGrade || result.estimatedGrade,
+      fullHybridGrade: result.hybridGrade,
+      status
+    });
+
+    return {
+      showAI: ai,
+      showCV: cv,
+      showMath: math,
+      displayDefects: defects
+    };
+  }, [status, result.reasoning, result.hybridGrade?.defectBreakdown, result.hybridGrade, result.estimatedGrade]);
 
   return (
     <div className="w-full max-w-2xl mx-auto flex flex-col items-center min-h-screen bg-gray-900 text-white p-4 pb-20">
@@ -111,6 +129,7 @@ export default function GradingAnalysisView({ historyId }: GradingAnalysisViewPr
       {showMath && (
         <MathComponentCard 
           defects={displayDefects}
+          regionGrades={result.hybridGrade?.cvAnalysis?.regionGrades || result.hybridGrade?.nyckelRegions}
           finalGrade={result.hybridGrade?.displayGrade || result.estimatedGrade}
         />
       )}

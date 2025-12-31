@@ -60,6 +60,60 @@ REGIONS = {
 # Critical regions for grading (most important)
 CRITICAL_REGIONS = ["spine", "corner_tl", "corner_tr", "corner_bl", "corner_br"]
 
+# Region importance weights (must match lib/grading-config.ts)
+REGION_WEIGHTS = {
+    "spine": 1.5,       # Most important - structural
+    "corner_tl": 1.2,   # Top left corner
+    "corner_tr": 1.2,   # Top right corner
+    "corner_bl": 1.2,   # Bottom left corner
+    "corner_br": 1.2,   # Bottom right corner
+    "surface": 1.0,     # Center/surface area
+}
+
+# Valid CGC grade points (must match lib/grading-config.ts)
+# CGC only uses specific increments, not arbitrary decimals
+VALID_CGC_GRADES = [
+    10.0,
+    9.8, 9.6, 9.4, 9.2, 9.0,
+    8.5, 8.0,
+    7.5, 7.0,
+    6.5, 6.0,
+    5.5, 5.0,
+    4.5, 4.0,
+    3.5, 3.0,
+    2.5, 2.0,
+    1.8, 1.5, 1.0,
+    0.5
+]
+
+def round_to_cgc_grade(grade: float) -> float:
+    """
+    Round a grade to the nearest valid CGC grade point.
+    When in doubt, rounds DOWN (conservative grading).
+    
+    Args:
+        grade: Raw calculated grade (0.0 - 10.0)
+    
+    Returns:
+        Valid CGC grade point
+    
+    Examples:
+        7.9 → 7.5 (rounds down)
+        9.1 → 9.0 (rounds down)
+        9.7 → 9.6 (rounds down)
+    """
+    # Clamp to valid range
+    clamped = max(0.5, min(10.0, grade))
+    
+    # Find the nearest valid grade, rounding DOWN when between two values
+    for valid_grade in VALID_CGC_GRADES:
+        if clamped >= valid_grade:
+            return valid_grade
+    
+    # Fallback to lowest grade
+    return 0.5
+
+
 # Visibility labels
 VISIBILITY_LABELS = ["clearly_visible", "partially_visible", "not_visible", "occluded"]
 
@@ -89,14 +143,128 @@ DEFECT_LABELS = [
 # NYCKEL HELPER FUNCTIONS
 # =============================================================================
 
-def extract_region_crops_for_frame(frame, frame_id: str, output_dir: Path) -> dict:
+def detect_comic_boundaries(frame):
+    """
+    Detect the comic book object in the frame using edge detection.
+    
+    Returns:
+        tuple: (x, y, w, h) bounding box of the detected comic, or None if detection fails
+    """
+    import cv2
+    import numpy as np
+    
+    # Convert to grayscale
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    
+    # Apply Gaussian blur to reduce noise
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    
+    # Edge detection
+    edges = cv2.Canny(blurred, 50, 150)
+    
+    # Find contours
+    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    if not contours:
+        return None
+    
+    # Find the largest contour (likely the comic)
+    largest_contour = max(contours, key=cv2.contourArea)
+    
+    # Get bounding rectangle
+    x, y, w, h = cv2.boundingRect(largest_contour)
+    
+    # Validate: comic should be at least 30% of frame
+    frame_h, frame_w = frame.shape[:2]
+    if w * h < (frame_w * frame_h * 0.3):
+        return None  # Too small, probably not the comic
+    
+    # Add small padding (5%)
+    padding_x = int(w * 0.05)
+    padding_y = int(h * 0.05)
+    
+    x = max(0, x - padding_x)
+    y = max(0, y - padding_y)
+    w = min(frame_w - x, w + 2 * padding_x)
+    h = min(frame_h - y, h + 2 * padding_y)
+    
+    return (x, y, w, h)
+
+
+def create_debug_visualization(frame, comic_bbox, output_path):
+    """
+    Create a debug visualization showing the detected comic boundaries and region crops.
+    
+    Args:
+        frame: OpenCV BGR image
+        comic_bbox: (x, y, w, h) bounding box or None
+        output_path: Path to save the debug image
+    """
+    import cv2
+    import numpy as np
+    
+    # Make a copy for drawing
+    debug_frame = frame.copy()
+    
+    # Draw comic boundary if detected
+    if comic_bbox:
+        x, y, w, h = comic_bbox
+        cv2.rectangle(debug_frame, (x, y), (x + w, y + h), (0, 255, 0), 3)
+        cv2.putText(debug_frame, "Comic Detected", (x + 10, y + 30), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+        
+        # Use detected comic as working area
+        working_x, working_y = x, y
+        working_w, working_h = w, h
+    else:
+        # Use full frame
+        working_x, working_y = 0, 0
+        working_h, working_w = frame.shape[:2]
+        cv2.putText(debug_frame, "Using Full Frame", (10, 30), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+    
+    # Draw region boundaries
+    region_colors = {
+        'spine': (255, 0, 0),       # Blue
+        'corner_tl': (0, 255, 255),  # Yellow
+        'corner_tr': (255, 0, 255),  # Magenta
+        'corner_bl': (0, 165, 255),  # Orange
+        'corner_br': (255, 255, 0),  # Cyan
+        'surface': (128, 0, 128)     # Purple
+    }
+    
+    for region_name, region_def in REGIONS.items():
+        x1 = working_x + int(working_w * region_def["x_start"])
+        x2 = working_x + int(working_w * region_def["x_end"])
+        y1 = working_y + int(working_h * region_def["y_start"])
+        y2 = working_y + int(working_h * region_def["y_end"])
+        
+        color = region_colors.get(region_name, (255, 255, 255))
+        cv2.rectangle(debug_frame, (x1, y1), (x2, y2), color, 2)
+        
+        # Add label
+        label_y = y1 + 20 if y1 > 30 else y2 - 10
+        cv2.putText(debug_frame, region_name, (x1 + 5, label_y), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+    
+    # Save debug image
+    cv2.imwrite(str(output_path), debug_frame, [cv2.IMWRITE_PNG_COMPRESSION, 9])
+    print(f"   📊 Debug visualization saved to {output_path}")
+
+
+
+def extract_region_crops_for_frame(frame, frame_id: str, output_dir: Path, detect_object: bool = True) -> dict:
     """
     Extract 6 region crops from a single frame.
+    
+    If detect_object=True, first detects the comic boundaries and extracts regions from the detected comic.
+    Otherwise, uses the entire frame (legacy behavior).
     
     Args:
         frame: OpenCV BGR image (numpy array)
         frame_id: Unique identifier for this frame (e.g., "f00123")
         output_dir: Directory to save crop files
+        detect_object: Whether to detect comic boundaries first (default True)
     
     Returns:
         Dict mapping region name to crop file path
@@ -104,7 +272,18 @@ def extract_region_crops_for_frame(frame, frame_id: str, output_dir: Path) -> di
     """
     import cv2
     
-    h, w = frame.shape[:2]
+    # Try to detect comic boundaries
+    working_frame = frame
+    if detect_object:
+        bbox = detect_comic_boundaries(frame)
+        if bbox:
+            x, y, w, h = bbox
+            working_frame = frame[y:y+h, x:x+w]
+            print(f"   📐 Detected comic at ({x}, {y}) size ({w}x{h})")
+        else:
+            print(f"   ⚠️ Object detection failed, using full frame")
+    
+    h, w = working_frame.shape[:2]
     crops = {}
     
     for region_name, region_def in REGIONS.items():
@@ -114,7 +293,7 @@ def extract_region_crops_for_frame(frame, frame_id: str, output_dir: Path) -> di
         y2 = int(h * region_def["y_end"])
         
         # Extract crop
-        crop = frame[y1:y2, x1:x2]
+        crop = working_frame[y1:y2, x1:x2]
         
         # Save to file
         crop_filename = f"{frame_id}_crop_{region_name}.png"
@@ -245,6 +424,15 @@ def classify_region_grades(crop_paths: dict, access_token: str, function_id: str
             label = result.get("labelName", "moderate_wear")
             confidence = result.get("confidence", 0.0)
             grade = LABEL_TO_GRADE.get(label, 5.5)
+            
+            # DEBUG: Log what Nyckel is returning
+            print(f"      DEBUG {region_name}: label={label}, confidence={confidence:.2f}, grade={grade}")
+            
+            # IMPORTANT: If confidence is too low, don't trust the result
+            if confidence < 0.3:
+                print(f"      ⚠️ Low confidence ({confidence:.2f}) for {region_name}, using fallback grade")
+                grade = 5.5
+                label = "uncertain"
             
             results[region_name] = {
                 "label": label,
@@ -865,6 +1053,17 @@ def run_cv_analysis(golden_frames: list, output_dir: Path, scan_id: str) -> dict
     
     print(f"   Analyzing {len(frames)} frames...")
     
+    # Detect comic boundaries in reference frame
+    print("   🎯 Detecting comic boundaries...")
+    comic_bbox = detect_comic_boundaries(frames[0])
+    if comic_bbox:
+        x, y, w, h = comic_bbox
+        # Crop all frames to comic boundaries
+        frames = [frame[y:y+h, x:x+w] for frame in frames]
+        print(f"   ✅ Comic detected at ({x}, {y}) size ({w}x{h})")
+    else:
+        print(f"   ⚠️ Object detection failed, using full frames")
+    
     # Align frames (simple feature-based alignment)
     reference = frames[0]
     aligned_frames = [reference]
@@ -1078,6 +1277,20 @@ def run_nyckel_analysis(golden_frames: list, output_dir: Path, scan_id: str) -> 
     if reference is None:
         return None
     
+    # Detect comic boundaries first
+    print("   🎯 Detecting comic boundaries...")
+    comic_bbox = detect_comic_boundaries(reference)
+    if comic_bbox:
+        x, y, w, h = comic_bbox
+        reference = reference[y:y+h, x:x+w]
+        print(f"   ✅ Comic detected at ({x}, {y}) size ({w}x{h})")
+    else:
+        print(f"   ⚠️ Object detection failed, using full frame")
+    
+    # Create debug visualization BEFORE cropping
+    debug_viz_path = output_dir / "debug_regions.png"
+    create_debug_visualization(cv2.imread(golden_frames[0]['path']), comic_bbox, debug_viz_path)
+    
     # Extract region crops from reference frame
     print("   📐 Extracting region crops...")
     h, w = reference.shape[:2]
@@ -1113,12 +1326,34 @@ def run_nyckel_analysis(golden_frames: list, output_dir: Path, scan_id: str) -> 
         emoji = "✅" if result['grade'] >= 9.0 else "⚠️" if result['grade'] >= 7.0 else "❌"
         print(f"      {emoji} {region_name}: {result['label']} ({result['grade']}) - {result['confidence']:.0%}")
     
-    # Calculate aggregate scores
-    all_grades = [r['grade'] for r in region_grades.values()]
-    critical_grades = [region_grades[r]['grade'] for r in CRITICAL_REGIONS if r in region_grades]
+    # Calculate aggregate scores using WEIGHTED AVERAGE
+    # Simple average would double-count deductions and give incorrect results
     
-    avg_grade = sum(all_grades) / len(all_grades) if all_grades else 5.5
-    critical_avg = sum(critical_grades) / len(critical_grades) if critical_grades else 5.5
+    # Weighted average: Σ(grade × weight) / Σ(weights)
+    weighted_sum = sum(
+        region_grades[region]['grade'] * REGION_WEIGHTS.get(region, 1.0)
+        for region in region_grades
+    )
+    total_weights = sum(REGION_WEIGHTS.get(region, 1.0) for region in region_grades)
+    avg_grade_raw = weighted_sum / total_weights if total_weights > 0 else 5.5
+    
+    # Round to valid CGC grade point (conservative - rounds down)
+    avg_grade = round_to_cgc_grade(avg_grade_raw)
+    
+    # Critical region average (also weighted)
+    critical_weighted_sum = sum(
+        region_grades[r]['grade'] * REGION_WEIGHTS.get(r, 1.0)
+        for r in CRITICAL_REGIONS if r in region_grades
+    )
+    critical_weights = sum(
+        REGION_WEIGHTS.get(r, 1.0) 
+        for r in CRITICAL_REGIONS if r in region_grades
+    )
+    critical_avg_raw = critical_weighted_sum / critical_weights if critical_weights > 0 else 5.5
+    critical_avg = round_to_cgc_grade(critical_avg_raw)
+    
+    print(f"   📊 Weighted Average Grade: {avg_grade_raw:.2f} → {avg_grade} (CGC)")
+    print(f"   📊 Critical Regions Avg: {critical_avg_raw:.2f} → {critical_avg} (CGC)")
     
     # Find lowest graded region
     worst_region = min(region_grades.items(), key=lambda x: x[1]['grade']) if region_grades else None
@@ -1141,7 +1376,15 @@ def run_nyckel_analysis(golden_frames: list, output_dir: Path, scan_id: str) -> 
     cv_images = {
         "regionCrops": {},
         "regionOverlays": {},
+        "debugVisualization": None
     }
+    
+    # Upload debug visualization first
+    debug_viz_remote = f"{scan_id}/debug_regions.png"
+    with open(debug_viz_path, 'rb') as f:
+        debug_url = upload_to_supabase_storage(supabase_url, supabase_key, bucket, debug_viz_remote, f.read())
+        cv_images["debugVisualization"] = debug_url
+        print(f"   ✅ Debug visualization uploaded: {debug_url}")
     
     for region_name, crop_path in region_crops.items():
         remote_path = f"{scan_id}/regions/crop_{region_name}.png"

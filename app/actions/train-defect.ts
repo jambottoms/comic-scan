@@ -1,5 +1,7 @@
 'use server';
 
+import { createServerClient } from '@/lib/supabase/server';
+
 const NYCKEL_FUNCTION_ID = process.env.NYCKEL_DEFECT_FUNCTION_ID;
 const NYCKEL_CLIENT_ID = process.env.NYCKEL_CLIENT_ID;
 const NYCKEL_CLIENT_SECRET = process.env.NYCKEL_CLIENT_SECRET;
@@ -18,7 +20,19 @@ async function getNyckelToken() {
   return data.access_token;
 }
 
-export async function trainDefect(imageUrl: string, label: string) {
+export async function trainDefect(
+  imageUrl: string, 
+  label: string,
+  metadata?: {
+    imagePath?: string;
+    sourceScanId?: string;
+    cropData?: any;
+  }
+) {
+  const supabase = createServerClient();
+  let nyckelSampleId: string | null = null;
+  let nyckelStatus = 'error';
+  
   try {
     // Debug logging
     console.log("[TrainDefect] Environment Check:", {
@@ -56,9 +70,59 @@ export async function trainDefect(imageUrl: string, label: string) {
       throw new Error(`Nyckel Error: ${errorText}`);
     }
 
-    return { success: true };
+    const nyckelResult = await response.json();
+    nyckelSampleId = nyckelResult.id || null;
+    nyckelStatus = 'accepted';
+
+    // 3. Save to Supabase training_samples table
+    try {
+      const { error: dbError } = await supabase
+        .from('training_samples')
+        .insert({
+          image_url: imageUrl,
+          image_path: metadata?.imagePath || imageUrl,
+          label: label,
+          label_type: 'defect',
+          nyckel_function_id: NYCKEL_FUNCTION_ID,
+          nyckel_sample_id: nyckelSampleId,
+          nyckel_status: nyckelStatus,
+          source_scan_id: metadata?.sourceScanId || null,
+          crop_data: metadata?.cropData || null,
+        });
+
+      if (dbError) {
+        console.error('[TrainDefect] Failed to save to training_samples:', dbError);
+        // Don't fail the whole operation if DB save fails
+      } else {
+        console.log('[TrainDefect] ✅ Saved to training_samples table');
+      }
+    } catch (dbError) {
+      console.error('[TrainDefect] DB save error:', dbError);
+    }
+
+    return { success: true, sampleId: nyckelSampleId };
   } catch (error) {
     console.error("Training Error:", error);
+    
+    // Still try to save to DB even on Nyckel failure (for debugging)
+    try {
+      await supabase
+        .from('training_samples')
+        .insert({
+          image_url: imageUrl,
+          image_path: metadata?.imagePath || imageUrl,
+          label: label,
+          label_type: 'defect',
+          nyckel_function_id: NYCKEL_FUNCTION_ID || '',
+          nyckel_sample_id: null,
+          nyckel_status: 'error',
+          source_scan_id: metadata?.sourceScanId || null,
+          crop_data: metadata?.cropData || null,
+        });
+    } catch (dbError) {
+      console.error('[TrainDefect] Failed to save error to DB:', dbError);
+    }
+    
     return { success: false, error: (error as Error).message };
   }
 }

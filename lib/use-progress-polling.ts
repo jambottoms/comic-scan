@@ -32,6 +32,11 @@ export function useProgressPolling(jobId: string, enabled: boolean = true) {
     console.log('[Progress Poll] Starting polling for job:', jobId);
     const supabase = createClient();
     
+    if (!supabase) {
+      console.warn('[Progress Poll] Supabase client not available');
+      return;
+    }
+    
     // Poll every 2 seconds
     const pollInterval = setInterval(async () => {
       try {
