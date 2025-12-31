@@ -4,7 +4,6 @@ import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { getVideoById } from '@/lib/history';
 import ResultSheet from '@/components/ResultSheet';
-import { lockBodyScroll, unlockBodyScroll } from '@/lib/ios-scroll-lock';
 
 export const dynamic = 'force-dynamic';  // Prevent caching of server actions
 
@@ -17,10 +16,12 @@ export default function ResultPage() {
 
   // Lock body scroll when results page is open (prevents background scrolling on iOS)
   useEffect(() => {
-    const scrollY = lockBodyScroll();
+    // Simple CSS-based body lock
+    const originalOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
     
     return () => {
-      unlockBodyScroll(scrollY);
+      document.body.style.overflow = originalOverflow;
     };
   }, []);
 

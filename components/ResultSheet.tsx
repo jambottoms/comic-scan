@@ -1,12 +1,11 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { ChevronDown, Video, Upload, ScanLine } from 'lucide-react';
 import ResultCard from '@/components/ResultCard';
 import GradingAnalysisView from '@/components/GradingAnalysisView';
 import StreamingResultCard from '@/components/StreamingResultCard';
-import { createScrollLock } from '@/lib/ios-scroll-lock';
 
 interface ResultSheetProps {
   isOpen: boolean;
@@ -35,10 +34,6 @@ export default function ResultSheet({
 }: ResultSheetProps) {
   const [isVisible, setIsVisible] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
-  const scrollContainerRef = useRef<HTMLDivElement>(null);
-  
-  // Create scroll lock handlers for iOS
-  const { handleTouchStart, handleTouchMove } = createScrollLock(scrollContainerRef);
 
   // Handle open animation
   useEffect(() => {
@@ -66,14 +61,14 @@ export default function ResultSheet({
     <div 
         className={`fixed inset-0 z-50 flex flex-col justify-end transition-all duration-200 ease-out ${isVisible && !isClosing ? 'bg-black/80 backdrop-blur-sm' : 'bg-black/0'}`}
         style={{ 
-          overscrollBehavior: 'contain',
+          overscrollBehavior: 'none',
+          touchAction: 'none',
           pointerEvents: isVisible && !isClosing ? 'auto' : 'none'
         }}
-        onClick={(e) => e.stopPropagation()}
-        onTouchMove={(e) => {
-          // Prevent background scrolling when touching backdrop
+        onClick={(e) => {
+          // Close when clicking backdrop
           if (e.target === e.currentTarget) {
-            e.preventDefault();
+            handleClose();
           }
         }}
     >
@@ -92,16 +87,13 @@ export default function ResultSheet({
 
         {/* Content Area - Scrollable */}
         <div 
-          ref={scrollContainerRef}
           className="flex-1 overflow-y-auto bg-gray-900 pb-8"
           style={{ 
             WebkitOverflowScrolling: 'touch',
             overscrollBehaviorY: 'contain',
-            position: 'relative',
-            isolation: 'isolate'
+            touchAction: 'pan-y',
+            position: 'relative'
           }}
-          onTouchStart={handleTouchStart}
-          onTouchMove={handleTouchMove}
         >
             <div className="p-4 flex justify-center w-full">
                 {isLoading ? (
