@@ -10,6 +10,8 @@ Deployment:
 
 Test locally:
     modal run cv_worker.py --video-url "https://..." --scan-id "video-123"
+
+Last deployed: 2025-12-30 (Phase 2 progress tracking fix)
 """
 from __future__ import annotations  # Defer type hint evaluation for np.ndarray etc.
 
