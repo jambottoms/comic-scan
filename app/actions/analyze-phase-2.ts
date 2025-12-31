@@ -53,11 +53,18 @@ export async function analyzePhase2(input: {
       }
     }
     
-    // Update frames status to processing
+    // Update status at the START of Phase 2 (critical for mobile polling)
     await supabase.from('analysis_jobs').update({
       frames_status: 'processing',
+      cv_status: 'processing', // Set cv_status immediately so polling starts!
+      status: 'cv_processing', // Also update main status field
+      progress_percentage: 0, // Initialize progress
+      progress_message: 'Initializing CV analysis...',
+      progress_step: 'init',
       updated_at: new Date().toISOString()
     }).eq('id', jobId);
+    
+    console.log(`[Phase 2] Status updated to cv_processing for job: ${jobId}`);
     
     // Step 1: Call Modal worker for golden frames + CV analysis
     const modalWebhookUrl = process.env.MODAL_CV_WEBHOOK_URL;

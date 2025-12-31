@@ -99,6 +99,25 @@ export function updateWithAIResult(historyId: string, aiResult: any): void {
 }
 
 /**
+ * Update the status to indicate CV processing has started.
+ * This is called when Phase 2 begins to trigger progress polling in the UI.
+ */
+export function updateWithCVProcessing(historyId: string): void {
+  const entry = getVideoById(historyId);
+  if (!entry) return;
+  
+  updateHistoryEntry(historyId, {
+    result: {
+      ...entry.result,
+      _status: 'cv_processing', // Set status to trigger polling
+    },
+  });
+  
+  // Dispatch event for UI update
+  dispatchUpdate(historyId, { status: 'cv_processing' });
+}
+
+/**
  * Update the result with golden frames and detailed analysis from server.
  * This is called after CV analysis completes and marks the job as fully complete.
  */

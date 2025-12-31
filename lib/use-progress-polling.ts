@@ -66,7 +66,13 @@ export function useProgressPolling(jobId: string, enabled: boolean = true) {
         retryCount = 0;
         
         if (data) {
-          console.log('[Progress Poll] Data received:', data);
+          console.log('[Progress Poll] Data received:', {
+            percentage: data.progress_percentage,
+            message: data.progress_message,
+            step: data.progress_step,
+            cv_status: data.cv_status,
+            status: data.status
+          });
           
           // Check multiple completion signals
           const isComplete = 
@@ -74,12 +80,15 @@ export function useProgressPolling(jobId: string, enabled: boolean = true) {
             data.status === 'complete' ||
             data.progress_percentage === 100;
           
-          setProgress({
+          const newProgress = {
             percentage: data.progress_percentage || 0,
             message: data.progress_message || 'Processing...',
             step: data.progress_step || 'unknown',
             isComplete
-          });
+          };
+          
+          console.log('[Progress Poll] Setting progress state:', newProgress);
+          setProgress(newProgress);
           
           // Stop polling when complete
           if (isComplete) {

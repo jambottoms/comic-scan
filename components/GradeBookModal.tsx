@@ -22,7 +22,8 @@ import {
   updateWithVideoUrl, 
   updateWithAIResult,
   updateWithDetailedResult,
-  updateWithError 
+  updateWithError,
+  updateWithCVProcessing
 } from '@/lib/streaming-analysis';
 
 const DEFECT_TYPES = [
@@ -434,11 +435,21 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
             backPhotoUrl: backUpload?.url,
           });
           
+          console.log('[MOBILE DEBUG] Starting Phase 2 for job:', historyId);
+          // CRITICAL: Update localStorage status IMMEDIATELY so polling starts
+          updateWithCVProcessing(historyId);
+          
           const phase2Promise = analyzePhase2({
             videoUrl: videoUpload.url,
             jobId: historyId,
             // Don't pass aiGrade - Phase 2 will read it from database after Phase 1 completes
             itemType: 'comic',
+          }).then(result => {
+            console.log('[MOBILE DEBUG] Phase 2 returned:', result);
+            return result;
+          }).catch(err => {
+            console.error('[MOBILE DEBUG] Phase 2 error:', err);
+            throw err;
           });
           
           // Wait for Phase 1 (AI results) - shows to user first
@@ -557,11 +568,21 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
             backPhotoUrl: backUpload?.url,
           });
           
+          console.log('[MOBILE DEBUG] Starting Phase 2 for job:', historyId);
+          // CRITICAL: Update localStorage status IMMEDIATELY so polling starts
+          updateWithCVProcessing(historyId);
+          
           const phase2Promise = analyzePhase2({
             videoUrl: videoUpload.url,
             jobId: historyId,
             // Don't pass aiGrade - Phase 2 will read it from database after Phase 1 completes
             itemType: 'comic',
+          }).then(result => {
+            console.log('[MOBILE DEBUG] Phase 2 returned:', result);
+            return result;
+          }).catch(err => {
+            console.error('[MOBILE DEBUG] Phase 2 error:', err);
+            throw err;
           });
           
           // Wait for Phase 1 (AI results) - shows to user first

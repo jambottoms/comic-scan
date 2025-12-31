@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect } from 'react';
 import { Camera, Loader2, ScanLine, Maximize2 } from 'lucide-react';
 import { useProgressPolling } from '@/lib/use-progress-polling';
 import GradeScorecard from '../GradeScorecard';
@@ -23,6 +24,22 @@ export default function CVAnalysisCard({
   // Enable polling if processing and not complete
   const progress = useProgressPolling(historyId, isProcessing && !isComplete);
   const skeleton = "animate-pulse bg-gray-700 rounded";
+  
+  // Mobile debugging
+  useEffect(() => {
+    if (isProcessing && !isComplete) {
+      console.log('[CVAnalysisCard] MOBILE DEBUG:', {
+        historyId,
+        status,
+        isProcessing,
+        isComplete,
+        pollingEnabled: isProcessing && !isComplete,
+        progressPercentage: progress.percentage,
+        progressMessage: progress.message,
+        progressStep: progress.step
+      });
+    }
+  }, [historyId, status, isProcessing, isComplete, progress]);
 
   // Data extraction
   const normalizedGoldenFrames: string[] = 
@@ -64,6 +81,15 @@ export default function CVAnalysisCard({
               className="bg-blue-500 h-full transition-all duration-500 ease-out"
               style={{ width: `${progress.percentage}%` }}
             />
+          </div>
+          
+          {/* Mobile Debug Info - Visible on screen */}
+          <div className="mt-2 p-2 bg-gray-900 rounded text-xs text-gray-400 font-mono">
+            <div>Status: {status}</div>
+            <div>Polling: {isProcessing && !isComplete ? 'ENABLED' : 'DISABLED'}</div>
+            <div>JobID: {historyId?.slice(0, 20)}...</div>
+            <div>Progress: {progress.percentage}% | {progress.step}</div>
+            <div>Message: {progress.message}</div>
           </div>
         </div>
       )}
