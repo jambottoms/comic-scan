@@ -194,7 +194,7 @@ RESPONSE FORMAT (always use this JSON structure):
   "issue": "Issue #, Set name, or Series (use 'N/A' if not applicable)",
   "year": "Year if identifiable",
   "variant": "Variant info if applicable (foil, first edition, chase, etc.)",
-  "estimatedGrade": "X.X on appropriate scale (see below)",
+  "estimatedGrade": "X.X FINAL GRADE on appropriate scale (NOT deductions! The actual grade like 8.5 or 4.5)",
   "gradingScale": "CGC" | "PSA" | "BGS" | "Custom",
   "reasoning": [
     {
@@ -210,6 +210,10 @@ GRADING SCALES BY TYPE:
 - Comics: CGC 0.5-10.0 scale. Terms: spine stress, corner blunting, color break, staple rust, page tanning
 - Trading Cards: PSA 1-10 or BGS 1-10 scale. Terms: centering, corners, edges, surface, print lines, whitening
 - Toys: Custom 1-10 scale. Terms: paint wear, joint looseness, accessory completeness, package condition
+
+IMPORTANT: The "estimatedGrade" field should be the FINAL GRADE (e.g., 8.5, 4.5, 9.0), NOT the deductions!
+Example: If you see moderate damage and think it's a 4.5, put "4.5" in estimatedGrade.
+DO NOT put "5.5" (the deduction amount) - that's wrong!
 
 Be objective, clinical, and precise. Use industry standard terminology.`
     });
@@ -291,7 +295,7 @@ JSON format:
   "issue": "Issue/Set/Series or N/A",
   "year": "Year if known",
   "variant": "Variant info or null",
-  "estimatedGrade": "X.X",
+  "estimatedGrade": "X.X (the FINAL GRADE, not deductions)",
   "gradingScale": "CGC|PSA|BGS|Custom",
   "reasoning": [
     {
