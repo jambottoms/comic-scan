@@ -70,49 +70,107 @@ export async function analyzePhase2(input: {
     }
     
     console.log("[Phase 2] Calling Modal for golden frame extraction and CV analysis...");
+    console.log(`[Phase 2] Modal URL: ${modalWebhookUrl}`);
+    console.log(`[Phase 2] Job ID: ${jobId}`);
+    console.log(`[Phase 2] Timeout: 5 minutes`);
     
-    const modalResponse = await fetch(modalWebhookUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        videoUrl,
-        scanId: jobId,
-        itemType,
-      }),
-    });
+    // Add timeout to prevent infinite hanging (5 minutes max for CV processing)
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 300000); // 5 min timeout
     
-    if (!modalResponse.ok) {
-      const errorText = await modalResponse.text();
-      throw new Error(`Modal worker failed: ${modalResponse.status} - ${errorText}`);
+    try {
+      const modalResponse = await fetch(modalWebhookUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          videoUrl,
+          scanId: jobId,
+          itemType,
+        }),
+        signal: controller.signal,
+      });
+      
+      clearTimeout(timeoutId);
+      
+      if (!modalResponse.ok) {
+        const errorText = await modalResponse.text();
+        throw new Error(`Modal worker failed: ${modalResponse.status} - ${errorText}`);
+      }
+      
+      const modalResult = await modalResponse.json();
+      
+      console.log(`[Phase 2] Got ${modalResult.goldenFrames?.length || 0} golden frames from Modal`);
+      
+      const goldenFrames: string[] = modalResult.goldenFrames || [];
+      const frameTimestamps: number[] = modalResult.frameTimestamps || [];
+      const cvAnalysis: any = modalResult.cvAnalysis || modalResult.nyckelAnalysis || null;
+      const nyckelAnalysis: any = modalResult.nyckelAnalysis || null;
+      
+      if (cvAnalysis) {
+        console.log(`[Phase 2] CV Analysis: ${cvAnalysis.damageScore?.toFixed(1)}% damage detected`);
+      }
+      
+      // Update frames status to complete
+      await supabase.from('analysis_jobs').update({
+        frames_status: 'complete',
+        golden_frames: goldenFrames,
+        frames_completed_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      }).eq('id', jobId);
+      
+      // Update CV status to processing
+      await supabase.from('analysis_jobs').update({
+        cv_status: 'processing',
+        updated_at: new Date().toISOString()
+      }).eq('id', jobId);
+      
+      // Continue with Step 2 (Gemini multi-frame analysis)
+      return await continuePhase2Processing(
+        supabase,
+        apiKey,
+        jobId,
+        goldenFrames,
+        frameTimestamps,
+        cvAnalysis,
+        nyckelAnalysis,
+        aiGrade
+      );
+      
+    } catch (fetchError: any) {
+      clearTimeout(timeoutId);
+      
+      if (fetchError.name === 'AbortError') {
+        throw new Error('Modal worker timeout after 5 minutes - video may be too long or worker is overloaded');
+      }
+      throw fetchError;
     }
+  } catch (error: any) {
+    console.error("[Phase 2] Error:", error);
     
-    const modalResult = await modalResponse.json();
-    
-    console.log(`[Phase 2] Got ${modalResult.goldenFrames?.length || 0} golden frames from Modal`);
-    
-    const goldenFrames: string[] = modalResult.goldenFrames || [];
-    const frameTimestamps: number[] = modalResult.frameTimestamps || [];
-    const cvAnalysis: any = modalResult.cvAnalysis || modalResult.nyckelAnalysis || null;
-    const nyckelAnalysis: any = modalResult.nyckelAnalysis || null;
-    
-    if (cvAnalysis) {
-      console.log(`[Phase 2] CV Analysis: ${cvAnalysis.damageScore?.toFixed(1)}% damage detected`);
-    }
-    
-    // Update frames status to complete
+    // Update job with error
     await supabase.from('analysis_jobs').update({
-      frames_status: 'complete',
-      golden_frames: goldenFrames,
-      frames_completed_at: new Date().toISOString(),
+      cv_status: 'failed',
+      status: 'failed',
+      error: error.message || String(error),
       updated_at: new Date().toISOString()
     }).eq('id', jobId);
     
-    // Update CV status to processing
-    await supabase.from('analysis_jobs').update({
-      cv_status: 'processing',
-      updated_at: new Date().toISOString()
-    }).eq('id', jobId);
-    
+    return { success: false, error: error.message || String(error) };
+  }
+}
+
+// Helper function to continue Phase 2 processing after Modal completes
+async function continuePhase2Processing(
+  supabase: any,
+  apiKey: string | undefined,
+  jobId: string,
+  goldenFrames: string[],
+  frameTimestamps: number[],
+  cvAnalysis: any,
+  nyckelAnalysis: any,
+  aiGrade: string
+): Promise<AnalyzePhase2Result> {
+  try {
     // Step 2: Run multi-frame Gemini analysis if we have enough frames
     let detailedAnalysis: any = null;
     

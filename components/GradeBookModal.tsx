@@ -437,7 +437,7 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
           const phase2Promise = analyzePhase2({
             videoUrl: videoUpload.url,
             jobId: historyId,
-            aiGrade: '0.0', // Placeholder, will be updated by phase1
+            // Don't pass aiGrade - Phase 2 will read it from database after Phase 1 completes
             itemType: 'comic',
           });
           
@@ -560,7 +560,7 @@ export default function GradeBookModal({ isOpen, onClose, onSuccess, initialTab 
           const phase2Promise = analyzePhase2({
             videoUrl: videoUpload.url,
             jobId: historyId,
-            aiGrade: '0.0', // Placeholder, will be updated by phase1
+            // Don't pass aiGrade - Phase 2 will read it from database after Phase 1 completes
             itemType: 'comic',
           });
           
