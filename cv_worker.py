@@ -142,6 +142,243 @@ DEFECT_LABELS = [
 
 
 # =============================================================================
+# STRUCTURAL DAMAGE HEATMAP & DEFECT OVERLAY FUNCTIONS
+# =============================================================================
+
+def generate_structural_heatmap(frame, output_path: Path = None) -> tuple:
+    """
+    Generate a structural damage heatmap using edge/gradient analysis.
+    
+    This detects creases, tears, spine stress, and corner damage by analyzing
+    the gradient magnitude and edge density - NOT cross-frame variance.
+    
+    Args:
+        frame: BGR image (numpy array)
+        output_path: Optional path to save the heatmap image
+        
+    Returns:
+        tuple: (heatmap_image, damage_score) where heatmap is BGR and score is 0-100
+    """
+    import cv2
+    import numpy as np
+    
+    # Convert to grayscale
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY).astype(np.float32)
+    
+    # 1. Sobel gradients for structural damage (creases, tears)
+    grad_x = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
+    grad_y = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
+    gradient_magnitude = np.sqrt(grad_x**2 + grad_y**2)
+    
+    # Normalize gradient magnitude
+    grad_norm = gradient_magnitude / (gradient_magnitude.max() + 1e-6)
+    
+    # 2. Laplacian for surface texture anomalies
+    laplacian = cv2.Laplacian(gray, cv2.CV_64F)
+    laplacian_abs = np.abs(laplacian)
+    laplacian_norm = laplacian_abs / (laplacian_abs.max() + 1e-6)
+    
+    # 3. Local edge density (highlights areas with lots of edges = creases)
+    edges = cv2.Canny(gray.astype(np.uint8), 30, 100)
+    kernel = np.ones((21, 21), np.float32) / (21 * 21)
+    edge_density = cv2.filter2D(edges.astype(np.float32), -1, kernel)
+    edge_density_norm = edge_density / (edge_density.max() + 1e-6)
+    
+    # Combine signals: weight gradient highest (best for structural damage)
+    combined = (grad_norm * 0.5) + (laplacian_norm * 0.2) + (edge_density_norm * 0.3)
+    
+    # Apply non-linear scaling to emphasize high-damage areas
+    combined = np.power(combined, 0.7)  # Gamma correction
+    
+    # Convert to 0-255 and apply colormap
+    combined_uint8 = (combined * 255).astype(np.uint8)
+    heatmap = cv2.applyColorMap(combined_uint8, cv2.COLORMAP_INFERNO)  # Better than JET
+    
+    # Calculate damage score (percentage of pixels above threshold)
+    high_damage_threshold = 0.3
+    damage_pixels = np.sum(combined > high_damage_threshold)
+    total_pixels = combined.size
+    damage_score = (damage_pixels / total_pixels) * 100
+    
+    if output_path:
+        cv2.imwrite(str(output_path), heatmap, [cv2.IMWRITE_PNG_COMPRESSION, 9])
+    
+    return heatmap, damage_score
+
+
+def generate_defect_overlay(frame, output_path: Path = None) -> tuple:
+    """
+    Generate a color-coded defect overlay showing different damage types.
+    
+    Color coding:
+    - Yellow (🟡): Color anomalies - stains, foxing, yellowing
+    - Red (🔴): Structural damage - tears, creases, heavy wear
+    - Cyan (🔵): Surface wear - light scuffs, rubs
+    
+    Args:
+        frame: BGR image (numpy array)
+        output_path: Optional path to save the overlay image
+        
+    Returns:
+        tuple: (overlay_image, defect_counts) where overlay is BGR with alpha blend
+    """
+    import cv2
+    import numpy as np
+    
+    h, w = frame.shape[:2]
+    
+    # Initialize masks for each defect type
+    stain_mask = np.zeros((h, w), dtype=np.uint8)
+    structural_mask = np.zeros((h, w), dtype=np.uint8)
+    wear_mask = np.zeros((h, w), dtype=np.uint8)
+    
+    # === 1. COLOR ANOMALY DETECTION (Stains, Foxing, Yellowing) ===
+    # Convert to LAB color space for perceptual analysis
+    lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
+    l_channel, a_channel, b_channel = cv2.split(lab)
+    
+    # Detect yellowing (high b* = yellow in LAB)
+    # Normal paper b* is around 128 (neutral), yellowed paper > 145
+    yellowing = b_channel > 145
+    
+    # Detect foxing/stains (local color outliers)
+    # Blur and compare - large difference = potential stain
+    blurred_a = cv2.GaussianBlur(a_channel, (31, 31), 0)
+    blurred_b = cv2.GaussianBlur(b_channel, (31, 31), 0)
+    a_diff = np.abs(a_channel.astype(np.float32) - blurred_a.astype(np.float32))
+    b_diff = np.abs(b_channel.astype(np.float32) - blurred_b.astype(np.float32))
+    color_outliers = (a_diff + b_diff) > 25
+    
+    stain_mask = (yellowing | color_outliers).astype(np.uint8) * 255
+    
+    # Clean up noise
+    kernel_small = np.ones((3, 3), np.uint8)
+    stain_mask = cv2.morphologyEx(stain_mask, cv2.MORPH_OPEN, kernel_small)
+    stain_mask = cv2.morphologyEx(stain_mask, cv2.MORPH_CLOSE, kernel_small)
+    
+    # === 2. STRUCTURAL DAMAGE DETECTION (Tears, Creases) ===
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    
+    # Strong gradients indicate structural damage
+    grad_x = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
+    grad_y = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
+    gradient_magnitude = np.sqrt(grad_x**2 + grad_y**2)
+    
+    # Threshold for "significant" structural features
+    grad_threshold = np.percentile(gradient_magnitude, 95)  # Top 5%
+    strong_edges = gradient_magnitude > grad_threshold
+    
+    # Edge density for crease detection (many edges in small area)
+    edges = cv2.Canny(gray, 50, 150)
+    kernel_density = np.ones((15, 15), np.float32) / (15 * 15)
+    edge_density = cv2.filter2D(edges.astype(np.float32), -1, kernel_density)
+    high_density = edge_density > 30  # Threshold for "crease-like" areas
+    
+    structural_mask = (strong_edges | high_density).astype(np.uint8) * 255
+    
+    # Clean up - keep only larger connected regions
+    kernel_medium = np.ones((5, 5), np.uint8)
+    structural_mask = cv2.morphologyEx(structural_mask, cv2.MORPH_OPEN, kernel_medium)
+    
+    # === 3. SURFACE WEAR DETECTION (Light scuffs, rubs) ===
+    # Texture analysis - worn areas have different texture than pristine
+    # Use local standard deviation as texture measure
+    blur_small = cv2.GaussianBlur(gray.astype(np.float32), (5, 5), 0)
+    blur_large = cv2.GaussianBlur(gray.astype(np.float32), (31, 31), 0)
+    
+    # Local variance (texture roughness)
+    local_mean = cv2.blur(gray.astype(np.float32), (15, 15))
+    local_sq_mean = cv2.blur((gray.astype(np.float32))**2, (15, 15))
+    local_variance = local_sq_mean - local_mean**2
+    local_std = np.sqrt(np.maximum(local_variance, 0))
+    
+    # Low texture areas with brightness anomalies = potential wear
+    low_texture = local_std < 10
+    brightness_diff = np.abs(gray.astype(np.float32) - blur_large)
+    brightness_anomaly = brightness_diff > 15
+    
+    wear_mask = (low_texture & brightness_anomaly).astype(np.uint8) * 255
+    
+    # Remove overlap with structural (structural takes priority)
+    wear_mask = cv2.bitwise_and(wear_mask, cv2.bitwise_not(structural_mask))
+    
+    # === CREATE COLOR-CODED OVERLAY ===
+    overlay = np.zeros_like(frame)
+    
+    # Yellow for stains (BGR: 0, 255, 255)
+    overlay[stain_mask > 0] = [0, 200, 255]
+    
+    # Red for structural (BGR: 0, 0, 255)
+    overlay[structural_mask > 0] = [0, 0, 255]
+    
+    # Cyan for wear (BGR: 255, 255, 0)
+    overlay[wear_mask > 0] = [255, 200, 0]
+    
+    # Blend with original image
+    alpha = 0.4
+    result = cv2.addWeighted(frame, 1 - alpha, overlay, alpha, 0)
+    
+    # Add subtle border to defect areas for visibility
+    contours_stain, _ = cv2.findContours(stain_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contours_struct, _ = cv2.findContours(structural_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    cv2.drawContours(result, contours_stain, -1, (0, 180, 255), 1)
+    cv2.drawContours(result, contours_struct, -1, (0, 0, 200), 1)
+    
+    # Count defect pixels for scoring
+    defect_counts = {
+        'stains': int(np.sum(stain_mask > 0)),
+        'structural': int(np.sum(structural_mask > 0)),
+        'wear': int(np.sum(wear_mask > 0)),
+        'total_pixels': h * w
+    }
+    
+    if output_path:
+        cv2.imwrite(str(output_path), result, [cv2.IMWRITE_PNG_COMPRESSION, 9])
+    
+    return result, defect_counts
+
+
+def generate_frame_visualizations(frame, frame_index: int, output_dir: Path, scan_id: str) -> dict:
+    """
+    Generate all visualizations for a single golden frame.
+    
+    Args:
+        frame: BGR image (numpy array)
+        frame_index: Index of this golden frame (0, 1, 2)
+        output_dir: Directory to save output files
+        scan_id: Scan ID for naming
+        
+    Returns:
+        dict with paths to generated visualizations
+    """
+    import cv2
+    
+    results = {
+        'frame_index': frame_index,
+        'structural_heatmap': None,
+        'defect_overlay': None,
+        'damage_score': 0,
+        'defect_counts': {}
+    }
+    
+    # Generate structural heatmap
+    heatmap_path = output_dir / f"structural_heatmap_{frame_index}.png"
+    heatmap, damage_score = generate_structural_heatmap(frame, heatmap_path)
+    results['structural_heatmap'] = str(heatmap_path)
+    results['damage_score'] = damage_score
+    
+    # Generate defect overlay
+    overlay_path = output_dir / f"defect_overlay_{frame_index}.png"
+    overlay, defect_counts = generate_defect_overlay(frame, overlay_path)
+    results['defect_overlay'] = str(overlay_path)
+    results['defect_counts'] = defect_counts
+    
+    print(f"      Frame {frame_index}: Structural heatmap + defect overlay generated (damage: {damage_score:.1f}%)")
+    
+    return results
+
+
+# =============================================================================
 # NYCKEL HELPER FUNCTIONS
 # =============================================================================
 
@@ -1369,6 +1606,34 @@ def run_nyckel_analysis(golden_frames: list, output_dir: Path, scan_id: str) -> 
         for region, data in region_grades.items()
     }
     
+    # === GENERATE MULTI-FRAME VISUALIZATIONS ===
+    # Process ALL golden frames, not just the first one
+    print("   🔥 Generating structural heatmaps and defect overlays...")
+    frame_visualizations = []
+    best_frame_index = 0
+    best_damage_score = float('inf')
+    
+    for i, gf in enumerate(golden_frames[:3]):  # Limit to 3 frames
+        frame = cv2.imread(gf['path'])
+        if frame is None:
+            continue
+            
+        # Crop to comic boundaries if we detected them
+        if comic_bbox:
+            bx, by, bw, bh = comic_bbox
+            frame = frame[by:by+bh, bx:bx+bw]
+        
+        # Generate visualizations for this frame
+        viz = generate_frame_visualizations(frame, i, output_dir, scan_id)
+        frame_visualizations.append(viz)
+        
+        # Track best frame (lowest damage score = clearest view)
+        if viz['damage_score'] < best_damage_score:
+            best_damage_score = viz['damage_score']
+            best_frame_index = i
+    
+    print(f"   ✅ Generated visualizations for {len(frame_visualizations)} frames (best: frame {best_frame_index})")
+    
     # Upload crops to Supabase
     print("   📤 Uploading Nyckel analysis images...")
     supabase_url = os.environ["SUPABASE_URL"]
@@ -1378,7 +1643,10 @@ def run_nyckel_analysis(golden_frames: list, output_dir: Path, scan_id: str) -> 
     cv_images = {
         "regionCrops": {},
         "regionOverlays": {},
-        "debugVisualization": None
+        "debugVisualization": None,
+        "structuralHeatmaps": [],  # NEW: Per-frame structural heatmaps
+        "defectOverlays": [],      # NEW: Per-frame color-coded defect overlays
+        "bestFrameIndex": best_frame_index  # NEW: Index of clearest frame
     }
     
     # Upload debug visualization first
@@ -1393,6 +1661,35 @@ def run_nyckel_analysis(golden_frames: list, output_dir: Path, scan_id: str) -> 
         with open(crop_path, 'rb') as f:
             url = upload_to_supabase_storage(supabase_url, supabase_key, bucket, remote_path, f.read())
             cv_images["regionCrops"][region_name] = url
+    
+    # Upload multi-frame visualizations
+    print("   📤 Uploading structural heatmaps and defect overlays...")
+    for viz in frame_visualizations:
+        idx = viz['frame_index']
+        
+        # Upload structural heatmap
+        if viz['structural_heatmap'] and Path(viz['structural_heatmap']).exists():
+            remote_path = f"{scan_id}/analysis/structural_heatmap_{idx}.png"
+            with open(viz['structural_heatmap'], 'rb') as f:
+                url = upload_to_supabase_storage(supabase_url, supabase_key, bucket, remote_path, f.read())
+                cv_images["structuralHeatmaps"].append({
+                    "frameIndex": idx,
+                    "url": url,
+                    "damageScore": viz['damage_score']
+                })
+        
+        # Upload defect overlay
+        if viz['defect_overlay'] and Path(viz['defect_overlay']).exists():
+            remote_path = f"{scan_id}/analysis/defect_overlay_{idx}.png"
+            with open(viz['defect_overlay'], 'rb') as f:
+                url = upload_to_supabase_storage(supabase_url, supabase_key, bucket, remote_path, f.read())
+                cv_images["defectOverlays"].append({
+                    "frameIndex": idx,
+                    "url": url,
+                    "defectCounts": viz['defect_counts']
+                })
+    
+    print(f"   ✅ Uploaded {len(cv_images['structuralHeatmaps'])} heatmaps and {len(cv_images['defectOverlays'])} overlays")
     
     return {
         "analysisType": "nyckel-ml",
