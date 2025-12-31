@@ -90,6 +90,9 @@ export default function CVAnalysisCard({
             <div>JobID: {historyId?.slice(0, 20)}...</div>
             <div>Progress: {progress.percentage}% | {progress.step}</div>
             <div>Message: {progress.message}</div>
+            <div className="mt-1 text-yellow-400">
+              ⏱️ If stuck for 2+ min, check Vercel env vars
+            </div>
           </div>
         </div>
       )}

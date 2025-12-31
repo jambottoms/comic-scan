@@ -69,17 +69,32 @@ export async function analyzePhase2(input: {
     // Step 1: Call Modal worker for golden frames + CV analysis
     const modalWebhookUrl = process.env.MODAL_CV_WEBHOOK_URL;
     if (!modalWebhookUrl) {
-      console.warn("[Phase 2] Modal webhook not configured, skipping CV analysis");
+      const errorMsg = "Modal CV webhook not configured - please set MODAL_CV_WEBHOOK_URL environment variable";
+      console.error("[Phase 2] CRITICAL:", errorMsg);
+      console.error("[Phase 2] Available env vars:", Object.keys(process.env).filter(k => k.includes('MODAL')));
+      
+      // Update job with specific error
+      await supabase.from('analysis_jobs').update({
+        cv_status: 'failed',
+        status: 'failed',
+        error: errorMsg,
+        progress_message: 'Configuration error - Modal webhook not set',
+        updated_at: new Date().toISOString()
+      }).eq('id', jobId);
+      
       return { 
         success: false, 
-        error: "Modal CV webhook not configured" 
+        error: errorMsg
       };
     }
     
     console.log("[Phase 2] Calling Modal for golden frame extraction and CV analysis...");
     console.log(`[Phase 2] Modal URL: ${modalWebhookUrl}`);
+    console.log(`[Phase 2] Video URL: ${videoUrl}`);
     console.log(`[Phase 2] Job ID: ${jobId}`);
+    console.log(`[Phase 2] Item Type: ${itemType}`);
     console.log(`[Phase 2] Timeout: 5 minutes`);
+    console.log(`[Phase 2] Request payload:`, JSON.stringify({ videoUrl, scanId: jobId, itemType }, null, 2));
     
     // Add timeout to prevent infinite hanging (5 minutes max for CV processing)
     const controller = new AbortController();
@@ -101,6 +116,11 @@ export async function analyzePhase2(input: {
       
       if (!modalResponse.ok) {
         const errorText = await modalResponse.text();
+        console.error(`[Phase 2] Modal HTTP error:`, {
+          status: modalResponse.status,
+          statusText: modalResponse.statusText,
+          body: errorText.slice(0, 500) // First 500 chars
+        });
         throw new Error(`Modal worker failed: ${modalResponse.status} - ${errorText}`);
       }
       
