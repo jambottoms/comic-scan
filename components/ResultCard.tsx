@@ -556,16 +556,14 @@ export default function ResultCard({ result, videoUrl, thumbnail, savedScanId, o
         </div>
       )}
 
-      {/* Grading Scorecard - Full Breakdown */}
-      {(result.hybridGrade || Object.keys(regionScores).length > 0 || result.nyckelAnalysis) && (
+      {/* Grading Scorecard - Defect Ledger */}
+      {(result.hybridGrade || Object.keys(regionScores).length > 0) && (
         <GradeScorecard
           hybridGrade={result.hybridGrade}
           cvAnalysis={cvData}
-          nyckelAnalysis={result.nyckelAnalysis}
           regionScores={regionScores}
           defectLabels={defectLabels}
           defectBreakdown={result.hybridGrade?.defectBreakdown}
-          nyckelRegions={result.hybridGrade?.nyckelRegions || result.nyckelAnalysis?.regionGrades}
         />
       )}
 
